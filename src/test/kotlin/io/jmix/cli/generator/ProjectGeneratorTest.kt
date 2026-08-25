@@ -7,6 +7,7 @@ import java.nio.file.attribute.PosixFilePermission
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -97,6 +98,9 @@ class ProjectGeneratorTest {
 
     @Test
     fun `generation fails when files cannot be written`() {
+        // The read-only trap needs POSIX permissions; on Windows a read-only
+        // directory does not prevent file creation.
+        Assumptions.assumeTrue(isPosix(tempDir))
         val target = tempDir.resolve("readonly-out")
         Files.createDirectories(target)
         Files.setPosixFilePermissions(
@@ -129,6 +133,12 @@ class ProjectGeneratorTest {
         val gradlew = target.resolve("gradlew")
         // Content NOT rendered (unknown binding untouched), but CRLF normalized to LF.
         assertEquals("#!/bin/sh\necho \${not_a_binding}\n", Files.readString(gradlew))
-        assertTrue(PosixFilePermission.OWNER_EXECUTE in Files.getPosixFilePermissions(gradlew))
+        // The generator sets the executable bit only on POSIX file systems.
+        if (isPosix(gradlew)) {
+            assertTrue(PosixFilePermission.OWNER_EXECUTE in Files.getPosixFilePermissions(gradlew))
+        }
     }
+
+    private fun isPosix(path: Path): Boolean =
+        "posix" in path.fileSystem.supportedFileAttributeViews()
 }
