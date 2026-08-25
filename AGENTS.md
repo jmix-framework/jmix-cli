@@ -126,6 +126,9 @@ Use `tests/test-install.ps1` on Windows.
 - Do not commit generated projects, build output, IDE metadata, or local caches.
 - Do not commit, push, rewrite history, or publish artifacts unless explicitly requested.
 - Do not create or push release tags while testing the distribution workflow.
+- Pushing to `main` publishes a release automatically when it contains new
+  `feat`/`fix`/`perf` commits (see docs/DISTRIBUTION.md) — keep commit types
+  accurate.
 
 ## Completion checklist
 

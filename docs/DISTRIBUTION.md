@@ -50,17 +50,33 @@ tests/test-install.ps1
 
 ## Publishing a release
 
-The release workflow is triggered by a semantic version tag such as `v0.1.0`.
-It builds and tests every platform image, verifies all checksums, and creates the
-GitHub release only after the complete matrix succeeds.
+Releases are fully automatic. On every push to `main`, `auto-release.yml`
+derives the next semantic version from the Conventional Commit types since the
+last `v*` tag:
 
-Release checklist:
+| Commits since the last tag                | Result                          |
+|-------------------------------------------|---------------------------------|
+| `type!:` subject or `BREAKING CHANGE:`    | major (minor while pre-1.0)     |
+| `feat:`                                   | minor                           |
+| `fix:` or `perf:`                         | patch                           |
+| only `docs:`, `chore:`, `ci:`, `test:`, … | no release                      |
 
-- [ ] Confirm CI is green on the commit to release.
+When a bump applies, the workflow pushes the `vX.Y.Z` tag and dispatches the
+release workflow on it (tags pushed with the workflow token do not fire the
+tag-push event). The release workflow builds and tests every platform image,
+verifies all checksums, and creates the GitHub release only after the complete
+matrix succeeds — a broken build therefore fails before anything is published.
+
+Commit types decide releases: keep them accurate, and use `docs:`/`chore:`/`ci:`
+for changes that must not publish a release.
+
+Pushing a `vX.Y.Z` tag manually still triggers the same release workflow when a
+hand-picked release point is needed.
+
+Post-release checklist:
+
 - [ ] Confirm the repository is public so the bootstrap commands need no token.
-- [ ] Create and push the `vX.Y.Z` tag.
 - [ ] Verify the release is marked immutable in GitHub.
 - [ ] Run both README bootstrap commands on clean machines.
 
-Do not upload release files manually or publish a tag before its commit has
-passed CI.
+Do not upload release files manually.

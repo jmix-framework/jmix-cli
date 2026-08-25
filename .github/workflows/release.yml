@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v[0-9]*.[0-9]*.[0-9]*"
+  # Dispatched on a tag ref by auto-release.yml; the version check below
+  # rejects a dispatch on a branch ref.
+  workflow_dispatch:
 
 permissions:
   contents: read
