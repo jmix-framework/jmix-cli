@@ -37,6 +37,16 @@ class TemplateRepositoryTest {
     }
 
     @Test
+    fun `versions with unexpected characters are rejected`() {
+        // Version strings flow into file names and process arguments; a
+        // malicious repository must not smuggle shell metacharacters through.
+        seedMetadata(unreachableUrl, listOf("3.0.1", "2.9.0'; touch pwned #", "2.9.0/../../etc"))
+        val repo = TemplateRepository(unreachableUrl, cacheDir)
+
+        assertEquals(listOf("3.0.1"), repo.fetchVersions(includeUnstable = true))
+    }
+
+    @Test
     fun `cache is keyed by repository url`() {
         seedMetadata(unreachableUrl, listOf("3.0.1"))
         // A different repository must NOT see the first repository's cache.

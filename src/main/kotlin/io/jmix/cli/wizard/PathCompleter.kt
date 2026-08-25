@@ -10,9 +10,10 @@ data class PathCompletion(val text: String, val candidates: List<String>)
 
 /**
  * Tab-completion for directory paths typed into the wizard. Completes the last
- * path segment against existing directories: a single match completes fully
- * (with a trailing separator), several matches extend to their longest common
- * prefix, and a repeated Tab with no progress lists the candidates.
+ * path segment against existing directories, matching case-insensitively: a
+ * single match completes fully (with a trailing separator), several matches
+ * extend to their longest common prefix (in the on-disk casing), and a
+ * repeated Tab with no progress lists the candidates.
  */
 object PathCompleter {
 
@@ -28,7 +29,7 @@ object PathCompleter {
 
         val dir = resolveDir(dirText, cwd, home) ?: return PathCompletion(input, emptyList())
         val names = directoriesIn(dir)
-            .filter { it.startsWith(segment) }
+            .filter { it.startsWith(segment, ignoreCase = true) }
             .filter { segment.startsWith(".") || !it.startsWith(".") }
             .sorted()
         if (names.isEmpty()) return PathCompletion(input, emptyList())
@@ -36,8 +37,9 @@ object PathCompleter {
         if (names.size == 1) {
             return PathCompletion(dirText + names.single() + File.separator, emptyList())
         }
-        val prefix = names.reduce(::commonPrefix)
-        return if (prefix.length > segment.length) {
+        // At least segment.length long by construction; may only fix casing.
+        val prefix = names.reduce { left, right -> left.commonPrefixWith(right, ignoreCase = true) }
+        return if (prefix != segment) {
             PathCompletion(dirText + prefix, emptyList())
         } else {
             PathCompletion(input, names)
@@ -63,7 +65,4 @@ object PathCompleter {
     } catch (e: IOException) {
         emptyList()
     }
-
-    private fun commonPrefix(left: String, right: String): String =
-        left.commonPrefixWith(right)
 }

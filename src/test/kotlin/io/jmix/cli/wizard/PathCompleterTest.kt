@@ -47,6 +47,14 @@ class PathCompleterTest {
     }
 
     @Test
+    fun `matches case-insensitively and completes with the on-disk casing`() {
+        assertEquals("Idea", PathCompleter.complete("id", cwd = tempDir).text)
+        assertEquals("IdeaProjects$sep", PathCompleter.complete("ideap", cwd = tempDir).text)
+        // A wrong-case exact prefix is corrected first, listed on the next Tab.
+        assertEquals("Idea", PathCompleter.complete("idea", cwd = tempDir).text)
+    }
+
+    @Test
     fun `completes inside a nested directory and ignores files`() {
         Files.createDirectories(tempDir.resolve("IdeaProjects/demo-app"))
         val completion = PathCompleter.complete("IdeaProjects${sep}de", cwd = tempDir)

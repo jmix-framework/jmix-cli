@@ -47,7 +47,9 @@ class TemplateRepository(
         val versions = Regex("<version>([^<]+)</version>")
             .findAll(xml)
             .map { it.groupValues[1].trim() }
-            .filter { it.isNotEmpty() }
+            // Version strings flow into file names and process arguments;
+            // never accept shell or path metacharacters from a repository.
+            .filter { VERSION_SHAPE.matches(it) }
             .distinct()
             .filter { PlatformVersions.isSupportedPlatformVersion(it) }
             .filter { !PlatformVersions.isFutureUnknownVersion(it) }
@@ -173,6 +175,8 @@ class TemplateRepository(
         const val TEMPLATES_ARTIFACT_ID = "jmix-studio-templates"
 
         private val VERSION_CACHE_TTL: Duration = Duration.ofHours(24)
+
+        private val VERSION_SHAPE = Regex("[0-9A-Za-z._+-]+")
 
         fun defaultCacheDir(): Path =
             Path.of(System.getProperty("user.home"), ".jmix", "templates")

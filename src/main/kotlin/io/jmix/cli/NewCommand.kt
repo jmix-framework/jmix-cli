@@ -14,6 +14,7 @@ import com.github.ajalt.mordant.rendering.TextColors.gray
 import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.widgets.SelectList
+import io.jmix.cli.env.AgentToolkitInstaller
 import io.jmix.cli.env.EnvironmentCheck
 import io.jmix.cli.env.JdkInstaller
 import io.jmix.cli.env.ProjectLauncher
@@ -146,6 +147,7 @@ class NewCommand : CliktCommand(name = "new") {
         }
 
         printSuccess(info)
+        offerAgentToolkit(info)
         offerOpenAndRun(info)
     }
 
@@ -610,6 +612,28 @@ class NewCommand : CliktCommand(name = "new") {
         val exitCode = ProjectLauncher.runGradle(info.projectDir, runTask, javaHome)
         if (exitCode != 0) {
             terminal.println(brightYellow("Gradle finished with exit code $exitCode."))
+        }
+    }
+
+    /**
+     * Offers the Jmix Agent Toolkit setup. The toolkit's own wizard asks for
+     * every detail (agents, scope, MCP servers), so a "yes" simply hands the
+     * terminal over to it in the project directory.
+     */
+    private fun offerAgentToolkit(info: ProjectCreationInfo) {
+        if (!interactive || !terminal.terminalInfo.inputInteractive) return
+        val question = "Set up the Jmix Agent Toolkit — skills and guidelines for AI coding agents?"
+        if (!prompts.askYesNo(question, default = true).requireValue()) return
+        terminal.println(gray("Starting the Jmix Agent Toolkit installer..."))
+        val exitCode = try {
+            AgentToolkitInstaller.run(info.projectDir, info.jmixVersion)
+        } catch (e: Exception) {
+            terminal.println(brightYellow("Warning: failed to start the Agent Toolkit installer: ${e.message}"))
+            return
+        }
+        if (exitCode != 0) {
+            terminal.println(brightYellow("Agent Toolkit installer finished with exit code $exitCode."))
+            terminal.println(brightYellow("You can rerun it later: see https://github.com/jmix-framework/jmix-agent-toolkit"))
         }
     }
 

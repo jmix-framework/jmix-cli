@@ -600,10 +600,19 @@ class Prompts(
         barParts: List<Pair<String, String>>,
     ) {
         val current = buffer.toString()
-        if (completion.text != current && completion.text.startsWith(current)) {
-            val suffix = completion.text.removePrefix(current)
-            buffer.append(suffix)
-            terminal.print(suffix)
+        if (completion.text != current) {
+            if (completion.text.startsWith(current)) {
+                val suffix = completion.text.removePrefix(current)
+                buffer.append(suffix)
+                terminal.print(suffix)
+            } else {
+                // Case-insensitive completion may rewrite the typed segment
+                // with the on-disk casing — replace the whole line.
+                repeat(current.length) { terminal.print("\b \b") }
+                buffer.setLength(0)
+                buffer.append(completion.text)
+                terminal.print(completion.text)
+            }
             return
         }
         if (completion.candidates.isEmpty()) return
