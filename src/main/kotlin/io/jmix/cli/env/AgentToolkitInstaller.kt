@@ -75,11 +75,15 @@ object AgentToolkitInstaller {
         // A file sink instead of a pipe: no deadlock however much the step logs.
         val log = Files.createTempFile("jmix-agent-toolkit", ".log")
         try {
-            val process = ProcessBuilder(command)
+            val builder = ProcessBuilder(command)
                 .directory(projectDir.toFile())
                 .redirectErrorStream(true)
                 .redirectOutput(log.toFile())
-                .start()
+            // A pwsh-flavored PSModulePath inherited from the parent (pwsh
+            // terminals, GitHub Actions) breaks Windows PowerShell 5.1 module
+            // autoloading (Get-FileHash etc.); let the shell rebuild its own.
+            builder.environment().remove("PSModulePath")
+            val process = builder.start()
             if (!process.waitFor(STEP_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
                 // Wait out the kill so the log file is closed before cleanup;
                 // otherwise Windows masks the timeout with a file-lock error.
