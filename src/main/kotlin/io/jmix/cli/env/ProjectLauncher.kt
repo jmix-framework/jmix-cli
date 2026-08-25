@@ -64,13 +64,18 @@ object ProjectLauncher {
         }
     }
 
-    /** Runs the Gradle wrapper [task] in [projectDir], streaming output to this terminal. */
-    fun runGradle(projectDir: Path, task: String): Int =
-        ProcessBuilder(gradleCommand(task))
+    /**
+     * Runs the Gradle wrapper [task] in [projectDir], streaming output to this
+     * terminal. [javaHome], when given, is exported as JAVA_HOME so the wrapper
+     * uses a compatible JDK regardless of the shell environment.
+     */
+    fun runGradle(projectDir: Path, task: String, javaHome: Path? = null): Int {
+        val builder = ProcessBuilder(gradleCommand(task))
             .directory(projectDir.toFile())
             .inheritIO()
-            .start()
-            .waitFor()
+        javaHome?.let { builder.environment()["JAVA_HOME"] = it.toString() }
+        return builder.start().waitFor()
+    }
 
     fun browserCommand(url: String, os: String = System.getProperty("os.name")): List<String> = when {
         isMac(os) -> listOf("open", url)

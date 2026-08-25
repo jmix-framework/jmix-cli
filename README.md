@@ -55,8 +55,11 @@ their defaults; the wizard fails only when a required value has no default.
 
 After generation the wizard offers to open the new project — in IntelliJ IDEA
 when it is installed, otherwise in the system file manager — and run it right
-away; once the application starts, it opens in the browser. The offer defaults
-to "no" and is skipped in non-interactive runs.
+away; once the application starts, it opens in the browser. When no compatible
+JDK is found, the run downloads one automatically (Eclipse Temurin, verified
+against its published checksum, into `~/.jmix/jdks`); declining the run offers
+the same JDK installation as a separate step. The offer defaults to "no" and
+is skipped in non-interactive runs.
 
 ### Non-interactive generation
 

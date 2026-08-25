@@ -18,6 +18,7 @@ object JdkDetector {
             System.getenv("JAVA_HOME")?.let { add(Path.of(it)) }
             javaFromPath()?.let { add(it) }
             addAll(sdkmanJdks())
+            addAll(managedJdks())
             addAll(osStandardJdks())
         }
         return candidates
@@ -46,6 +47,10 @@ object JdkDetector {
         return listChildren(dir).filterNot { it.fileName.toString() == "current" }
     }
 
+    /** JDKs installed by the CLI itself (see [JdkInstaller]). */
+    private fun managedJdks(): List<Path> =
+        listChildren(JdkInstaller.defaultJdksDir()).map(::withMacBundleHome)
+
     private fun osStandardJdks(): List<Path> {
         val os = System.getProperty("os.name").lowercase()
         val roots = when {
@@ -56,11 +61,13 @@ object JdkDetector {
             )
             else -> listOf(Path.of("/usr/lib/jvm"))
         }
-        return roots.flatMap { listChildren(it) }.map {
-            // macOS JDK bundles keep the actual home under Contents/Home.
-            val bundled = it.resolve("Contents/Home")
-            if (Files.isDirectory(bundled)) bundled else it
-        }
+        return roots.flatMap { listChildren(it) }.map(::withMacBundleHome)
+    }
+
+    /** macOS JDK bundles keep the actual home under Contents/Home. */
+    private fun withMacBundleHome(jdkDir: Path): Path {
+        val bundled = jdkDir.resolve("Contents/Home")
+        return if (Files.isDirectory(bundled)) bundled else jdkDir
     }
 
     private fun listChildren(dir: Path): List<Path> =

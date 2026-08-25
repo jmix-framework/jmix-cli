@@ -15,6 +15,7 @@ import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.widgets.SelectList
 import io.jmix.cli.env.EnvironmentCheck
+import io.jmix.cli.env.JdkInstaller
 import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.generator.JmixLocale
 import io.jmix.cli.generator.ProjectCreationInfo
@@ -572,19 +573,70 @@ class NewCommand : CliktCommand(name = "new") {
         // abort with a non-zero exit after the project was already created.
         if (!interactive || !terminal.terminalInfo.inputInteractive) return
         val question = "Open the project and run ./gradlew $runTask now?"
-        if (!prompts.askYesNo(question, default = false).requireValue()) return
+        if (!prompts.askYesNo(question, default = false).requireValue()) {
+            offerJdkInstall(info)
+            return
+        }
 
         val open = ProjectLauncher.openCommand(info.projectDir)
         terminal.println(gray("Opening the project in ${open.opener.displayName}..."))
         ProjectLauncher.open(open) { terminal.println(brightYellow("Warning: $it")) }
 
+        val javaHome = compatibleJdkHome(info) ?: installJdk(info) ?: run {
+            terminal.println(brightYellow("Skipping the run — no compatible JDK is available."))
+            return
+        }
+
         terminal.println(gray("Running ./gradlew $runTask (Ctrl+C to stop)..."))
         if (runTask == "bootRun") {
             openAppInBrowserWhenReady(info)
         }
-        val exitCode = ProjectLauncher.runGradle(info.projectDir, runTask)
+        val exitCode = ProjectLauncher.runGradle(info.projectDir, runTask, javaHome)
         if (exitCode != 0) {
             terminal.println(brightYellow("Gradle finished with exit code $exitCode."))
+        }
+    }
+
+    /** Offered when the user declines the run: install what a later run needs. */
+    private fun offerJdkInstall(info: ProjectCreationInfo) {
+        if (compatibleJdkHome(info) != null) return
+        val major = jdkVersionToInstall(info)
+        val question = "No compatible JDK was found. Install JDK $major (Temurin) now so the project can run later?"
+        if (prompts.askYesNo(question, default = true).requireValue()) {
+            installJdk(info)
+        }
+    }
+
+    private fun compatibleJdkHome(info: ProjectCreationInfo): Path? =
+        EnvironmentCheck.checkJdk(info.jmixVersion).compatible.firstOrNull()?.home
+
+    private fun jdkVersionToInstall(info: ProjectCreationInfo): Int =
+        EnvironmentCheck.checkJdk(info.jmixVersion).supportedVersions.max()
+
+    private fun installJdk(info: ProjectCreationInfo): Path? {
+        val major = jdkVersionToInstall(info)
+        terminal.println(gray("Downloading JDK $major (Temurin)..."))
+        return try {
+            var lastPercent = -1
+            val home = JdkInstaller.install(major) { done, total ->
+                if (total > 0) {
+                    val percent = (done * 100 / total).toInt()
+                    if (percent != lastPercent) {
+                        lastPercent = percent
+                        terminal.rawPrint("\r  $percent% of ${total / MEGABYTE} MB")
+                    }
+                }
+            }
+            terminal.println()
+            terminal.println(brightGreen("✓ ") + "Installed JDK $major at " + cyan(home.toString()))
+            home
+        } catch (e: Exception) {
+            // Also covers JSON parse errors from an unexpected API response —
+            // never a stack trace after the project was already generated.
+            terminal.println()
+            terminal.println(brightYellow("Warning: JDK installation failed: ${e.message}"))
+            terminal.println(brightYellow(EnvironmentCheck.installHint(setOf(major))))
+            null
         }
     }
 
@@ -607,6 +659,7 @@ class NewCommand : CliktCommand(name = "new") {
         const val MINOR_VERSIONS_SHOWN = 4
         const val LOCALE_OPTIONS_SHOWN = 6
         const val OTHER_CHOICE = "Other..."
+        const val MEGABYTE = 1024L * 1024
 
         val USEFUL_LINKS = listOf(
             UsefulLink("📖", "Documentation", "https://docs.jmix.io/jmix/intro.html"),
