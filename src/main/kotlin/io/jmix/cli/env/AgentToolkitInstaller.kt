@@ -9,17 +9,21 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 /**
- * Runs the Jmix Agent Toolkit installer
- * (https://github.com/jmix-framework/jmix-agent-toolkit) in a generated
- * project. The toolkit ships its own interactive wizard per Jmix major
- * version — skills, guidelines, MCP servers — so the CLI downloads that
- * script, launches it in the project directory, and lets it drive the
- * terminal. The script is executed from a file with a fixed argument list;
- * no value ever passes through a shell command line.
+ * Installs the Jmix Agent Toolkit
+ * (https://github.com/jmix-framework/jmix-agent-toolkit) into a generated
+ * project: guidelines files and project-local skills for every supported
+ * agent, via the toolkit's non-interactive subcommands. Only the project
+ * directory is written to — global steps (MCP servers, Playwright) are the
+ * toolkit wizard's business, not the CLI's. The downloaded script runs from a
+ * file with a fixed argument list; no value ever passes through a shell
+ * command line.
  */
 object AgentToolkitInstaller {
+
+    val ALL_AGENTS = listOf("claude", "codex", "opencode", "junie")
 
     /** Toolkit branch for a Jmix version; majors are the only accepted shape. */
     fun branch(jmixVersion: String): String {
@@ -33,27 +37,67 @@ object AgentToolkitInstaller {
         return "$RAW_CONTENT_BASE/${branch(jmixVersion)}/$script"
     }
 
-    fun command(scriptFile: Path, os: String = System.getProperty("os.name")): List<String> =
+    fun skillsArgs(os: String = System.getProperty("os.name")): List<String> =
         if (isWindows(os)) {
-            listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptFile.toString())
+            listOf("skills", "-Agents", AGENTS_CSV, "-Scope", "local")
         } else {
-            listOf("bash", scriptFile.toString())
+            listOf("skills", "--agents", AGENTS_CSV, "--scope", "local")
         }
 
-    /** Runs the toolkit's interactive wizard in [projectDir] on this terminal. */
-    fun run(projectDir: Path, jmixVersion: String): Int {
+    fun guidelinesArgs(os: String = System.getProperty("os.name")): List<String> =
+        if (isWindows(os)) {
+            listOf("agents-md", "-Agents", AGENTS_CSV)
+        } else {
+            listOf("agents-md", "--agents", AGENTS_CSV)
+        }
+
+    fun command(scriptFile: Path, args: List<String>, os: String = System.getProperty("os.name")): List<String> =
+        if (isWindows(os)) {
+            listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptFile.toString()) + args
+        } else {
+            listOf("bash", scriptFile.toString()) + args
+        }
+
+    /** Installs guidelines files and project-local skills into [projectDir]. */
+    fun installGuidelinesAndSkills(projectDir: Path, jmixVersion: String) {
         val suffix = if (isWindows()) ".ps1" else ".sh"
         val script = Files.createTempFile("jmix-agent-toolkit", suffix)
         try {
             download(installerUrl(jmixVersion), script)
-            return ProcessBuilder(command(script))
-                .directory(projectDir.toFile())
-                .inheritIO()
-                .start()
-                .waitFor()
+            runStep(projectDir, command(script, skillsArgs()), "skills")
+            runStep(projectDir, command(script, guidelinesArgs()), "guidelines")
         } finally {
             Files.deleteIfExists(script)
         }
+    }
+
+    private fun runStep(projectDir: Path, command: List<String>, label: String) {
+        // A file sink instead of a pipe: no deadlock however much the step logs.
+        val log = Files.createTempFile("jmix-agent-toolkit", ".log")
+        try {
+            val process = ProcessBuilder(command)
+                .directory(projectDir.toFile())
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile())
+                .start()
+            if (!process.waitFor(STEP_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
+                // Wait out the kill so the log file is closed before cleanup;
+                // otherwise Windows masks the timeout with a file-lock error.
+                process.destroyForcibly().waitFor(10, TimeUnit.SECONDS)
+                throw IOException("Timed out installing the Agent Toolkit $label.")
+            }
+            if (process.exitValue() != 0) {
+                throw IOException("Agent Toolkit $label step failed: ${logTail(log)}")
+            }
+        } finally {
+            Files.deleteIfExists(log)
+        }
+    }
+
+    private fun logTail(log: Path): String = try {
+        Files.readAllLines(log).takeLast(3).joinToString(" ").trim().take(300).ifEmpty { "no output" }
+    } catch (e: IOException) {
+        "no output"
     }
 
     private fun download(url: String, target: Path) {
@@ -74,6 +118,8 @@ object AgentToolkitInstaller {
         .connectTimeout(Duration.ofSeconds(15))
         .build()
 
+    private val AGENTS_CSV = ALL_AGENTS.joinToString(",")
+    private const val STEP_TIMEOUT_MINUTES = 10L
     private const val RAW_CONTENT_BASE =
         "https://raw.githubusercontent.com/jmix-framework/jmix-agent-toolkit"
 }

@@ -146,8 +146,8 @@ class NewCommand : CliktCommand(name = "new") {
             throw CliktError("Project generation failed: ${e.message ?: e.toString()}")
         }
 
+        installAgentToolkit(info)
         printSuccess(info)
-        offerAgentToolkit(info)
         offerOpenAndRun(info)
     }
 
@@ -616,24 +616,18 @@ class NewCommand : CliktCommand(name = "new") {
     }
 
     /**
-     * Offers the Jmix Agent Toolkit setup. The toolkit's own wizard asks for
-     * every detail (agents, scope, MCP servers), so a "yes" simply hands the
-     * terminal over to it in the project directory.
+     * Installs the Jmix Agent Toolkit automatically: guidelines files and
+     * project-local skills for every supported agent. A failure must never
+     * fail the already-generated project — warn and move on.
      */
-    private fun offerAgentToolkit(info: ProjectCreationInfo) {
-        if (!interactive || !terminal.terminalInfo.inputInteractive) return
-        val question = "Set up the Jmix Agent Toolkit — skills and guidelines for AI coding agents?"
-        if (!prompts.askYesNo(question, default = true).requireValue()) return
-        terminal.println(gray("Starting the Jmix Agent Toolkit installer..."))
-        val exitCode = try {
-            AgentToolkitInstaller.run(info.projectDir, info.jmixVersion)
+    private fun installAgentToolkit(info: ProjectCreationInfo) {
+        terminal.println(gray("Installing the Jmix Agent Toolkit (guidelines and skills for AI coding agents)..."))
+        try {
+            AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion)
+            summary("Agent Toolkit", "guidelines and local skills for ${AgentToolkitInstaller.ALL_AGENTS.joinToString(", ")}")
         } catch (e: Exception) {
-            terminal.println(brightYellow("Warning: failed to start the Agent Toolkit installer: ${e.message}"))
-            return
-        }
-        if (exitCode != 0) {
-            terminal.println(brightYellow("Agent Toolkit installer finished with exit code $exitCode."))
-            terminal.println(brightYellow("You can rerun it later: see https://github.com/jmix-framework/jmix-agent-toolkit"))
+            terminal.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
+            terminal.println(brightYellow("Install it later: https://github.com/jmix-framework/jmix-agent-toolkit"))
         }
     }
 
@@ -704,6 +698,7 @@ class NewCommand : CliktCommand(name = "new") {
         val USEFUL_LINKS = listOf(
             UsefulLink("📖", "Documentation", "https://docs.jmix.io/jmix/intro.html"),
             UsefulLink("🤖", "AI Assistant", "https://ai-assistant.jmix.io/"),
+            UsefulLink("🧰", "Agent Toolkit", "https://github.com/jmix-framework/jmix-agent-toolkit"),
             UsefulLink("🧩", "Samples", "https://github.com/jmix-framework/jmix-samples-2"),
             UsefulLink("💬", "Forum", "https://forum.jmix.io/"),
         )
