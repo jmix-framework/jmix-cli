@@ -51,6 +51,10 @@ tasks.test {
             .map { it.equals("true", ignoreCase = true) }
             .orElse(false),
     )
+    testLogging {
+        // Full failure messages in CI logs; the short form hides them.
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }
 
 tasks.named<JavaExec>("run") {
