@@ -19,7 +19,7 @@ try {
         -InstallRoot $installRoot `
         -BinDir $binDir `
         -NoRun `
-        -SkipPathUpdate | Out-String
+        -SkipPathUpdate *>&1 | Out-String
     if ($firstOutput -notmatch "Installed Jmix CLI") {
         throw "Installer did not report a new installation."
     }
@@ -39,7 +39,7 @@ try {
         -InstallRoot $installRoot `
         -BinDir $binDir `
         -NoRun `
-        -SkipPathUpdate | Out-String
+        -SkipPathUpdate *>&1 | Out-String
     $versionCountAfter = @(Get-ChildItem -LiteralPath (Join-Path $installRoot "versions") -Directory).Count
     if ($secondOutput -notmatch "already up to date" -or $versionCountBefore -ne $versionCountAfter) {
         throw "Repeated installation was not idempotent."
@@ -50,7 +50,7 @@ try {
         -InstallRoot $installRoot `
         -BinDir $binDir `
         -SkipPathUpdate `
-        -CliArguments "--help" | Out-String
+        -CliArguments "--help" *>&1 | Out-String
     if ($startOutput -notmatch "Starting the Jmix project wizard" -or $startOutput -notmatch "Jmix CLI") {
         throw "Installer did not start the CLI."
     }
