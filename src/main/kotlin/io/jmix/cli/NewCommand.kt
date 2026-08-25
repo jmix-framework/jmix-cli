@@ -27,6 +27,7 @@ import io.jmix.cli.template.TemplateCatalog
 import io.jmix.cli.template.TemplateParams
 import io.jmix.cli.util.PlatformVersions
 import io.jmix.cli.wizard.Answer
+import io.jmix.cli.wizard.PathCompleter
 import io.jmix.cli.wizard.Prompts
 import io.jmix.cli.wizard.Validation
 import io.jmix.cli.wizard.WizardChoice
@@ -449,13 +450,28 @@ class NewCommand : CliktCommand(name = "new") {
             state = state.copy(targetDir = toAbsolutePath(it))
             return Outcome.AUTO
         }
-        val default = state.targetDir?.toString()
-            ?: Path.of("").toAbsolutePath().resolve(state.name!!).toString()
         if (!interactive) {
+            // Scripts get the conventional CWD-relative default.
+            val default = state.targetDir?.toString()
+                ?: Path.of("").toAbsolutePath().resolve(state.name!!).toString()
             state = state.copy(targetDir = toAbsolutePath(default))
             return Outcome.AUTO
         }
-        return when (val answer = prompts.ask("Enter project location", default, allowBack = true)) {
+        // The wizard suggests the JetBrains-style projects directory. Piped
+        // input falling back to defaults keeps the script-friendly CWD path.
+        val humanAtKeyboard = terminal.terminalInfo.inputInteractive && !prompts.isInputExhausted
+        val default = state.targetDir?.toString()
+            ?: if (humanAtKeyboard) {
+                Path.of(System.getProperty("user.home"), "IdeaProjects", state.name!!).toString()
+            } else {
+                Path.of("").toAbsolutePath().resolve(state.name!!).toString()
+            }
+        return when (
+            val answer = prompts.ask(
+                "Enter project location", default, allowBack = true,
+                complete = { PathCompleter.complete(it) },
+            )
+        ) {
             is Answer.Back -> Outcome.BACK
             is Answer.Value -> {
                 val targetDir = toAbsolutePath(answer.value)

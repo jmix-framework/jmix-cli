@@ -336,6 +336,40 @@ class PromptsTest {
         assertTrue(error.message!!.contains("--non-interactive"))
     }
 
+    @Test
+    fun `tab completes the typed path prefix`() {
+        val recorder = ResizingTerminalInterface(initialSize = Size(100, 40), sizesAfterInput = emptyList())
+        recorder.inputEvents += listOf(KeyboardEvent("d"), KeyboardEvent("Tab"), KeyboardEvent("Enter"))
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val answer = prompts.ask(
+            "Enter project location", default = "unused", allowBack = true,
+            complete = { input -> PathCompletion("${input}ocs/", emptyList()) },
+        ).requireValue()
+
+        assertEquals("docs/", answer)
+        assertTrue(recorder.output().contains("tab"), "bar should advertise tab completion")
+    }
+
+    @Test
+    fun `tab with no progress lists candidates and keeps the input`() {
+        val recorder = ResizingTerminalInterface(initialSize = Size(100, 40), sizesAfterInput = emptyList())
+        recorder.inputEvents += listOf(
+            KeyboardEvent("I"), KeyboardEvent("d"),
+            KeyboardEvent("Tab"),
+            KeyboardEvent("Enter"),
+        )
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val answer = prompts.ask(
+            "Enter project location", default = "unused", allowBack = true,
+            complete = { input -> PathCompletion(input, listOf("IdeaProjects", "IdeaSettings")) },
+        ).requireValue()
+
+        assertEquals("Id", answer)
+        assertTrue(recorder.output().contains("IdeaProjects  IdeaSettings"))
+    }
+
     private fun withEmptyStdin(block: () -> Unit) {
         val original = System.`in`
         System.setIn(ByteArrayInputStream(ByteArray(0)))

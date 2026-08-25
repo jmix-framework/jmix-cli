@@ -129,6 +129,7 @@ class Prompts(
         question: String,
         default: String? = null,
         allowBack: Boolean = false,
+        complete: ((String) -> PathCompletion)? = null,
         validate: (String) -> String? = { null },
     ): Answer<String> {
         if (isInputExhausted) return defaultAnswer(default, validate)
@@ -138,7 +139,7 @@ class Prompts(
             questionStyle(":") + " "
         val promptWidth = question.length + hintPlain.length + 2
         while (true) {
-            val line = when (val input = readLineWithBar(prompt, promptWidth, allowBack)) {
+            val line = when (val input = readLineWithBar(prompt, promptWidth, allowBack, complete)) {
                 is LineInput.Back -> return Answer.Back
                 is LineInput.Text -> input.text
             }
@@ -508,8 +509,13 @@ class Prompts(
             if (allowBack) add("esc" to "back")
         }
 
-    private fun typedBarParts(allowBack: Boolean, rawMode: Boolean): List<Pair<String, String>> =
+    private fun typedBarParts(
+        allowBack: Boolean,
+        rawMode: Boolean,
+        hasCompletion: Boolean = false,
+    ): List<Pair<String, String>> =
         buildList {
+            if (hasCompletion) add("tab" to "complete")
             add("enter" to "confirm")
             // Without raw mode the terminal only delivers whole lines, so Esc
             // cannot be detected — fall back to typing `<`.
@@ -526,8 +532,13 @@ class Prompts(
      * In raw mode Esc returns [LineInput.Back]; otherwise the caller accepts
      * `<` as the back sentinel.
      */
-    private fun readLineWithBar(prompt: String, promptWidth: Int, allowBack: Boolean): LineInput {
-        val rawMode = if (allowBack) terminal.enterRawModeOrNull() else null
+    private fun readLineWithBar(
+        prompt: String,
+        promptWidth: Int,
+        allowBack: Boolean,
+        complete: ((String) -> PathCompletion)? = null,
+    ): LineInput {
+        val rawMode = if (allowBack || complete != null) terminal.enterRawModeOrNull() else null
         if (rawMode == null) {
             printPromptWithBar(prompt, promptWidth, typedBarParts(allowBack, rawMode = false))
             val line = readlnOrNull()
@@ -544,14 +555,15 @@ class Prompts(
             clearPromptWithBar(cursorOnPrompt = false)
             return LineInput.Text(line)
         }
-        printPromptWithBar(prompt, promptWidth, typedBarParts(allowBack, rawMode = true))
+        val barParts = typedBarParts(allowBack, rawMode = true, hasCompletion = complete != null)
+        printPromptWithBar(prompt, promptWidth, barParts)
         val buffer = StringBuilder()
         rawMode.use { scope ->
             while (true) {
                 val key = runCatching { scope.readKey() }.getOrElse { abort() }
                 when {
                     key.isCtrlC -> abort()
-                    key.key == "Escape" -> {
+                    key.key == "Escape" && allowBack -> {
                         clearPromptWithBar(cursorOnPrompt = true)
                         return LineInput.Back
                     }
@@ -563,6 +575,8 @@ class Prompts(
                         buffer.deleteCharAt(buffer.length - 1)
                         terminal.print("\b \b")
                     }
+                    key.key == "Tab" && complete != null ->
+                        applyCompletion(complete(buffer.toString()), buffer, prompt, promptWidth, barParts)
                     // Printable single characters; ignore other control keys.
                     key.key.length == 1 && !key.ctrl && !key.alt -> {
                         buffer.append(key.key)
@@ -571,6 +585,34 @@ class Prompts(
                 }
             }
         }
+    }
+
+    /**
+     * Applies one Tab press: extends the buffer with the completed text, or —
+     * when the input is already at the longest common prefix — lists the
+     * candidates above a freshly repainted prompt.
+     */
+    private fun applyCompletion(
+        completion: PathCompletion,
+        buffer: StringBuilder,
+        prompt: String,
+        promptWidth: Int,
+        barParts: List<Pair<String, String>>,
+    ) {
+        val current = buffer.toString()
+        if (completion.text != current && completion.text.startsWith(current)) {
+            val suffix = completion.text.removePrefix(current)
+            buffer.append(suffix)
+            terminal.print(suffix)
+            return
+        }
+        if (completion.candidates.isEmpty()) return
+        clearPromptWithBar(cursorOnPrompt = true)
+        val shown = completion.candidates.take(COMPLETION_CANDIDATES_SHOWN)
+        val ellipsis = if (completion.candidates.size > shown.size) "  …" else ""
+        terminal.println(gray(shown.joinToString("  ") + ellipsis))
+        printPromptWithBar(prompt, promptWidth, barParts)
+        terminal.print(current)
     }
 
     /** Key hints with highlighted keys, so the bar stands out from content. */
@@ -627,6 +669,7 @@ class Prompts(
 
     private companion object {
         const val BACK_INPUT = "<"
+        const val COMPLETION_CANDIDATES_SHOWN = 8
         const val YES = "Yes"
         const val NO = "No"
         const val RULE_CHAR = "─"

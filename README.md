@@ -47,7 +47,8 @@ Selection lists display their controls at the bottom:
 ↑ up • ↓ down • space toggle • enter confirm • esc back
 ```
 
-Press Enter to accept a default and Esc to return to the previous step. In
+Press Enter to accept a default and Esc to return to the previous step. On the
+project location step, Tab completes directory paths. In
 consoles without raw terminal support, the wizard falls back to numbered lists
 and line-based input; its navigation bar shows `< back` because Esc cannot be
 captured there. When piped input runs out mid-wizard, the remaining steps use
@@ -85,7 +86,7 @@ jmix new jmix-project \
 | `--project-id`       | Prefix for entity, table, and bean names; maximum 7 characters | Template default                     |
 | `--theme`            | UI theme: `aura` or `lumo`                                     | Depends on Jmix version and template |
 | `--locales`          | Comma-separated locale codes                                   | `en`                                 |
-| `--path`             | Target directory                                               | `./<project-name>`                   |
+| `--path`             | Target directory                                               | `./<project-name>` (the wizard suggests `~/IdeaProjects/<project-name>`) |
 | `--repository`       | Maven repository containing Jmix templates                     | Jmix public repository               |
 | `--no-git`           | Do not initialize a Git repository                             | Git initialization enabled           |
 | `--include-unstable` | Include RC and snapshot versions in version selection          | Disabled                             |
