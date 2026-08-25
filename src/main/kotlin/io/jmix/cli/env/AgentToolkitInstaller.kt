@@ -95,7 +95,8 @@ object AgentToolkitInstaller {
     }
 
     private fun logTail(log: Path): String = try {
-        Files.readAllLines(log).takeLast(3).joinToString(" ").trim().take(300).ifEmpty { "no output" }
+        Files.readAllLines(log).takeLast(12).joinToString(" ") { it.trim() }
+            .trim().take(700).ifEmpty { "no output" }
     } catch (e: IOException) {
         "no output"
     }
