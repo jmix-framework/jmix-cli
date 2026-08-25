@@ -30,10 +30,10 @@ class AgentToolkitInstallerTest {
 
     @Test
     fun `runs the downloaded script as a file argument, never through a shell string`() {
-        val script = Path.of("/tmp/toolkit.sh")
-        assertEquals(listOf("bash", "/tmp/toolkit.sh"), AgentToolkitInstaller.command(script, os = "Linux"))
+        val script = Path.of("tmp", "toolkit.sh")
+        assertEquals(listOf("bash", script.toString()), AgentToolkitInstaller.command(script, os = "Linux"))
         assertEquals(
-            listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "/tmp/toolkit.sh"),
+            listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString()),
             AgentToolkitInstaller.command(script, os = "Windows 11"),
         )
     }
