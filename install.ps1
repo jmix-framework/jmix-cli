@@ -24,9 +24,12 @@ if ($env:OS -ne "Windows_NT") {
     throw "Jmix CLI installer: install.ps1 supports Windows only."
 }
 
-$architecture = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
-    "X64" { "x64" }
-    default { throw "Jmix CLI installer: only Windows x64 is currently supported (detected: $_)." }
+# [Runtime.InteropServices.RuntimeInformation]::OSArchitecture returns null in some
+# Windows PowerShell 5.1 environments, so detect the architecture via environment variables.
+$osArchitecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+$architecture = switch ($osArchitecture) {
+    "AMD64" { "x64" }
+    default { throw "Jmix CLI installer: only Windows x64 is currently supported (detected: $osArchitecture)." }
 }
 
 $archiveName = "jmix-cli-windows-$architecture.zip"
@@ -56,7 +59,11 @@ try {
     Copy-ReleaseAsset -Name $archiveName -Destination $archiveFile
     Copy-ReleaseAsset -Name $checksumName -Destination $checksumFile
 
-    $expectedChecksum = ((Get-Content -LiteralPath $checksumFile -Raw).Trim() -split "\s+")[0].ToLowerInvariant()
+    $checksumContent = Get-Content -LiteralPath $checksumFile -Raw
+    if ([string]::IsNullOrWhiteSpace($checksumContent)) {
+        throw "Jmix CLI installer: invalid checksum file for $archiveName."
+    }
+    $expectedChecksum = ($checksumContent.Trim() -split "\s+")[0].ToLowerInvariant()
     if ($expectedChecksum -notmatch "^[0-9a-f]{64}$") {
         throw "Jmix CLI installer: invalid checksum file for $archiveName."
     }

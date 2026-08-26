@@ -76,6 +76,26 @@ try {
         throw "Installer accepted a release with an invalid checksum."
     }
 
+    $emptyChecksumDir = Join-Path $tempDir "empty-checksum-release"
+    New-Item -ItemType Directory -Path $emptyChecksumDir | Out-Null
+    Copy-Item -LiteralPath $archive.FullName -Destination $emptyChecksumDir
+    Set-Content -LiteralPath (Join-Path $emptyChecksumDir "$($archive.Name).sha256") -Value "" -NoNewline
+
+    $emptyChecksumRejected = $false
+    try {
+        & (Join-Path $repoRoot "install.ps1") `
+            -ReleaseBaseUrl $emptyChecksumDir `
+            -InstallRoot (Join-Path $tempDir "empty-checksum-install") `
+            -BinDir (Join-Path $tempDir "empty-checksum-bin") `
+            -NoRun `
+            -SkipPathUpdate
+    } catch {
+        $emptyChecksumRejected = $_.Exception.Message -match "invalid checksum file"
+    }
+    if (-not $emptyChecksumRejected) {
+        throw "Installer accepted an empty checksum file."
+    }
+
     $unmanagedBinDir = Join-Path $tempDir "unmanaged-bin"
     $unmanagedCommand = Join-Path $unmanagedBinDir "jmix.cmd"
     New-Item -ItemType Directory -Path $unmanagedBinDir | Out-Null
