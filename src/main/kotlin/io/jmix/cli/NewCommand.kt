@@ -60,6 +60,7 @@ class NewCommand : CliktCommand(name = "new") {
     /** Answers collected so far; previous answers become defaults on revisit. */
     private data class WizardState(
         val name: String? = null,
+        val repositoryUrl: String? = null,
         val jmixVersion: String? = null,
         val template: Template? = null,
         val rootPackage: String? = null,
@@ -72,6 +73,7 @@ class NewCommand : CliktCommand(name = "new") {
         fun toUiState(activeStepIndex: Int): WizardUiState {
             val choices = listOf(
                 name?.let { WizardChoice("Project name", it) },
+                repositoryUrl?.let { WizardChoice("Repository", it) },
                 jmixVersion?.let { WizardChoice("Jmix version", it) },
                 template?.let { WizardChoice("Template", "${it.id} — ${it.displayName}") },
                 rootPackage?.let { WizardChoice("Base package", it) },
@@ -114,9 +116,6 @@ class NewCommand : CliktCommand(name = "new") {
     }
 
     private fun createProject() {
-        repositoryUrl = repositoryOpt ?: ProjectCreationInfo.DEFAULT_REPOSITORY_URL
-        repo = TemplateRepository(repositoryUrl)
-
         runWizardSteps()
 
         val targetDir = state.targetDir!!
@@ -157,7 +156,7 @@ class NewCommand : CliktCommand(name = "new") {
      */
     private fun runWizardSteps() {
         val steps = listOf(
-            ::stepName, ::stepVersion, ::stepTemplate, ::stepPackage,
+            ::stepName, ::stepRepository, ::stepVersion, ::stepTemplate, ::stepPackage,
             ::stepProjectId, ::stepTheme, ::stepLocales, ::stepPath, ::stepGit,
         )
         val prompted = BooleanArray(steps.size)
@@ -217,6 +216,51 @@ class NewCommand : CliktCommand(name = "new") {
         return generateSequence(1) { it + 1 }
             .map { "untitled$it" }
             .first { !Files.exists(cwd.resolve(it)) }
+    }
+
+    private fun stepRepository(): Outcome {
+        repositoryOpt?.let { url ->
+            Validation.validateRepositoryUrl(url)?.let { throw CliktError(it) }
+            applyRepository(url)
+            return Outcome.AUTO
+        }
+        val default = ProjectCreationInfo.DEFAULT_REPOSITORY_URL
+        if (!interactive) {
+            applyRepository(default)
+            return Outcome.AUTO
+        }
+        val known = listOf(default, BACKUP_REPOSITORY_URL)
+        val previousCustom = state.repositoryUrl?.takeIf { it !in known }
+        val url = when (val picked = prompts.choose(
+            "Select artifact repository", known + OTHER_CHOICE, { it }, allowBack = true,
+        )) {
+            is Answer.Back -> return Outcome.BACK
+            is Answer.Value -> if (picked.value == OTHER_CHOICE) {
+                when (val typed = prompts.ask(
+                    "Enter Maven repository URL", previousCustom, allowBack = true,
+                    validate = Validation::validateRepositoryUrl,
+                )) {
+                    is Answer.Back -> return Outcome.BACK
+                    is Answer.Value -> typed.value
+                }
+            } else picked.value
+        }
+        applyRepository(url)
+        summary("Repository", url)
+        return Outcome.PROMPTED
+    }
+
+    /** Switches the template source; a changed URL drops version and catalog caches. */
+    private fun applyRepository(url: String) {
+        if (state.repositoryUrl != url) {
+            repo = TemplateRepository(url)
+            versionsCache = null
+            catalog?.close()
+            catalog = null
+            catalogVersion = null
+        }
+        repositoryUrl = url
+        state = state.copy(repositoryUrl = url)
     }
 
     private fun stepVersion(): Outcome {
@@ -452,36 +496,38 @@ class NewCommand : CliktCommand(name = "new") {
             state = state.copy(targetDir = toAbsolutePath(it))
             return Outcome.AUTO
         }
+        val currentDir = Path.of("").toAbsolutePath().resolve(state.name!!).normalize()
         if (!interactive) {
             // Scripts get the conventional CWD-relative default.
-            val default = state.targetDir?.toString()
-                ?: Path.of("").toAbsolutePath().resolve(state.name!!).toString()
-            state = state.copy(targetDir = toAbsolutePath(default))
+            state = state.copy(targetDir = state.targetDir ?: currentDir)
             return Outcome.AUTO
         }
-        // The wizard suggests the JetBrains-style projects directory. Piped
-        // input falling back to defaults keeps the script-friendly CWD path.
-        val humanAtKeyboard = terminal.terminalInfo.inputInteractive && !prompts.isInputExhausted
-        val default = state.targetDir?.toString()
-            ?: if (humanAtKeyboard) {
-                Path.of(System.getProperty("user.home"), "IdeaProjects", state.name!!).toString()
-            } else {
-                Path.of("").toAbsolutePath().resolve(state.name!!).toString()
-            }
-        return when (
-            val answer = prompts.ask(
-                "Enter project location", default, allowBack = true,
-                complete = { PathCompleter.complete(it) },
-            )
-        ) {
-            is Answer.Back -> Outcome.BACK
-            is Answer.Value -> {
-                val targetDir = toAbsolutePath(answer.value)
-                state = state.copy(targetDir = targetDir)
-                summary("Location", targetDir.toString())
-                Outcome.PROMPTED
+        val ideaDir = Path.of(System.getProperty("user.home"), "IdeaProjects", state.name!!)
+        val options = listOf(
+            "Current directory" to currentDir,
+            "IdeaProjects" to ideaDir,
+            OTHER_CHOICE to null,
+        )
+        val targetDir = when (val picked = prompts.choose(
+            "Select project location", options, { it.first },
+            { it.second?.toString() }, allowBack = true,
+        )) {
+            is Answer.Back -> return Outcome.BACK
+            is Answer.Value -> picked.value.second ?: run {
+                val previousCustom = state.targetDir?.takeIf { it != currentDir && it != ideaDir }
+                when (val typed = prompts.ask(
+                    "Enter project location", previousCustom?.toString(), allowBack = true,
+                    complete = { PathCompleter.complete(it) },
+                    validate = { if (it.isBlank()) "Path cannot be empty." else null },
+                )) {
+                    is Answer.Back -> return Outcome.BACK
+                    is Answer.Value -> toAbsolutePath(typed.value)
+                }
             }
         }
+        state = state.copy(targetDir = targetDir)
+        summary("Location", targetDir.toString())
+        return Outcome.PROMPTED
     }
 
     private fun toAbsolutePath(raw: String): Path {
@@ -586,20 +632,38 @@ class NewCommand : CliktCommand(name = "new") {
     }
 
     private fun offerOpenAndRun(info: ProjectCreationInfo) {
-        val runTask = runTaskFor(info) ?: return
         // Only when a human can answer. Piped stdin would hit EOF here and
         // abort with a non-zero exit after the project was already created.
         if (!interactive || !terminal.terminalInfo.inputInteractive) return
-        val question = "Open the project and run ./gradlew $runTask now?"
-        if (!prompts.askYesNo(question, default = false).requireValue()) {
-            offerJdkInstall(info)
-            return
+        val runTask = runTaskFor(info)
+        val open = ProjectLauncher.openCommand(info.projectDir)
+        val openChoice = "Open the project in ${open.opener.displayName}"
+        // Composite aggregator projects have no runnable task — offer only the open.
+        val runChoice = runTask?.let { "Run the application (./gradlew $it)" }
+
+        val entries = listOfNotNull(openChoice, runChoice).map { SelectList.Entry(it) }
+        val picked = when (val answer = prompts.chooseMany("What's next?", entries)) {
+            // No arrow-key widget: one yes/no question per option instead.
+            null -> listOfNotNull(
+                openChoice.takeIf { prompts.askYesNo("$openChoice?", default = false).requireValue() },
+                runChoice?.takeIf { prompts.askYesNo("$runChoice?", default = false).requireValue() },
+            )
+            is Answer.Back -> emptyList()
+            is Answer.Value -> answer.value
         }
 
-        val open = ProjectLauncher.openCommand(info.projectDir)
-        terminal.println(gray("Opening the project in ${open.opener.displayName}..."))
-        ProjectLauncher.open(open) { terminal.println(brightYellow("Warning: $it")) }
+        if (openChoice in picked) {
+            terminal.println(gray("Opening the project in ${open.opener.displayName}..."))
+            ProjectLauncher.open(open) { terminal.println(brightYellow("Warning: $it")) }
+        }
+        if (runChoice != null && runChoice in picked) {
+            runApplication(info, runTask)
+        } else if (runTask != null) {
+            offerJdkInstall(info)
+        }
+    }
 
+    private fun runApplication(info: ProjectCreationInfo, runTask: String) {
         val javaHome = compatibleJdkHome(info) ?: installJdk(info) ?: run {
             terminal.println(brightYellow("Skipping the run — no compatible JDK is available."))
             return
@@ -694,6 +758,9 @@ class NewCommand : CliktCommand(name = "new") {
         const val LOCALE_OPTIONS_SHOWN = 6
         const val OTHER_CHOICE = "Other..."
         const val MEGABYTE = 1024L * 1024
+
+        // Studio's RepoConfigurationItem offers the same two Jmix repositories.
+        const val BACKUP_REPOSITORY_URL = "https://nexus.jmix.io/repository/public"
 
         val USEFUL_LINKS = listOf(
             UsefulLink("📖", "Documentation", "https://docs.jmix.io/jmix/intro.html"),

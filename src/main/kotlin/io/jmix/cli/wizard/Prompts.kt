@@ -427,7 +427,7 @@ class Prompts(
             else -> state.entries[index].title
         }
         return if (state.multi) {
-            val marker = if (selected) brightGreen("✓") else gray("•")
+            val marker = if (selected) brightGreen("[x]") else gray("[ ]")
             "$cursor $marker $title"
         } else {
             "$cursor $title"
@@ -452,8 +452,8 @@ class Prompts(
         fun redraw() {
             val marker = when {
                 !state.multi -> cyan("❯")
-                state.cursorIndex in state.selectedIndices -> cyan("❯ ✓")
-                else -> "❯ •"
+                state.cursorIndex in state.selectedIndices -> cyan("❯ [x]")
+                else -> "❯ [ ]"
             }
             val position = if (state.entries.size > 1) {
                 gray(" ${state.cursorIndex + 1}/${state.entries.size}")

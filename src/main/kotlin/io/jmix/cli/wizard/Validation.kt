@@ -42,6 +42,14 @@ object Validation {
         else -> null
     }
 
+    /** Template repositories are fetched over HTTP; other schemes cannot work. */
+    fun validateRepositoryUrl(value: String): String? = when {
+        value.isBlank() -> "Repository URL cannot be empty."
+        !value.startsWith("http://") && !value.startsWith("https://") ->
+            "Repository URL must start with http:// or https://."
+        else -> null
+    }
+
     /** Studio's ProjectCreator.transformProjectNamespace. */
     fun transformProjectNamespace(src: String): String {
         val result = INVALID_NAMESPACE.replace(src.lowercase(), "")

@@ -45,6 +45,16 @@ class ValidationTest {
     }
 
     @Test
+    fun `repository url validation`() {
+        assertNull(Validation.validateRepositoryUrl("https://global.repo.jmix.io/repository/public"))
+        assertNull(Validation.validateRepositoryUrl("http://nexus.local:8081/repository/jmix"))
+        assertNotNull(Validation.validateRepositoryUrl(""))
+        assertNotNull(Validation.validateRepositoryUrl("   "))
+        assertNotNull(Validation.validateRepositoryUrl("ftp://repo.example.com"))
+        assertNotNull(Validation.validateRepositoryUrl("global.repo.jmix.io/repository/public"))
+    }
+
+    @Test
     fun `transformProjectNamespace ported from Studio`() {
         assertEquals("jmixproject", Validation.transformProjectNamespace("Jmix-Project"))
         assertEquals("app2", Validation.transformProjectNamespace("1app2"))
