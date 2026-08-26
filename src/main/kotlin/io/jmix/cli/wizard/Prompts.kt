@@ -315,7 +315,7 @@ class Prompts(
             var renderedWidth = terminal.size.width
             var renderedHeight = terminal.size.height
             while (true) {
-                val key = runCatching { rawMode.readKeyOrNull(RESIZE_POLL_INTERVAL) }.getOrElse { abort() }
+                val key = readKeyOrNullCompat(rawMode)
                 if (key == null) {
                     terminal.updateSize()
                     if (terminal.size.width != renderedWidth || terminal.size.height != renderedHeight) {
@@ -674,6 +674,18 @@ class Prompts(
         }
     }
 
+    /**
+     * Polls for a key like [RawModeScope.readKeyOrNull], treating the poll
+     * timeout as "no key". The Mordant 3.0.2 Windows backend throws on the
+     * timeout instead of returning null (fixed upstream but unreleased), which
+     * would otherwise abort the wizard 100ms after a selection list opens.
+     */
+    private fun readKeyOrNullCompat(rawMode: RawModeScope) = try {
+        rawMode.readKeyOrNull(RESIZE_POLL_INTERVAL)
+    } catch (e: RuntimeException) {
+        if (e.message?.contains(WINDOWS_POLL_TIMEOUT_MESSAGE) == true) null else abort()
+    }
+
     private fun abort(): Nothing = throw CliktError("Aborted.")
 
     private companion object {
@@ -682,6 +694,7 @@ class Prompts(
         const val YES = "Yes"
         const val NO = "No"
         const val RULE_CHAR = "─"
+        const val WINDOWS_POLL_TIMEOUT_MESSAGE = "Timeout reading from console input"
         const val ENTER_ALTERNATE_SCREEN = "\u001B[?1049h"
         const val EXIT_ALTERNATE_SCREEN = "\u001B[?1049l"
         val ANSI_SEQUENCE = Regex("\u001B\\[[0-?]*[ -/]*[@-~]")

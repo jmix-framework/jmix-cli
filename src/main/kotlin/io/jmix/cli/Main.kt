@@ -18,6 +18,9 @@ class JmixCli : CliktCommand(name = "jmix") {
     }
 }
 
-fun main(args: Array<String>) = JmixCli()
-    .subcommands(NewCommand())
-    .main(args)
+fun main(args: Array<String>) {
+    WindowsConsole.enableUtf8()
+    JmixCli()
+        .subcommands(NewCommand())
+        .main(args)
+}

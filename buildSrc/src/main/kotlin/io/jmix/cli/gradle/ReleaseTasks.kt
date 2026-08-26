@@ -108,6 +108,12 @@ abstract class JpackageAppImageTask : DefaultTask() {
                 "--main-class", mainClass.get(),
                 "--runtime-image", runtimeDirectory.get().asFile,
             )
+            // Without --win-console jpackage builds a GUI-subsystem launcher: in a real
+            // console it gets no std handles, so output vanishes and stdin reads fail
+            // with "The handle is invalid". Only works (deceptively) with redirected pipes.
+            if (System.getProperty("os.name").startsWith("Windows")) {
+                args("--win-console")
+            }
             javaOptions.get().forEach { option ->
                 args("--java-options", option)
             }

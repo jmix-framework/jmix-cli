@@ -23,6 +23,7 @@ configurations.configureEach {
 
 dependencies {
     implementation(libs.clikt)
+    implementation(libs.jna)
     implementation(libs.mordant.runtime)
     implementation(libs.mordant.jna)
     implementation(libs.groovy.templates)
@@ -137,7 +138,15 @@ val jpackageAppImage = tasks.register<JpackageAppImageTask>("jpackageAppImage") 
     applicationVersion.set(jpackageVersion)
     mainJar.set("$applicationArchiveBaseName-$projectVersion.jar")
     mainClass.set("io.jmix.cli.MainKt")
-    javaOptions.set(listOf("--enable-native-access=ALL-UNNAMED"))
+    javaOptions.set(listOf(
+        "--enable-native-access=ALL-UNNAMED",
+        // Match the UTF-8 console code page set by WindowsConsole.enableUtf8:
+        // otherwise the JVM encodes std streams in the legacy OEM code page and
+        // every non-ASCII wizard glyph degrades to "?".
+        "-Dstdout.encoding=UTF-8",
+        "-Dstderr.encoding=UTF-8",
+        "-Dstdin.encoding=UTF-8",
+    ))
     outputDirectory.set(appImageDirectory)
 }
 
