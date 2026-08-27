@@ -37,7 +37,30 @@ run_installer() {
 first_output="$(run_installer "$release_dir")"
 [[ "$first_output" == *"Installed Jmix CLI"* ]]
 [[ -x "$temp_dir/bin/jmix" ]]
+# Self-update reads these; never let the tests reach the real release feed.
+export JMIX_CLI_NO_AUTO_UPDATE=1
 "$temp_dir/bin/jmix" --help | grep -q "Jmix CLI"
+
+# Recorded for self-update: a custom bin directory is otherwise undiscoverable.
+[[ "$(cat "$temp_dir/install/bin-dir")" == "$temp_dir/bin" ]]
+# The install itself starts the update-check clock.
+[[ "$(cat "$temp_dir/install/update-check")" =~ ^[0-9]+$ ]]
+# Complete installations are marked; cleanup keeps and prunes versions by it.
+installed_version_dir="$(find "$temp_dir/install/versions" -mindepth 1 -maxdepth 1 -type d | head -1)"
+[[ -f "$installed_version_dir/.jmix-installed" ]]
+
+# 'jmix update' against a release that matches the installed one is a no-op.
+update_output="$(JMIX_CLI_RELEASE_BASE_URL="$release_dir" "$temp_dir/bin/jmix" update)"
+[[ "$update_output" == *"already up to date"* ]]
+
+# An unreachable release feed must fail readably, without a Java stack trace.
+if JMIX_CLI_RELEASE_BASE_URL="$temp_dir/missing-release" \
+    "$temp_dir/bin/jmix" update >"$temp_dir/update-fail.log" 2>&1; then
+    echo "'jmix update' accepted a missing release feed" >&2
+    exit 1
+fi
+grep -q "Update failed" "$temp_dir/update-fail.log"
+! grep -q "^	at " "$temp_dir/update-fail.log"
 
 version_count_before="$(find "$temp_dir/install/versions" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 second_output="$(run_installer "$release_dir")"
@@ -79,5 +102,28 @@ if JMIX_CLI_RELEASE_BASE_URL="$release_dir" \
 fi
 grep -q "not managed by this installer" "$temp_dir/conflict.log"
 [[ "$(readlink "$unmanaged_bin_dir/jmix")" == "$unmanaged_target" ]]
+# A rejected install must not leave self-update metadata behind.
+[[ ! -e "$temp_dir/conflict-install/bin-dir" ]]
+
+# A symlink written by self-update resolves through real paths; re-running the
+# installer must accept it instead of reporting a foreign command.
+resolved_bin_dir="$temp_dir/resolved-bin"
+mkdir -p "$resolved_bin_dir"
+case "$platform" in
+    macos) launcher_relative="Contents/MacOS/jmix" ;;
+    linux) launcher_relative="bin/jmix" ;;
+esac
+resolved_versions_dir="$(cd "$(dirname "$installed_version_dir")" && pwd -P)"
+resolved_launcher="$resolved_versions_dir/$(basename "$installed_version_dir")/$launcher_relative"
+ln -s "$resolved_launcher" "$resolved_bin_dir/jmix"
+resolved_output="$(
+    JMIX_CLI_RELEASE_BASE_URL="$release_dir" \
+    JMIX_CLI_INSTALL_ROOT="$temp_dir/install" \
+    JMIX_CLI_BIN_DIR="$resolved_bin_dir" \
+    JMIX_CLI_NO_RUN=1 \
+        "$repo_root/install.sh"
+)"
+[[ "$resolved_output" != *"not managed by this installer"* ]]
+[[ -x "$resolved_bin_dir/jmix" ]]
 
 echo "Shell installer tests passed."

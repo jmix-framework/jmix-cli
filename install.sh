@@ -87,8 +87,11 @@ case "$platform" in
 esac
 launcher="$version_dir/$launcher_relative"
 
+# Marks a complete installation; the CLI keeps and prunes versions by this file.
+readonly INSTALL_MARKER=".jmix-installed"
+
 installed=false
-if [[ -x "$launcher" ]]; then
+if [[ -x "$launcher" && -f "$version_dir/$INSTALL_MARKER" ]]; then
     echo "Jmix CLI is already up to date."
 else
     [[ ! -e "$version_dir" ]] || fail "incomplete installation found at $version_dir."
@@ -96,24 +99,43 @@ else
     mkdir -p "$extract_dir" "$versions_dir"
     tar -xzf "$archive_file" -C "$extract_dir"
     [[ -x "$extract_dir/$image_name/$launcher_relative" ]] || fail "release archive has an unexpected layout."
+    : > "$extract_dir/$image_name/$INSTALL_MARKER"
     mv "$extract_dir/$image_name" "$version_dir"
     installed=true
 fi
+# Timestamps inside the archive are fixed, so record the install time here.
+touch "$version_dir/$INSTALL_MARKER"
 
 mkdir -p "$BIN_DIR"
 command_path="$BIN_DIR/jmix"
+versions_real="$(cd "$versions_dir" && pwd -P)"
 if [[ -L "$command_path" ]]; then
     current_target="$(readlink "$command_path")"
+    # Self-update writes the resolved path, so compare real locations too.
+    current_real="$(cd "$(dirname "$current_target")" 2>/dev/null && pwd -P || true)"
     case "$current_target" in
         "$launcher") ;;
         "$versions_dir"/*) ln -sfn "$launcher" "$command_path" ;;
-        *) fail "$command_path already exists and is not managed by this installer." ;;
+        *)
+            case "${current_real:-}" in
+                "$versions_real"/*) ln -sfn "$launcher" "$command_path" ;;
+                *) fail "$command_path already exists and is not managed by this installer." ;;
+            esac
+            ;;
     esac
 elif [[ -e "$command_path" ]]; then
     fail "$command_path already exists and is not managed by this installer."
 else
     ln -s "$launcher" "$command_path"
 fi
+
+mkdir -p "$INSTALL_ROOT"
+# Recorded after the command exists, so a rejected install leaves no metadata.
+# The CLI cannot otherwise know a custom bin directory.
+printf '%s\n' "$BIN_DIR" > "$INSTALL_ROOT/bin-dir"
+# This install just verified the latest release; start the CLI's own check clock
+# here so it does not immediately repeat the same request.
+date +%s > "$INSTALL_ROOT/update-check"
 
 if [[ "$installed" == true ]]; then
     echo "Installed Jmix CLI at $command_path"

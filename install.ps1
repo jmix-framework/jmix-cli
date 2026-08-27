@@ -76,7 +76,10 @@ try {
     $versionDir = Join-Path $versionsDir $expectedChecksum
     $launcher = Join-Path $versionDir "jmix.exe"
 
-    if (Test-Path -LiteralPath $launcher -PathType Leaf) {
+    # Marks a complete installation; the CLI keeps and prunes versions by this file.
+    $installMarker = Join-Path $versionDir ".jmix-installed"
+
+    if ((Test-Path -LiteralPath $launcher -PathType Leaf) -and (Test-Path -LiteralPath $installMarker -PathType Leaf)) {
         Write-Host "Jmix CLI is already up to date."
     } else {
         if (Test-Path -LiteralPath $versionDir) {
@@ -90,9 +93,12 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $imageDir "jmix.exe") -PathType Leaf)) {
             throw "Jmix CLI installer: release archive has an unexpected layout."
         }
+        New-Item -ItemType File -Path (Join-Path $imageDir ".jmix-installed") | Out-Null
         Move-Item -LiteralPath $imageDir -Destination $versionDir
         $installed = $true
     }
+    # Timestamps inside the archive are fixed, so record the install time here.
+    (Get-Item -LiteralPath $installMarker).LastWriteTime = Get-Date
 
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
     $commandPath = Join-Path $BinDir "jmix.cmd"
@@ -109,6 +115,17 @@ try {
     if ($currentWrapper -cne $wrapper) {
         Set-Content -LiteralPath $commandPath -Value $wrapper -Encoding Ascii -NoNewline
     }
+
+    New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
+    # Recorded after the command exists, so a rejected install leaves no metadata.
+    # The CLI cannot otherwise know a custom bin directory; UTF-8 keeps non-ASCII
+    # paths readable on both Windows PowerShell and PowerShell 7.
+    Set-Content -LiteralPath (Join-Path $InstallRoot "bin-dir") -Value $BinDir -Encoding UTF8
+    # This install just verified the latest release; start the CLI's own check
+    # clock here so it does not immediately repeat the same request.
+    Set-Content -LiteralPath (Join-Path $InstallRoot "update-check") `
+        -Value ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()) -Encoding Ascii
+
     if ($installed) {
         Write-Host "Installed Jmix CLI at $commandPath"
     }

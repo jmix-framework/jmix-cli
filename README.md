@@ -52,23 +52,33 @@ jmix new jmix-project \
 
 ### Options
 
-| Option               | Description                                                    | Default                                                                  |
-|----------------------|----------------------------------------------------------------|--------------------------------------------------------------------------|
-| `<name>`             | Project name                                                   | Required in non-interactive mode                                         |
-| `--template`         | Template ID, such as `application` or `application-kotlin`     | First available project template                                         |
-| `--jmix-version`     | Jmix platform version                                          | Latest stable version                                                    |
-| `--package`          | Base Java package                                              | `com.company.<project-name>`                                             |
-| `--project-id`       | Prefix for entity, table, and bean names; maximum 7 characters | Template default                                                         |
-| `--theme`            | UI theme: `aura` or `lumo`                                     | Depends on Jmix version and template                                     |
-| `--locales`          | Comma-separated locale codes                                   | `en`                                                                     |
+| Option               | Description                                                    | Default                                                                      |
+|----------------------|----------------------------------------------------------------|------------------------------------------------------------------------------|
+| `<name>`             | Project name                                                   | Required in non-interactive mode                                             |
+| `--template`         | Template ID, such as `application` or `application-kotlin`     | First available project template                                             |
+| `--jmix-version`     | Jmix platform version                                          | Latest stable version                                                        |
+| `--package`          | Base Java package                                              | `com.company.<project-name>`                                                 |
+| `--project-id`       | Prefix for entity, table, and bean names; maximum 7 characters | Template default                                                             |
+| `--theme`            | UI theme: `aura` or `lumo`                                     | Depends on Jmix version and template                                         |
+| `--locales`          | Comma-separated locale codes                                   | `en`                                                                         |
 | `--path`             | Target directory                                               | `./<project-name>`; the wizard also offers `~/IdeaProjects` or a custom path |
-| `--repository`       | Maven repository containing Jmix templates                     | Jmix public repository                                                   |
-| `--no-git`           | Do not initialize a Git repository                             | Git initialization enabled                                               |
-| `--include-unstable` | Include RC and snapshot versions in version selection          | Disabled                                                                 |
-| `--force`            | Generate into a non-empty directory without confirmation       | Disabled                                                                 |
-| `--non-interactive`  | Do not prompt; use arguments, options, and defaults            | Disabled                                                                 |
+| `--repository`       | Maven repository containing Jmix templates                     | Jmix public repository                                                       |
+| `--no-git`           | Do not initialize a Git repository                             | Git initialization enabled                                                   |
+| `--include-unstable` | Include RC and snapshot versions in version selection          | Disabled                                                                     |
+| `--force`            | Generate into a non-empty directory without confirmation       | Disabled                                                                     |
+| `--non-interactive`  | Do not prompt; use arguments, options, and defaults            | Disabled                                                                     |
 
 `jmix new --help` shows the authoritative reference.
+
+### Updates and cleanup
+
+Installed builds check for a new release once a day at startup and install it;
+the update takes effect on the next run. Superseded versions and unused
+template caches are removed automatically.
+
+```shell
+jmix update    # update immediately and remove old versions
+```
 
 ### Templates and offline use
 

@@ -28,10 +28,42 @@ try {
     if (-not (Test-Path -LiteralPath $commandPath -PathType Leaf)) {
         throw "Installer did not create jmix.cmd."
     }
+    # Self-update reads this; never let the tests reach the real release feed.
+    $env:JMIX_CLI_NO_AUTO_UPDATE = "1"
     $helpOutput = & $commandPath --help | Out-String
     if ($helpOutput -notmatch "Jmix CLI") {
         throw "Installed CLI did not start."
     }
+
+    # Recorded for self-update: a custom bin directory is otherwise undiscoverable.
+    $recordedBinDir = (Get-Content -LiteralPath (Join-Path $installRoot "bin-dir") -Raw).Trim()
+    if ($recordedBinDir -ne $binDir) {
+        throw "Installer did not record the bin directory."
+    }
+    # The install itself starts the update-check clock.
+    if ((Get-Content -LiteralPath (Join-Path $installRoot "update-check") -Raw).Trim() -notmatch "^\d+$") {
+        throw "Installer did not record the update-check time."
+    }
+    # Complete installations are marked; cleanup keeps and prunes versions by it.
+    $installedVersionDir = @(Get-ChildItem -LiteralPath (Join-Path $installRoot "versions") -Directory)[0]
+    if (-not (Test-Path -LiteralPath (Join-Path $installedVersionDir.FullName ".jmix-installed") -PathType Leaf)) {
+        throw "Installer did not mark the installation as complete."
+    }
+
+    # 'jmix update' against a release that matches the installed one is a no-op.
+    $env:JMIX_CLI_RELEASE_BASE_URL = $releaseDir
+    $updateOutput = & $commandPath update *>&1 | Out-String
+    if ($updateOutput -notmatch "already up to date") {
+        throw "'jmix update' did not report an up-to-date installation."
+    }
+
+    # An unreachable release feed must fail readably, without a Java stack trace.
+    $env:JMIX_CLI_RELEASE_BASE_URL = Join-Path $tempDir "missing-release"
+    $updateFailure = & $commandPath update *>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $updateFailure -notmatch "Update failed" -or $updateFailure -match "\r?\n\s+at ") {
+        throw "'jmix update' did not fail readably on a missing release feed."
+    }
+    Remove-Item Env:\JMIX_CLI_RELEASE_BASE_URL
 
     $versionCountBefore = @(Get-ChildItem -LiteralPath (Join-Path $installRoot "versions") -Directory).Count
     $secondOutput = & (Join-Path $repoRoot "install.ps1") `
@@ -113,6 +145,10 @@ try {
     }
     if (-not $unmanagedRejected -or (Get-Content -LiteralPath $unmanagedCommand -Raw) -ne "@echo unmanaged") {
         throw "Installer replaced an unmanaged command."
+    }
+    # A rejected install must not leave self-update metadata behind.
+    if (Test-Path -LiteralPath (Join-Path (Join-Path $tempDir "conflict-install") "bin-dir")) {
+        throw "Rejected install recorded self-update metadata."
     }
 
     Write-Host "PowerShell installer tests passed."

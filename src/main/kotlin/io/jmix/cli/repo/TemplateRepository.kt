@@ -10,6 +10,7 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.FileTime
 import java.time.Duration
 import java.time.Instant
 
@@ -72,7 +73,11 @@ class TemplateRepository(
         val cached = Files.exists(jar) && isZip(jar)
         if (Files.exists(jar) && !cached) Files.deleteIfExists(jar)
 
-        if (cached && !version.endsWith("-SNAPSHOT")) return jar
+        if (cached && !version.endsWith("-SNAPSHOT")) {
+            // Mark the jar as used: cache pruning keeps recently used files.
+            runCatching { Files.setLastModifiedTime(jar, FileTime.from(Instant.now())) }
+            return jar
+        }
         if (cached) {
             // Snapshot: prefer a fresh remote copy, keep the cache as offline fallback.
             return try {

@@ -32,6 +32,37 @@ The stable asset names allow installers to use GitHub's
 Installations are stored by archive checksum, so installing the same release is
 a no-op and an update does not overwrite the previous version.
 
+## Self-update
+
+Installed builds update themselves (`io.jmix.cli.update`). Once every 24 hours
+a startup check compares the running version's checksum directory with the
+published `.sha256`, installs a differing release beside the current one, and
+repoints the managed command; the running process keeps its image. `jmix
+update` does the same on demand.
+
+Each complete version directory holds a `.jmix-installed` marker, written by
+the installers and by self-update. Every run touches the marker of the version
+it runs, so cleanup can remove versions that are neither running nor linked and
+have gone unused for a week, while a second command sharing the install root
+keeps its own version. A directory without a marker is an interrupted or
+partially deleted install: it is reinstalled rather than reused, and pruned
+after an hour. Archive timestamps are fixed by the reproducible build, so the
+marker — not the directory mtime — is the only reliable install time.
+
+The installers also record their `--bin-dir` choice in `<install-root>/bin-dir`
+because the CLI cannot otherwise find a custom command location, and seed
+`<install-root>/update-check` so a fresh install does not immediately repeat
+the release request. Keep those files, the `.jmix-installed` marker, and the
+wrapper marker in `install.ps1` in sync with `SelfUpdater`. `install.sh`
+accepts the resolved symlink self-update writes, so re-running the installer
+after an update is still a no-op.
+
+Trust model: the archive and its checksum come from the same release endpoint,
+so verification proves transfer integrity, not authorship — the same trust
+model as the bootstrap installers, now applied automatically. Anyone able to
+publish releases can therefore reach installed CLIs within a day; keep release
+credentials protected accordingly.
+
 ## Local verification
 
 Build and test the current platform's bundle:

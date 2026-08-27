@@ -36,6 +36,7 @@ implementation notes when they disagree with the implementation.
 | Template catalog    | `template/`                                               | Template metadata and artifact discovery                                              |
 | Project generation  | `generator/`                                              | Studio-compatible bindings, Groovy rendering, file generation, and Git initialization |
 | Environment         | `env/`                                                    | JDK and Git discovery and Jmix/JDK compatibility checks                               |
+| Self-update         | `update/`, `UpdateCommand.kt`                             | Startup auto-update, old-version and stale-cache cleanup                              |
 | Version logic       | `util/JmixVersions.kt`                                    | Jmix version comparison and picker grouping                                           |
 | Distribution        | `install.*`, `buildSrc/`, `.github/workflows/release.yml` | Self-contained images, installers, checksums, and release publishing                  |
 
