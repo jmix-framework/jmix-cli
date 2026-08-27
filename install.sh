@@ -133,9 +133,6 @@ mkdir -p "$INSTALL_ROOT"
 # Recorded after the command exists, so a rejected install leaves no metadata.
 # The CLI cannot otherwise know a custom bin directory.
 printf '%s\n' "$BIN_DIR" > "$INSTALL_ROOT/bin-dir"
-# This install just verified the latest release; start the CLI's own check clock
-# here so it does not immediately repeat the same request.
-date +%s > "$INSTALL_ROOT/update-check"
 
 if [[ "$installed" == true ]]; then
     echo "Installed Jmix CLI at $command_path"

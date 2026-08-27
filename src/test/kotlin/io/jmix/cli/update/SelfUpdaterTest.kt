@@ -2,12 +2,14 @@ package io.jmix.cli.update
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -44,7 +46,7 @@ class SelfUpdaterTest {
 
         val result = updater(installation, releaseDir, binDir).update()
 
-        assertEquals(UpdateResult.UPDATED, result)
+        assertTrue(result is UpdateResult.Updated, "expected an update, got $result")
         val newLauncher = installation.launcher(newChecksum)
         assertTrue(Files.isRegularFile(newLauncher))
         assertEquals("new-launcher", Files.readString(newLauncher))
@@ -63,7 +65,7 @@ class SelfUpdaterTest {
 
         val result = updater(installation(root, checksum), releaseDir, binDir).update()
 
-        assertEquals(UpdateResult.UP_TO_DATE, result)
+        assertTrue(result is UpdateResult.UpToDate, "expected no update, got $result")
     }
 
     @Test
@@ -86,19 +88,21 @@ class SelfUpdaterTest {
     }
 
     @Test
-    fun `update is a no-op when the command already points at the latest release`() {
-        // The running process is still the old image, which alone must not
-        // trigger a second, pointless update.
+    fun `update reuses a release that is already installed and linked`() {
+        // The running process is still the old image, so the caller must be
+        // told to switch — but nothing needs downloading or relinking.
         val releaseDir = tempDir.resolve("release")
         val newChecksum = prepareRelease(releaseDir, "new-launcher")
         val root = tempDir.resolve("install")
         val binDir = tempDir.resolve("bin")
         installVersion(root, oldChecksum)
-        linkCommand(binDir, installVersion(root, newChecksum, "new-launcher"))
+        val installedLauncher = installVersion(root, newChecksum, "already-installed")
+        linkCommand(binDir, installedLauncher)
 
         val result = updater(installation(root, oldChecksum), releaseDir, binDir).update()
 
-        assertEquals(UpdateResult.UP_TO_DATE, result)
+        assertEquals(UpdateResult.Updated(newChecksum), result)
+        assertEquals("already-installed", Files.readString(installedLauncher), "must not re-download")
     }
 
     @Test
@@ -113,7 +117,7 @@ class SelfUpdaterTest {
 
         val result = updater(installation(root, oldChecksum), releaseDir, binDir).update()
 
-        assertEquals(UpdateResult.INSTALLER_REQUIRED, result)
+        assertTrue(result is UpdateResult.InstallerRequired, "expected an installer hint, got $result")
         assertEquals("user-managed script", Files.readString(foreign))
     }
 
@@ -251,7 +255,7 @@ class SelfUpdaterTest {
 
         val result = updater(installation, releaseDir, binDir).update()
 
-        assertEquals(UpdateResult.UPDATED, result)
+        assertTrue(result is UpdateResult.Updated, "expected an update, got $result")
         assertEquals("new-launcher", Files.readString(installation.launcher(newChecksum)))
     }
 
@@ -329,21 +333,88 @@ class SelfUpdaterTest {
         val binDir = tempDir.resolve("bin")
         linkCommand(binDir, installVersion(root, oldChecksum))
         val installation = installation(root, oldChecksum)
-        val updater = updater(installation, releaseDir, binDir)
         val now = Instant.now()
 
-        writeStamp(root, now.minusSeconds(60))
-        updater.autoUpdate(now)
-        assertFalse(Files.exists(installation.launcher(newChecksum)), "a fresh stamp must skip the check")
+        val result = updater(installation, releaseDir, binDir).autoUpdate(now)
 
-        writeStamp(root, now.minusSeconds(25 * 60 * 60))
-        updater.autoUpdate(now)
+        assertEquals(UpdateResult.Updated(newChecksum), result)
         assertTrue(Files.isRegularFile(installation.launcher(newChecksum)))
-        assertTrue(readStamp(root)!! >= now.minusSeconds(5), "the check must refresh the stamp")
+
+        // A command right after the check must not repeat the request.
+        Files.delete(installation.versionsDir.resolve(newChecksum).resolve(SelfUpdater.MARKER_NAME))
+        assertTrue(
+            updater(installation, releaseDir, binDir).autoUpdate(now.plusSeconds(60)) is UpdateResult.UpToDate,
+            "a check within the interval must be skipped",
+        )
+
+        // Once the interval passes, the next command checks again.
+        val later = now.plus(SelfUpdater.CHECK_INTERVAL).plusSeconds(60)
+        assertEquals(
+            UpdateResult.Updated(newChecksum),
+            updater(installation, releaseDir, binDir).autoUpdate(later),
+        )
     }
 
     @Test
-    fun `autoUpdate stays silent when the release check fails`() {
+    fun `autoUpdate records the check time even when it fails`() {
+        // Otherwise an offline machine would repeat the attempt, and the
+        // warning, on every single command.
+        val root = tempDir.resolve("install")
+        val binDir = tempDir.resolve("bin")
+        linkCommand(binDir, installVersion(root, oldChecksum))
+        val messages = mutableListOf<String>()
+        val installation = installation(root, oldChecksum)
+        val missing = tempDir.resolve("missing-release").toString()
+        val now = Instant.now()
+
+        SelfUpdater(installation, missing, binDir, autoUpdateEnabled = true, echo = { messages.add(it) })
+            .autoUpdate(now)
+        SelfUpdater(installation, missing, binDir, autoUpdateEnabled = true, echo = { messages.add(it) })
+            .autoUpdate(now.plusSeconds(60))
+
+        assertEquals(1, messages.size, "the failure must be reported once per interval: $messages")
+    }
+
+    @Test
+    fun `an explicit update ignores the interval`() {
+        val releaseDir = tempDir.resolve("release")
+        val newChecksum = prepareRelease(releaseDir, "new-launcher")
+        val root = tempDir.resolve("install")
+        val binDir = tempDir.resolve("bin")
+        linkCommand(binDir, installVersion(root, oldChecksum))
+        val installation = installation(root, oldChecksum)
+        updater(installation, releaseDir, binDir).autoUpdate(Instant.now())
+        Files.delete(installation.versionsDir.resolve(newChecksum).resolve(SelfUpdater.MARKER_NAME))
+
+        val result = updater(installation, releaseDir, binDir).update()
+
+        assertEquals(UpdateResult.Updated(newChecksum), result)
+    }
+
+    @Test
+    fun `autoUpdate skips while another process holds the update lock`() {
+        val releaseDir = tempDir.resolve("release")
+        val newChecksum = prepareRelease(releaseDir, "new-launcher")
+        val root = Files.createDirectories(tempDir.resolve("install"))
+        val binDir = tempDir.resolve("bin")
+        linkCommand(binDir, installVersion(root, oldChecksum))
+        val installation = installation(root, oldChecksum)
+
+        FileChannel.open(
+            root.resolve(SelfUpdater.UPDATE_LOCK),
+            StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+        ).use { channel ->
+            channel.lock().use {
+                val result = updater(installation, releaseDir, binDir).autoUpdate()
+
+                assertTrue(result is UpdateResult.UpToDate)
+                assertFalse(Files.exists(installation.launcher(newChecksum)))
+            }
+        }
+    }
+
+    @Test
+    fun `autoUpdate reports a check it could not complete and keeps going`() {
         val root = tempDir.resolve("install")
         val binDir = tempDir.resolve("bin")
         linkCommand(binDir, installVersion(root, oldChecksum))
@@ -353,9 +424,13 @@ class SelfUpdaterTest {
             autoUpdateEnabled = true, echo = { messages.add(it) },
         )
 
-        updater.autoUpdate(Instant.now())
+        val result = updater.autoUpdate()
 
-        assertTrue(messages.isEmpty(), "unreachable releases must not print anything: $messages")
+        assertTrue(result is UpdateResult.UpToDate, "a failed check must not stop the command")
+        assertTrue(
+            messages.any { it.contains("Could not update", ignoreCase = true) },
+            "a failed check must be reported: $messages",
+        )
     }
 
     @Test
@@ -372,10 +447,10 @@ class SelfUpdaterTest {
             autoUpdateEnabled = true, echo = { messages.add(it) },
         )
 
-        updater.autoUpdate(Instant.now())
+        updater.autoUpdate()
 
         assertTrue(
-            messages.any { it.contains("failed", ignoreCase = true) },
+            messages.any { it.contains("Could not update", ignoreCase = true) },
             "a failed download must not leave the progress line dangling: $messages",
         )
     }
@@ -398,9 +473,89 @@ class SelfUpdaterTest {
         val installation = installation(root, oldChecksum)
 
         SelfUpdater(installation, releaseDir.toString(), binDir, autoUpdateEnabled = false, echo = {})
-            .autoUpdate(Instant.now())
+            .autoUpdate()
 
         assertFalse(Files.exists(installation.launcher(newChecksum)))
+    }
+
+    @Test
+    fun `the release check is skipped for opt-out, help and the update command`() {
+        assertTrue(SelfUpdater.skipsUpdateCheck(arrayOf(SelfUpdater.NO_UPDATE_FLAG)))
+        assertTrue(SelfUpdater.skipsUpdateCheck(arrayOf("new", "demo", SelfUpdater.NO_UPDATE_FLAG)))
+        assertTrue(SelfUpdater.skipsUpdateCheck(arrayOf("--help")))
+        assertTrue(SelfUpdater.skipsUpdateCheck(arrayOf("new", "-h")))
+        assertTrue(SelfUpdater.skipsUpdateCheck(arrayOf("update")))
+
+        assertFalse(SelfUpdater.skipsUpdateCheck(arrayOf()))
+        assertFalse(SelfUpdater.skipsUpdateCheck(arrayOf("new", "demo")))
+    }
+
+    @Test
+    fun `a stamp dated in the future does not suppress checks`() {
+        // A wrong clock, later corrected, must not disable updates forever.
+        val releaseDir = tempDir.resolve("release")
+        val newChecksum = prepareRelease(releaseDir, "new-launcher")
+        val root = Files.createDirectories(tempDir.resolve("install"))
+        val binDir = tempDir.resolve("bin")
+        linkCommand(binDir, installVersion(root, oldChecksum))
+        val now = Instant.now()
+        Files.writeString(root.resolve(SelfUpdater.UPDATE_LOCK), now.plusSeconds(86_400).epochSecond.toString())
+
+        val result = updater(installation(root, oldChecksum), releaseDir, binDir).autoUpdate(now)
+
+        assertEquals(UpdateResult.Updated(newChecksum), result)
+    }
+
+    @Test
+    fun `a corrupt stamp does not break the check`() {
+        val releaseDir = tempDir.resolve("release")
+        val newChecksum = prepareRelease(releaseDir, "new-launcher")
+        val root = Files.createDirectories(tempDir.resolve("install"))
+        val binDir = tempDir.resolve("bin")
+        linkCommand(binDir, installVersion(root, oldChecksum))
+        // Out of Instant range, and not a number at all.
+        for (content in listOf("99999999999999999", "not-a-timestamp")) {
+            Files.writeString(root.resolve(SelfUpdater.UPDATE_LOCK), content)
+            runCatching { deleteVersion(root, newChecksum) }
+
+            val result = updater(installation(root, oldChecksum), releaseDir, binDir).autoUpdate(Instant.now())
+
+            assertEquals(UpdateResult.Updated(newChecksum), result, "stamp content: $content")
+        }
+    }
+
+    @Test
+    fun `restart runs the updated launcher with the original arguments`() {
+        assumeFalse(isWindows)
+        val root = tempDir.resolve("install")
+        val checksum = "a".repeat(64)
+        val recorded = tempDir.resolve("restart-args.txt")
+        val launcher = installation(root, checksum).launcher(checksum)
+        Files.createDirectories(launcher.parent)
+        Files.writeString(launcher, "#!/bin/sh\nprintf '%s\\n' \"$@\" > $recorded\nexit 7\n")
+        launcher.toFile().setExecutable(true)
+
+        val exitCode = SelfUpdater(installation(root, oldChecksum), "unused", tempDir, echo = {})
+            .restart(checksum, listOf("new", "demo", "--no-git"))
+
+        assertEquals(7, exitCode, "the caller must exit with the new version's code")
+        // The loop guard travels as an argument: an environment variable would
+        // be inherited by the IDE and Gradle the new version starts.
+        assertEquals(
+            listOf(SelfUpdater.NO_UPDATE_FLAG, "new", "demo", "--no-git"),
+            Files.readAllLines(recorded),
+        )
+    }
+
+    @Test
+    fun `restart reports a launcher it cannot run`() {
+        val root = tempDir.resolve("install")
+        val messages = mutableListOf<String>()
+
+        val exitCode = SelfUpdater(installation(root, oldChecksum), "unused", tempDir, echo = { messages.add(it) })
+            .restart("b".repeat(64), listOf("new"))
+
+        assertNull(exitCode, "a missing launcher must not stop the current run")
     }
 
     @Test
@@ -447,15 +602,6 @@ class SelfUpdaterTest {
         Files.setLastModifiedTime(path, FileTime.from(Instant.now().minusSeconds(2 * 60 * 60)))
     }
 
-    private fun writeStamp(root: Path, value: Instant) {
-        Files.createDirectories(root)
-        Files.writeString(root.resolve(SelfUpdater.UPDATE_CHECK_STAMP), value.epochSecond.toString())
-    }
-
-    private fun readStamp(root: Path): Instant? =
-        Files.readString(root.resolve(SelfUpdater.UPDATE_CHECK_STAMP)).trim()
-            .toLongOrNull()?.let(Instant::ofEpochSecond)
-
     private fun installation(root: Path, checksum: String) =
         CliInstallation(root.toAbsolutePath().normalize(), checksum, os, arch)
 
@@ -475,6 +621,11 @@ class SelfUpdaterTest {
             "$checksum  ${installation.archiveName}\n",
         )
         return checksum
+    }
+
+    private fun deleteVersion(root: Path, checksum: String) {
+        val dir = installation(root, checksum).versionsDir.resolve(checksum)
+        Files.walk(dir).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
     }
 
     private fun installVersion(

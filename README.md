@@ -72,13 +72,19 @@ jmix new jmix-project \
 
 ### Updates and cleanup
 
-Installed builds check for a new release once a day at startup and install it;
-the update takes effect on the next run. Superseded versions and unused
-template caches are removed automatically.
+Installed builds check for a new release at startup, at most once every ten
+minutes, and install it before the command starts, so an update applies to the
+command you just typed rather than the next one. A check that cannot complete
+is reported and the command continues. Superseded versions and unused template
+caches are removed automatically.
 
 ```shell
-jmix update    # update immediately and remove old versions
+jmix update              # update immediately and remove old versions
+jmix --no-update new     # run without checking for updates
 ```
+
+Updates are also skipped whenever `CI` is set, and with
+`JMIX_CLI_NO_AUTO_UPDATE=1`. Source builds never self-update.
 
 ### Templates and offline use
 

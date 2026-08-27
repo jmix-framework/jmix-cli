@@ -43,8 +43,6 @@ export JMIX_CLI_NO_AUTO_UPDATE=1
 
 # Recorded for self-update: a custom bin directory is otherwise undiscoverable.
 [[ "$(cat "$temp_dir/install/bin-dir")" == "$temp_dir/bin" ]]
-# The install itself starts the update-check clock.
-[[ "$(cat "$temp_dir/install/update-check")" =~ ^[0-9]+$ ]]
 # Complete installations are marked; cleanup keeps and prunes versions by it.
 installed_version_dir="$(find "$temp_dir/install/versions" -mindepth 1 -maxdepth 1 -type d | head -1)"
 [[ -f "$installed_version_dir/.jmix-installed" ]]

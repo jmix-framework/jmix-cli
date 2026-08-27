@@ -121,10 +121,6 @@ try {
     # The CLI cannot otherwise know a custom bin directory; UTF-8 keeps non-ASCII
     # paths readable on both Windows PowerShell and PowerShell 7.
     Set-Content -LiteralPath (Join-Path $InstallRoot "bin-dir") -Value $BinDir -Encoding UTF8
-    # This install just verified the latest release; start the CLI's own check
-    # clock here so it does not immediately repeat the same request.
-    Set-Content -LiteralPath (Join-Path $InstallRoot "update-check") `
-        -Value ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()) -Encoding Ascii
 
     if ($installed) {
         Write-Host "Installed Jmix CLI at $commandPath"

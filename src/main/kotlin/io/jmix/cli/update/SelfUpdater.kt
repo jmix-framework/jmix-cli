@@ -1,16 +1,21 @@
 package io.jmix.cli.update
 
 import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketException
 import java.net.URI
 import java.net.URISyntaxException
+import java.net.UnknownHostException
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import java.nio.file.AccessDeniedException
 import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
@@ -26,21 +31,24 @@ import java.util.HexFormat
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 import kotlin.io.path.name
+import kotlin.system.exitProcess
 
-enum class UpdateResult {
-    UP_TO_DATE,
-    UPDATED,
+sealed interface UpdateResult {
+    data object UpToDate : UpdateResult
+
+    /** Installed and linked; [checksum] identifies the version to restart into. */
+    data class Updated(val checksum: String) : UpdateResult
 
     /** A newer release exists but the `jmix` command is not installer-managed. */
-    INSTALLER_REQUIRED,
+    data object InstallerRequired : UpdateResult
 }
 
 /**
- * Self-update and cleanup for release installations. Compares the
- * published archive checksum with the running version's directory name; on a
- * mismatch it downloads, verifies, and installs the new image next to the
- * current one and repoints the installer-managed `jmix` command. The running
- * process keeps its old image; the update takes effect on the next run.
+ * Self-update and cleanup for release installations. Compares the published
+ * archive checksum with the running version's directory name; on a mismatch it
+ * downloads, verifies, and installs the new image next to the current one and
+ * repoints the installer-managed `jmix` command. The caller then restarts the
+ * typed command on the new version — see [runStartupMaintenance].
  */
 class SelfUpdater(
     private val installation: CliInstallation,
@@ -62,43 +70,36 @@ class SelfUpdater(
     }
 
     /**
-     * Startup auto-update: at most one release check per [CHECK_INTERVAL],
-     * disabled with JMIX_CLI_NO_AUTO_UPDATE=1 or in CI, silent on network
-     * failures. Progress goes to stderr so it never pollutes piped stdout.
+     * Startup auto-update: every run checks for a new release, installs it and
+     * reports the outcome so the caller can restart into it. Disabled with
+     * JMIX_CLI_NO_AUTO_UPDATE=1 or in CI. A check that cannot complete is
+     * reported and never fails the command. Messages go to stderr so they never
+     * pollute piped stdout.
      */
-    fun autoUpdate(now: Instant = Instant.now()) {
-        if (!claimUpdateCheck(now)) return
+    fun autoUpdate(now: Instant = Instant.now()): UpdateResult {
+        if (!autoUpdateEnabled) return UpdateResult.UpToDate
+        // Skipped when another process is already updating, or when the last
+        // check is younger than CHECK_INTERVAL — a short window that keeps a
+        // burst of commands from repeating the same request.
+        val lock = claimUpdateCheck(now) ?: return UpdateResult.UpToDate
         val result = try {
-            update()
+            lock.use { update() }
         } catch (e: Exception) {
-            // Report only once work was visible; a failed check stays quiet and
-            // is retried after the interval.
-            if (downloadAnnounced) {
-                echo("Jmix CLI update failed (${describe(e)}); it will be retried later.")
-            }
-            return
+            echo("Could not update Jmix CLI (${describe(e)}); continuing with the current version.")
+            return UpdateResult.UpToDate
         }
-        when (result) {
-            UpdateResult.UPDATED ->
-                echo("Jmix CLI was updated to the latest release; it takes effect on the next run.")
-            UpdateResult.INSTALLER_REQUIRED ->
-                echo("A new Jmix CLI release is available. Re-run the install command from the README to update.")
-            UpdateResult.UP_TO_DATE -> {}
+        if (result is UpdateResult.InstallerRequired) {
+            echo("A new Jmix CLI release is available. Re-run the install command from the README to update.")
         }
+        return result
     }
 
     fun update(): UpdateResult {
         val latest = fetchLatestChecksum()
-        // A completed check resets the auto-update clock, explicit or not.
-        runCatching { writeStamp(Instant.now()) }
         // Already switched by an earlier run: the current process still runs the
         // old image, so its checksum alone cannot decide this.
-        if (latest == installation.currentChecksum ||
-            (managedTargetChecksum() == latest && isComplete(latest))
-        ) {
-            return UpdateResult.UP_TO_DATE
-        }
-        val commandPath = managedCommandPath() ?: return UpdateResult.INSTALLER_REQUIRED
+        if (latest == installation.currentChecksum) return UpdateResult.UpToDate
+        val commandPath = managedCommandPath() ?: return UpdateResult.InstallerRequired
         // Only a version carrying its install marker may be reused: an aborted
         // cleanup can leave a gutted image whose launcher file still exists.
         if (!isComplete(latest)) {
@@ -107,8 +108,35 @@ class SelfUpdater(
             }
             installVersion(latest)
         }
-        repoint(commandPath, installation.launcher(latest))
-        return UpdateResult.UPDATED
+        if (managedTargetChecksum() != latest) {
+            repoint(commandPath, installation.launcher(latest))
+        }
+        return UpdateResult.Updated(latest)
+    }
+
+    /**
+     * Replaces this process with [checksum]'s launcher, passing [args] through
+     * and keeping the terminal, so the command the user typed runs on the new
+     * version. Returns the launcher's exit code, or null when it could not be
+     * started — the caller then continues on the current version.
+     */
+    fun restart(checksum: String, args: List<String>): Int? {
+        val launcher = installation.launcher(checksum)
+        if (!Files.isExecutable(launcher)) return null
+        // The guard against an update loop is an argument, not an environment
+        // variable: the child launches the IDE, the file manager and Gradle,
+        // and an inherited variable would silently disable updates in every
+        // process they in turn spawn.
+        val command = listOf(launcher.toString(), NO_UPDATE_FLAG) + args
+        return try {
+            ProcessBuilder(command).inheritIO().start().waitFor()
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            null
+        } catch (e: Exception) {
+            echo("Could not start the updated Jmix CLI (${describe(e)}); continuing with the current version.")
+            null
+        }
     }
 
     /**
@@ -178,46 +206,62 @@ class SelfUpdater(
         return isOlderThan(marker, unusedBefore)
     }
 
-    private var downloadAnnounced = false
-
     /**
-     * True when this process may run the release check now. The stamp file
-     * records the last check time in its content and is guarded by a file lock,
-     * so parallel `jmix` invocations do not all download the same release.
+     * Claims the right to check for a release now, returning the held lock, or
+     * null when another process is checking or the previous check is still
+     * fresh. The lock file also stores that check time, so one file carries
+     * both. Never waits.
+     *
+     * The time is recorded before the check runs, so a failing check is
+     * retried on the same schedule instead of on every command.
      */
-    private fun claimUpdateCheck(now: Instant): Boolean {
-        if (!autoUpdateEnabled) return false
-        return try {
+    private fun claimUpdateCheck(now: Instant): AutoCloseable? {
+        var channel: FileChannel? = null
+        var lock: java.nio.channels.FileLock? = null
+        var claimed = false
+        try {
             Files.createDirectories(installation.installRoot)
-            FileChannel.open(
-                installation.installRoot.resolve(UPDATE_CHECK_STAMP),
+            channel = FileChannel.open(
+                installation.installRoot.resolve(UPDATE_LOCK),
                 StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE,
-            ).use { channel ->
-                val lock = channel.tryLock() ?: return false
-                lock.use {
-                    if (readInstant(channel)?.isAfter(now.minus(CHECK_INTERVAL)) == true) return false
-                    writeInstant(channel, now)
-                    true
-                }
+            )
+            lock = channel.tryLock() ?: return null
+            if (isCheckFresh(readInstant(channel), now)) return null
+            writeInstant(channel, now)
+            claimed = true
+            val held = lock
+            val open = channel
+            return AutoCloseable {
+                runCatching { held.release() }
+                runCatching { open.close() }
             }
         } catch (e: Exception) {
-            false // Read-only or shared install root: never block the command.
+            // Read-only or shared install root: skip updating, never block the command.
+            return null
+        } finally {
+            // Anything that did not hand the lock to the caller must release it
+            // here; a leaked lock would block every later run in this process.
+            if (!claimed) {
+                runCatching { lock?.release() }
+                runCatching { channel?.close() }
+            }
         }
     }
 
-    private fun writeStamp(now: Instant) {
-        Files.createDirectories(installation.installRoot)
-        FileChannel.open(
-            installation.installRoot.resolve(UPDATE_CHECK_STAMP),
-            StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE,
-        ).use { channel -> channel.lock().use { writeInstant(channel, now) } }
-    }
+    /**
+     * True when [last] is recent enough to skip a check. A timestamp in the
+     * future — a clock that was wrong, or moved back — is treated as stale so
+     * it cannot suppress updates forever.
+     */
+    private fun isCheckFresh(last: Instant?, now: Instant): Boolean =
+        last != null && !last.isAfter(now) && last.isAfter(now.minus(CHECK_INTERVAL))
 
     private fun readInstant(channel: FileChannel): Instant? {
         val buffer = ByteBuffer.allocate(32)
         channel.read(buffer, 0)
-        return buffer.array().decodeToString(0, buffer.position()).trim()
-            .toLongOrNull()?.let(Instant::ofEpochSecond)
+        val seconds = buffer.array().decodeToString(0, buffer.position()).trim().toLongOrNull()
+        // A hand-edited or corrupt file must not throw out of the update path.
+        return seconds?.let { runCatching { Instant.ofEpochSecond(it) }.getOrNull() }
     }
 
     private fun writeInstant(channel: FileChannel, value: Instant) {
@@ -235,7 +279,6 @@ class SelfUpdater(
     }
 
     private fun installVersion(checksum: String) {
-        downloadAnnounced = true
         echo("Downloading the latest Jmix CLI release...")
         Files.createDirectories(installation.installRoot)
         // Temp dir inside the install root so the final move stays on one filesystem.
@@ -462,14 +505,17 @@ class SelfUpdater(
         /** File where the installers record the bin directory they used. */
         const val BIN_DIR_FILE = "bin-dir"
 
-        internal const val UPDATE_CHECK_STAMP = "update-check"
+        /** Lock file; its content is the last release-check time. */
+        internal const val UPDATE_LOCK = "update.lock"
 
         /** Written into a version directory once its install is complete. */
         const val MARKER_NAME = ".jmix-installed"
 
         private const val TEMP_PREFIX = ".update-"
         private const val TRASH_PREFIX = ".trash-"
-        private val CHECK_INTERVAL: Duration = Duration.ofHours(24)
+        // Short enough that a new release reaches users within minutes, long
+        // enough that a burst of commands does not repeat the request.
+        internal val CHECK_INTERVAL: Duration = Duration.ofMinutes(10)
         private val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(10)
         private val EXPLICIT_REQUEST_TIMEOUT: Duration = Duration.ofSeconds(30)
         private val AUTO_REQUEST_TIMEOUT: Duration = Duration.ofSeconds(5)
@@ -489,10 +535,12 @@ class SelfUpdater(
             env("JMIX_CLI_NO_AUTO_UPDATE") != "1" && env("CI").isNullOrBlank()
 
         /**
-         * Startup hook: prune the stale template cache and old versions, then
-         * run the rate-limited auto-update. Never fails the actual command.
+         * Startup hook: prunes stale caches and old versions, then checks for a
+         * new release. When one is installed the command is re-run on it and
+         * this process exits with the new version's exit code — the user never
+         * works on a superseded build. Never fails the actual command.
          */
-        fun runStartupMaintenance() {
+        fun runStartupMaintenance(args: Array<String>) {
             runCatching { CacheCleaner.pruneTemplateCache() }
             val installation = CliInstallation.detect() ?: return
             // Maintenance notices must not enter the stdout of scripted runs.
@@ -501,10 +549,32 @@ class SelfUpdater(
                 requestTimeout = AUTO_REQUEST_TIMEOUT,
                 echo = { System.err.println(it) },
             )
+            // Local bookkeeping runs even when the release check is skipped:
+            // marking this version in use is what keeps cleanup from pruning a
+            // version whose only runs pass --no-update.
             runCatching { updater.markInUse() }
             runCatching { updater.cleanupOldVersions() }
-            runCatching { updater.autoUpdate() }
+            if (skipsUpdateCheck(args)) return
+            val result = runCatching { updater.autoUpdate() }.getOrDefault(UpdateResult.UpToDate)
+            if (result !is UpdateResult.Updated) return
+            System.err.println("Jmix CLI was updated; restarting on the new version...")
+            val exitCode = runCatching { updater.restart(result.checksum, args.toList()) }.getOrNull()
+                ?: return // Could not start the new version: carry on with this one.
+            exitProcess(exitCode)
         }
+
+        /** Opt-out flag, recognized before the command line is parsed. */
+        const val NO_UPDATE_FLAG = "--no-update"
+
+        /**
+         * Runs that must not pay for a release check: the explicit opt-out,
+         * commands answered locally and instantly (a network round trip would
+         * add nothing to `jmix --help`), and `jmix update`, which updates
+         * itself.
+         */
+        fun skipsUpdateCheck(args: Array<String>): Boolean =
+            args.any { it == NO_UPDATE_FLAG || it == "-h" || it == "--help" } ||
+                args.firstOrNull() == "update"
 
         /**
          * Bin directory holding the managed `jmix` command: the environment
@@ -553,11 +623,21 @@ class SelfUpdater(
             return text.trim().lineSequence().firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
         }
 
-        /** Human-readable cause for messages that must not show a stack trace. */
-        fun describe(e: Throwable): String =
-            e.message?.takeIf { it.isNotBlank() }?.let {
+        /**
+         * Human-readable cause for messages that must not show a stack trace.
+         * Network and permission failures are the expected ones, and their
+         * exception messages alone (a bare host name, a bare path, or nothing)
+         * do not explain anything.
+         */
+        fun describe(e: Throwable): String = when (e) {
+            is UnknownHostException, is ConnectException, is HttpTimeoutException, is SocketException ->
+                "cannot reach the release server"
+            is AccessDeniedException -> "no permission to write ${e.file}"
+            is FileSystemException -> "${e.reason ?: "file system error"}: ${e.file}"
+            else -> e.message?.takeIf { it.isNotBlank() }?.let {
                 if (e is IOException) it else "${e::class.simpleName}: $it"
             } ?: (e::class.simpleName ?: "unknown error")
+        }
 
         /** ASCII with replacement, matching install.ps1's `Set-Content -Encoding Ascii`. */
         private fun encodeAscii(text: String): ByteArray {

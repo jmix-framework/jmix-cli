@@ -34,11 +34,31 @@ a no-op and an update does not overwrite the previous version.
 
 ## Self-update
 
-Installed builds update themselves (`io.jmix.cli.update`). Once every 24 hours
-a startup check compares the running version's checksum directory with the
-published `.sha256`, installs a differing release beside the current one, and
-repoints the managed command; the running process keeps its image. `jmix
-update` does the same on demand.
+Installed builds update themselves (`io.jmix.cli.update`). Startup compares the
+running version's checksum directory with the published `.sha256` before the
+command line is parsed, installs a differing release beside the current one,
+repoints the managed command, and re-runs the typed command on the new version,
+exiting with its code, so an update applies to the command that triggered it
+rather than the next one. Within the interval below a release can still be up
+to ten minutes old before a run picks it up. A check that cannot complete is
+reported and the command continues. `jmix update` performs the same install on
+demand and ignores the interval.
+
+`update.lock` in the install root serves both as the updater lock, so parallel
+runs never download the same release at once, and as the record of the last
+check time, which throttles checks to one per `SelfUpdater.CHECK_INTERVAL`
+(ten minutes). The time is written before the check runs, so an offline machine
+reports the failure once per interval rather than on every command. A stamp
+dated in the future is treated as stale, so a wrong clock cannot suppress
+updates permanently. The restarted command receives `--no-update` as its first
+argument, which stops an update loop without an environment variable that the
+IDE, file manager and Gradle processes would inherit.
+
+The release check is skipped for `--help`, for `jmix update`, and for the
+`--no-update` flag, which is read from the raw arguments in `main()` because
+the update happens before parsing. Local bookkeeping — cache pruning, the
+in-use marker, and version cleanup — still runs, so a version used only with
+`--no-update` is never pruned as unused.
 
 Each complete version directory holds a `.jmix-installed` marker, written by
 the installers and by self-update. Every run touches the marker of the version
@@ -50,18 +70,16 @@ after an hour. Archive timestamps are fixed by the reproducible build, so the
 marker — not the directory mtime — is the only reliable install time.
 
 The installers also record their `--bin-dir` choice in `<install-root>/bin-dir`
-because the CLI cannot otherwise find a custom command location, and seed
-`<install-root>/update-check` so a fresh install does not immediately repeat
-the release request. Keep those files, the `.jmix-installed` marker, and the
-wrapper marker in `install.ps1` in sync with `SelfUpdater`. `install.sh`
-accepts the resolved symlink self-update writes, so re-running the installer
-after an update is still a no-op.
+because the CLI cannot otherwise find a custom command location. Keep that
+file, the `.jmix-installed` marker, and the wrapper marker in `install.ps1` in
+sync with `SelfUpdater`. `install.sh` accepts the resolved symlink self-update
+writes, so re-running the installer after an update is still a no-op.
 
 Trust model: the archive and its checksum come from the same release endpoint,
 so verification proves transfer integrity, not authorship — the same trust
 model as the bootstrap installers, now applied automatically. Anyone able to
-publish releases can therefore reach installed CLIs within a day; keep release
-credentials protected accordingly.
+publish releases therefore reaches installed CLIs on their next run; keep
+release credentials protected accordingly.
 
 ## Local verification
 

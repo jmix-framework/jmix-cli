@@ -40,10 +40,6 @@ try {
     if ($recordedBinDir -ne $binDir) {
         throw "Installer did not record the bin directory."
     }
-    # The install itself starts the update-check clock.
-    if ((Get-Content -LiteralPath (Join-Path $installRoot "update-check") -Raw).Trim() -notmatch "^\d+$") {
-        throw "Installer did not record the update-check time."
-    }
     # Complete installations are marked; cleanup keeps and prunes versions by it.
     $installedVersionDir = @(Get-ChildItem -LiteralPath (Join-Path $installRoot "versions") -Directory)[0]
     if (-not (Test-Path -LiteralPath (Join-Path $installedVersionDir.FullName ".jmix-installed") -PathType Leaf)) {
