@@ -79,27 +79,29 @@ object Banner {
      *   tests cover every rendering regardless of the host they run on.
      */
     fun print(terminal: Terminal, version: String? = null, blocks: Boolean = supportsBlocks()) {
-        val width = terminal.size.width
-        val subtitle = listOfNotNull("Jmix CLI", version).joinToString(" ")
-
         terminal.println()
-        when {
-            blocks && width >= WITH_LOGO_WIDTH -> logoAndWordmark().forEach { terminal.println(it) }
-            blocks && width >= BLOCK_WIDTH -> BLOCK.forEach { terminal.println(BRAND(it)) }
-            width >= ASCII_WIDTH -> ASCII.forEach { terminal.println(BRAND(it)) }
-            else -> {
-                // Too narrow for any art: the name still has to appear.
-                terminal.println(BRAND(bold(subtitle)))
-                terminal.println()
-                return
-            }
+        lines(terminal.size.width, version, blocks).forEach { terminal.println(it) }
+        terminal.println()
+    }
+
+    /**
+     * The banner as rendered lines, so the wizard can keep it as a frame header
+     * instead of losing it to the first repaint.
+     */
+    fun lines(width: Int, version: String? = null, blocks: Boolean = supportsBlocks()): List<String> {
+        val subtitle = listOfNotNull("Jmix CLI", version).joinToString(" ")
+        val art = when {
+            blocks && width >= WITH_LOGO_WIDTH -> logoAndWordmark()
+            blocks && width >= BLOCK_WIDTH -> BLOCK.map { BRAND(it) }
+            width >= ASCII_WIDTH -> ASCII.map { BRAND(it) }
+            // Too narrow for any art: the name still has to appear.
+            else -> return listOf(BRAND(bold(subtitle)))
         }
         // The tagline is dropped rather than wrapped onto a second line.
         val tagline = "$LOGO_GAP·$LOGO_GAP$TAGLINE"
-        terminal.println(
-            if (width >= subtitle.length + tagline.length) bold(subtitle) + gray(tagline) else bold(subtitle),
-        )
-        terminal.println()
+        val caption =
+            if (width >= subtitle.length + tagline.length) bold(subtitle) + gray(tagline) else bold(subtitle)
+        return art + caption
     }
 
     /** The logo on the left, with the wordmark centered against it. */

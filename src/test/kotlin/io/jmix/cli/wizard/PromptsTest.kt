@@ -144,6 +144,55 @@ class PromptsTest {
     }
 
     @Test
+    fun `the wizard screen is switched once, not once per selection`() {
+        // Switching per selection made the banner and the answers so far flash
+        // between every question.
+        // supportsAnsiCursor = false selects the full-screen renderer.
+        val recorder = TerminalRecorder(width = 120, height = 24, supportsAnsiCursor = false)
+        repeat(3) { recorder.inputEvents += KeyboardEvent("Enter") }
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val used = prompts.useAlternateScreen {
+            repeat(3) {
+                prompts.choose(
+                    question = "Select something",
+                    items = listOf("first", "second"),
+                    title = { it },
+                )
+            }
+        }
+
+        val output = recorder.output()
+        assertTrue(used, "an interactive terminal must use the alternate screen")
+        assertEquals(1, output.occurrencesOf(ENTER_ALTERNATE_SCREEN), "one switch in")
+        assertEquals(1, output.occurrencesOf(EXIT_ALTERNATE_SCREEN), "one switch out")
+    }
+
+    @Test
+    fun `a console that only supports carriage returns keeps the primary screen`() {
+        // The IntelliJ Run window renders prompts line by line, so a wizard
+        // screen there would be repainted over rather than replaced.
+        val recorder = TerminalRecorder(width = 100, height = 24, supportsAnsiCursor = true)
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val used = prompts.useAlternateScreen { }
+
+        assertFalse(used)
+        assertFalse(recorder.output().contains(ENTER_ALTERNATE_SCREEN))
+    }
+
+    @Test
+    fun `a non-interactive terminal never switches screens`() {
+        val recorder = TerminalRecorder(inputInteractive = false, outputInteractive = false)
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val used = prompts.useAlternateScreen { }
+
+        assertFalse(used)
+        assertFalse(recorder.output().contains(ENTER_ALTERNATE_SCREEN))
+    }
+
+    @Test
     fun `selector highlights its question and aligns descriptions in one column`() {
         val recorder = TerminalRecorder(
             width = 120,
@@ -416,6 +465,16 @@ class PromptsTest {
             sizesAfterInput.getOrNull(inputIndex++)?.let { currentSize = it }
             return delegate.readInputEvent(timeout, mouseTracking)
         }
+    }
+
+    private fun String.occurrencesOf(needle: String): Int {
+        var count = 0
+        var index = indexOf(needle)
+        while (index >= 0) {
+            count++
+            index = indexOf(needle, index + needle.length)
+        }
+        return count
     }
 
     private companion object {

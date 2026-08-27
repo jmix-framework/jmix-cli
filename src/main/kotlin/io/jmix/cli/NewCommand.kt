@@ -96,7 +96,13 @@ class NewCommand : CliktCommand(name = "new") {
     private val terminal = Terminal()
     private var state = WizardState()
     private var activeStepIndex = 0
-    private val prompts = Prompts(terminal) { state.toUiState(activeStepIndex) }
+    private val prompts = Prompts(
+        terminal,
+        wizardUiState = { state.toUiState(activeStepIndex) },
+        // The banner stays on screen as the wizard's header instead of being
+        // wiped by the first frame.
+        header = { width -> Banner.lines(width, cliVersion()) },
+    )
 
     // Prompt unless told not to; EOF on a non-terminal stdin aborts cleanly,
     // so scripts and pipes never hang.
@@ -122,11 +128,20 @@ class NewCommand : CliktCommand(name = "new") {
     }
 
     private fun createProject() {
-        // Only for a human at a prompt: scripted runs keep their output clean.
-        if (interactive && terminal.terminalInfo.outputInteractive) {
+        // Consoles that render prompts line by line get the banner once, up
+        // front; full-screen terminals get it as the header of every frame.
+        if (interactive && terminal.terminalInfo.outputInteractive && !prompts.usesAlternateScreen) {
             Banner.print(terminal, cliVersion())
         }
-        runWizardSteps()
+        // One alternate screen for the whole wizard, with the banner as its
+        // header: switching per step made the banner and the answers so far
+        // flash between every question.
+        val usedAlternateScreen = prompts.useAlternateScreen { runWizardSteps() }
+        if (usedAlternateScreen) {
+            // The frames lived on the alternate screen, which the terminal has
+            // just discarded; restate the answers on the restored one.
+            state.toUiState(activeStepIndex).choices.forEach { summary(it.label, it.value) }
+        }
 
         val targetDir = state.targetDir!!
         checkJdkEnvironment(state.jmixVersion!!)
@@ -187,6 +202,9 @@ class NewCommand : CliktCommand(name = "new") {
     }
 
     private fun summary(label: String, value: String) {
+        // Inside the wizard's held screen every frame already lists the answers;
+        // printing here would land on top of the frame on screen.
+        if (prompts.isAlternateScreenHeld) return
         terminal.println(brightGreen("✓ ") + label + ": " + cyan(value))
     }
 

@@ -112,6 +112,12 @@ internal data class SelectionUiState(
  */
 class Prompts(
     private val terminal: Terminal,
+    /**
+     * Optional banner drawn above every frame, given the terminal width. It is
+     * dropped whenever the frame would not leave room for the question itself.
+     */
+    private val header: (Int) -> List<String> = { emptyList() },
+    // Trailing position keeps `Prompts(terminal) { state }` working.
     private val wizardUiState: () -> WizardUiState = { WizardUiState() },
 ) {
     private val questionStyle = TextStyle(brightMagenta, bold = true)
@@ -123,6 +129,51 @@ class Prompts(
      */
     var isInputExhausted = false
         private set
+
+    /**
+     * True while [useAlternateScreen] holds the alternate screen open. Each
+     * selection then reuses it instead of switching buffers, which would make
+     * the banner and the answers so far flash on every step.
+     */
+    private var alternateScreenHeld = false
+
+    /**
+     * True while the wizard holds one alternate screen. Callers use it to skip
+     * printing that would land on top of the current frame — the frames already
+     * redraw the answers from [wizardUiState].
+     */
+    val isAlternateScreenHeld: Boolean get() = alternateScreenHeld
+
+    /**
+     * Runs [block] with a single alternate screen for the whole wizard, so the
+     * screen is swapped once rather than once per selection. Falls through
+     * untouched when the terminal cannot address the cursor: the fallback
+     * prompts print line by line and must stay in the primary buffer.
+     */
+    /**
+     * True when selections render as full-screen frames. Consoles that only
+     * support carriage returns (the IntelliJ Run window) print line by line and
+     * must stay in the primary buffer.
+     */
+    val usesAlternateScreen: Boolean
+        get() = terminal.terminalInfo.outputInteractive && !terminal.terminalInfo.supportsAnsiCursor
+
+    fun useAlternateScreen(block: () -> Unit): Boolean {
+        if (alternateScreenHeld || !usesAlternateScreen) {
+            block()
+            return false
+        }
+        terminal.rawPrint(ENTER_ALTERNATE_SCREEN)
+        alternateScreenHeld = true
+        try {
+            block()
+        } finally {
+            alternateScreenHeld = false
+            terminal.cursor.show()
+            terminal.rawPrint(EXIT_ALTERNATE_SCREEN)
+        }
+        return true
+    }
 
     /** Asks until [validate] returns null; empty input takes [default]. */
     fun ask(
@@ -138,7 +189,9 @@ class Prompts(
             (default?.takeIf { it.isNotEmpty() }?.let { gray(" ($it)") } ?: "") +
             questionStyle(":") + " "
         val promptWidth = question.length + hintPlain.length + 2
+        var lastError: String? = null
         while (true) {
+            renderTypedFrame(lastError)
             val line = when (val input = readLineWithBar(prompt, promptWidth, allowBack, complete)) {
                 is LineInput.Back -> return Answer.Back
                 is LineInput.Text -> input.text
@@ -150,7 +203,9 @@ class Prompts(
             val error = validate(value)
             if (error == null) return Answer.Value(value)
             if (isInputExhausted) throw CliktError(noInputError(error))
-            terminal.println(brightRed(error))
+            // Inside the held screen the next frame repaints over the error, so
+            // it travels with the frame instead of being printed once.
+            if (alternateScreenHeld) lastError = error else terminal.println(brightRed(error))
         }
     }
 
@@ -308,7 +363,8 @@ class Prompts(
         initialState: SelectionUiState,
         rawMode: RawModeScope,
     ): SelectResult {
-        terminal.rawPrint(ENTER_ALTERNATE_SCREEN)
+        val ownsScreen = !alternateScreenHeld
+        if (ownsScreen) terminal.rawPrint(ENTER_ALTERNATE_SCREEN)
         try {
             terminal.cursor.hide(showOnExit = false)
             var state = renderSelection(initialState)
@@ -348,8 +404,45 @@ class Prompts(
             }
         } finally {
             terminal.cursor.show()
-            terminal.rawPrint(EXIT_ALTERNATE_SCREEN)
+            if (ownsScreen) terminal.rawPrint(EXIT_ALTERNATE_SCREEN)
         }
+    }
+
+    /**
+     * Banner rows for the current frame, or none when the rest of the frame
+     * needs the space. A wizard that hides its question to show a logo would be
+     * worse than one without a logo.
+     */
+    private fun headerLines(width: Int, height: Int, rowsInUse: Int): List<String> {
+        if (!alternateScreenHeld) return emptyList()
+        val header = header(width)
+        if (header.isEmpty()) return emptyList()
+        // One blank row separates the banner from the frame body.
+        return if (height - rowsInUse - header.size - 1 >= MIN_ROWS_BELOW_HEADER) header + "" else emptyList()
+    }
+
+    /**
+     * Draws the answers so far above a typed prompt. Only needed while the
+     * alternate screen is held for the whole wizard: without it the prompt
+     * would land on whatever the previous selection frame left behind.
+     */
+    private fun renderTypedFrame(error: String?) {
+        if (!alternateScreenHeld) return
+        terminal.updateSize()
+        val height = terminal.size.height.coerceAtLeast(1)
+        // Rows kept for the prompt, its navigation bar and the error line.
+        val reserved = 4 + if (error != null) 1 else 0
+        val banner = headerLines(terminal.size.width.coerceAtLeast(1), height, reserved)
+        val choices = wizardUiState().choices
+            .takeLast((height - reserved - banner.size).coerceAtLeast(0))
+        terminal.cursor.move {
+            setPosition(0, 0)
+            clearScreen()
+        }
+        banner.forEach { terminal.println(it) }
+        choices.forEach { terminal.println(renderChoice(it)) }
+        if (choices.isNotEmpty()) terminal.println()
+        error?.let { terminal.println(brightRed(it)) }
     }
 
     /** Rebuilds the complete frame from immutable wizard and selection data. */
@@ -386,9 +479,11 @@ class Prompts(
             ""
         }
         val selectionRows = fixedSelectionRows + window.size
-        val historyCapacity = (terminalHeight - selectionRows - 1).coerceAtLeast(0)
+        val banner = headerLines(terminalWidth, terminalHeight, selectionRows)
+        val historyCapacity = (terminalHeight - selectionRows - banner.size - 1).coerceAtLeast(0)
         val choices = wizardUiState().choices.takeLast(historyCapacity)
         val lines = buildList {
+            addAll(banner)
             choices.forEach { add(renderChoice(it)) }
             if (choices.isNotEmpty()) add("")
             if (showTitle) add(questionStyle(state.question) + position)
@@ -690,6 +785,9 @@ class Prompts(
 
     private companion object {
         const val BACK_INPUT = "<"
+
+        /** Rows a frame needs below the banner: question, one entry, nav bar. */
+        const val MIN_ROWS_BELOW_HEADER = 3
         const val COMPLETION_CANDIDATES_SHOWN = 8
         const val YES = "Yes"
         const val NO = "No"
