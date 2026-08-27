@@ -53,10 +53,22 @@ class BannerTest {
     }
 
     @Test
-    fun `the mark is a rectangle so the wordmark stays aligned`() {
+    fun `the logo is drawn in its own colors when the terminal supports them`() {
+        val recorder = TerminalRecorder(ansiLevel = AnsiLevel.TRUECOLOR, width = 120)
+        Banner.print(Terminal(ansiLevel = AnsiLevel.TRUECOLOR, width = 120, terminalInterface = recorder), "1.0.0")
+        val output = recorder.output()
+
+        // Sampled from the Jmix logo: pink, green, cyan and orange arcs.
+        listOf("38;2;252;18;100", "38;2;34;214;133", "38;2;37;205;227", "38;2;253;180;43").forEach {
+            assertTrue(output.contains(it), "missing logo color $it")
+        }
+    }
+
+    @Test
+    fun `the logo is a rectangle so the wordmark stays aligned`() {
         assertEquals(
-            1, Banner.markRowWidths.distinct().size,
-            "every mark row must be equally wide, got ${Banner.markRowWidths}",
+            1, Banner.logoRowWidths.distinct().size,
+            "every logo row must be equally wide, got ${Banner.logoRowWidths}",
         )
     }
 

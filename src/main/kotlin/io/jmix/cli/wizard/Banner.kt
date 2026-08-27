@@ -7,29 +7,43 @@ import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.terminal.Terminal
 
 /**
- * The wizard's opening banner: the Jmix mark next to the product name.
- * Renderings degrade with the terminal — mark plus wordmark, wordmark alone,
+ * The wizard's opening banner: the Jmix logo next to the product name.
+ * Renderings degrade with the terminal — logo plus wordmark, wordmark alone,
  * an ASCII wordmark for consoles without block glyphs, and finally one line.
  */
 object Banner {
 
-    // Sampled from the Jmix logo shipped in the project templates.
-    private val PINK = TextColors.rgb("#F5145B")
-    private val GREEN = TextColors.rgb("#22D68A")
-    private val BLUE = TextColors.rgb("#35C9E0")
-    private val ORANGE = TextColors.rgb("#FFAE2B")
-    private val PLAY = TextColors.rgb("#909090")
-    private val BRAND = TextColors.rgb("#3B7DDD")
+    // Colors sampled from the official logo artwork.
+    private val PINK = TextColors.rgb("#FC1264")
+    private val GREEN = TextColors.rgb("#22D685")
+    private val CYAN = TextColors.rgb("#25CDE3")
+    private val ORANGE = TextColors.rgb("#FDB42B")
 
-    /** Four arcs around a play triangle, each segment in its own color. */
-    private val MARK: List<List<Pair<String, TextStyle?>>> = listOf(
-        listOf("  ▄▄▀▀▄▄  " to PINK),
-        listOf("▄▀" to PINK, "      " to null, "▀▄" to GREEN),
-        // A narrow triangle: U+25B6 renders double-width in some terminals and
-        // would push the wordmark out of alignment.
-        listOf("▌" to ORANGE, "   ▸  " to PLAY, "  ▐" to GREEN),
-        listOf("▀▄" to ORANGE, "      " to null, "▄▀" to BLUE),
-        listOf("  ▀▀▄▄▀▀  " to BLUE),
+    // The logo's own #17124B is nearly black — 1.2:1 against a dark terminal
+    // background. This lighter indigo keeps the hue and stays readable on both
+    // dark and light themes.
+    private val INDIGO = TextColors.rgb("#6C5CE7")
+    private val BRAND = INDIGO
+
+    private val PALETTE: Map<Char, TextStyle> = mapOf(
+        'P' to PINK, 'G' to GREEN, 'B' to CYAN, 'O' to ORANGE, 'N' to INDIGO,
+    )
+
+    /**
+     * The logo rasterized from the official artwork into half-block cells: four
+     * arcs around the diamond outline. Each row pairs its glyphs with a
+     * per-cell palette key, so the shape is the real one rather than a
+     * hand-drawn approximation.
+     */
+    private val LOGO = listOf(
+        "     ▄████▄     " to "     PPPPPP     ",
+        "   ▄█▀ ▄▄ ▀▄▄   " to "   PPP NN PGG   ",
+        " ▄▄▀ ▄████▄ ▀█▄ " to " OOP NNNNNN GGG ",
+        "██ ▄██▀  ▀██▄ ██" to "OO NNNN  NNNN GG",
+        "██ ▀██▄  ▄██▀ ██" to "OO NNNN  NNNN GG",
+        " ▀█▄ ▀████▀ ▄▀▀ " to " OOO NNNNNN BGG ",
+        "   ▀▀▄ ▀▀ ▄█▀   " to "   OOB NN BBB   ",
+        "     ▀████▀     " to "     BBBBBB     ",
     )
 
     private val BLOCK = listOf(
@@ -50,15 +64,15 @@ object Banner {
     )
 
     private const val TAGLINE = "Create a Jmix project"
-    private const val MARK_GAP = "  "
+    private const val LOGO_GAP = "  "
 
-    /** Width of each mark row; they must all match or the wordmark shifts. */
-    internal val markRowWidths: List<Int> get() = MARK.map { row -> row.sumOf { it.first.length } }
+    /** Cell count of each logo row; they must match or the wordmark shifts. */
+    internal val logoRowWidths: List<Int> get() = LOGO.map { it.first.length }
 
-    private val MARK_WIDTH = markRowWidths.max()
+    private val LOGO_WIDTH = logoRowWidths.max()
     private val BLOCK_WIDTH = BLOCK.maxOf { it.length } + 2
     private val ASCII_WIDTH = ASCII.maxOf { it.length } + 2
-    private val WITH_MARK_WIDTH = MARK_WIDTH + MARK_GAP.length + BLOCK_WIDTH
+    private val WITH_LOGO_WIDTH = LOGO_WIDTH + LOGO_GAP.length + BLOCK_WIDTH
 
     fun print(terminal: Terminal, version: String? = null) {
         val width = terminal.size.width
@@ -67,7 +81,7 @@ object Banner {
 
         terminal.println()
         when {
-            blocks && width >= WITH_MARK_WIDTH -> markAndWordmark().forEach { terminal.println(it) }
+            blocks && width >= WITH_LOGO_WIDTH -> logoAndWordmark().forEach { terminal.println(it) }
             blocks && width >= BLOCK_WIDTH -> BLOCK.forEach { terminal.println(BRAND(it)) }
             width >= ASCII_WIDTH -> ASCII.forEach { terminal.println(BRAND(it)) }
             else -> {
@@ -78,22 +92,37 @@ object Banner {
             }
         }
         // The tagline is dropped rather than wrapped onto a second line.
-        val tagline = "$MARK_GAP·$MARK_GAP$TAGLINE"
+        val tagline = "$LOGO_GAP·$LOGO_GAP$TAGLINE"
         terminal.println(
             if (width >= subtitle.length + tagline.length) bold(subtitle) + gray(tagline) else bold(subtitle),
         )
         terminal.println()
     }
 
-    /** The mark on the left, vertically centered against the wordmark. */
-    private fun markAndWordmark(): List<String> {
-        val topPad = (BLOCK.size - MARK.size).coerceAtLeast(0) / 2
-        return BLOCK.indices.map { line ->
-            val markLine = MARK.getOrNull(line - topPad)
-            val mark = markLine?.joinToString("") { (text, color) -> color?.invoke(text) ?: text }
-                ?: " ".repeat(MARK_WIDTH)
-            mark + MARK_GAP + BRAND(BLOCK[line])
+    /** The logo on the left, with the wordmark centered against it. */
+    private fun logoAndWordmark(): List<String> {
+        val wordmarkPad = (LOGO.size - BLOCK.size).coerceAtLeast(0) / 2
+        return (0 until maxOf(LOGO.size, BLOCK.size + wordmarkPad)).map { line ->
+            val logo = LOGO.getOrNull(line)?.let { (glyphs, colors) -> colorize(glyphs, colors) }
+                ?: " ".repeat(LOGO_WIDTH)
+            val word = BLOCK.getOrNull(line - wordmarkPad)?.let { BRAND(it) } ?: ""
+            (logo + LOGO_GAP + word).trimEnd()
         }
+    }
+
+    /** Applies the per-cell palette, coalescing runs of one color into one span. */
+    private fun colorize(glyphs: String, colors: String): String {
+        val out = StringBuilder()
+        var index = 0
+        while (index < glyphs.length) {
+            val key = colors[index]
+            var end = index
+            while (end < glyphs.length && colors[end] == key) end++
+            val run = glyphs.substring(index, end)
+            out.append(PALETTE[key]?.invoke(run) ?: run)
+            index = end
+        }
+        return out.toString()
     }
 
     /**

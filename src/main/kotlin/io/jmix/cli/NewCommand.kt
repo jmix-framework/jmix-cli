@@ -26,8 +26,10 @@ import io.jmix.cli.repo.TemplateRepository
 import io.jmix.cli.template.Template
 import io.jmix.cli.template.TemplateCatalog
 import io.jmix.cli.template.TemplateParams
+import io.jmix.cli.update.SelfUpdater
 import io.jmix.cli.util.PlatformVersions
 import io.jmix.cli.wizard.Answer
+import io.jmix.cli.wizard.Banner
 import io.jmix.cli.wizard.PathCompleter
 import io.jmix.cli.wizard.Prompts
 import io.jmix.cli.wizard.Validation
@@ -56,6 +58,10 @@ class NewCommand : CliktCommand(name = "new") {
     private val includeUnstable by option("--include-unstable", help = "Offer unstable (RC/snapshot) Jmix versions").flag()
     private val force by option("--force", help = "Generate into a non-empty directory without asking").flag()
     private val nonInteractive by option("--non-interactive", help = "Never prompt; use flags and defaults").flag()
+
+    // Handled in main() before parsing; declared so it is accepted here too.
+    @Suppress("unused")
+    private val noUpdate by option(SelfUpdater.NO_UPDATE_FLAG, help = "Skip the startup update check").flag()
 
     /** Answers collected so far; previous answers become defaults on revisit. */
     private data class WizardState(
@@ -116,6 +122,10 @@ class NewCommand : CliktCommand(name = "new") {
     }
 
     private fun createProject() {
+        // Only for a human at a prompt: scripted runs keep their output clean.
+        if (interactive && terminal.terminalInfo.outputInteractive) {
+            Banner.print(terminal, cliVersion())
+        }
         runWizardSteps()
 
         val targetDir = state.targetDir!!
@@ -622,6 +632,10 @@ class NewCommand : CliktCommand(name = "new") {
             terminal.println("  ${link.emoji} ${link.label.padEnd(labelWidth)}  ${cyan(link.url)}")
         }
     }
+
+    /** Release version from the jar manifest; absent in some dev runs. */
+    private fun cliVersion(): String? =
+        NewCommand::class.java.`package`?.implementationVersion?.takeIf { it.isNotBlank() }
 
     // Composite aggregator projects (marked hideForSubproject) have no runnable
     // Gradle task — their README explains how to attach subprojects.

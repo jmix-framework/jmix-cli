@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "io.jmix.cli"
-version = providers.gradleProperty("releaseVersion").orElse("0.1.0").get()
+version = providers.gradleProperty("releaseVersion").orElse("1.0.0").get()
 
 val mordantFfm = libs.mordant.ffm.get().module
 
@@ -42,6 +42,12 @@ application {
     mainClass.set("io.jmix.cli.MainKt")
     // Mordant's JNA terminal detection needs native access on JDK 24+.
     applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
+}
+
+tasks.jar {
+    manifest {
+        attributes("Implementation-Version" to project.version)
+    }
 }
 
 tasks.test {
