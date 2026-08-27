@@ -8,6 +8,10 @@ a keyboard-driven wizard for local use, a non-interactive mode for AI agents, sc
 CI. It uses the same templates and rendering model as Jmix Studio and produces
 equivalent projects.
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Creating a project with the Jmix CLI wizard" width="800">
+</p>
+
 ## Quick start
 
 macOS / Linux:
@@ -129,6 +133,18 @@ Integration tests against the real template repository:
 ```shell
 JMIX_CLI_IT=true ./gradlew test
 ```
+
+### Update the README demo
+
+The header GIF is recorded with [vhs](https://github.com/charmbracelet/vhs)
+from [docs/demo.tape](docs/demo.tape):
+
+```shell
+./gradlew releaseBundle
+JMIX_DEMO_DIR=$(mktemp -d) JMIX_CLI_NO_AUTO_UPDATE=1 vhs docs/demo.tape
+```
+
+`jmix` must be on PATH — link it to the launcher inside the built image.
 
 ### Build distributions
 

@@ -14,7 +14,7 @@ Require jmix
 Set Shell zsh
 Set FontSize 16
 Set Width 1000
-Set Height 460
+Set Height 620
 Set Padding 20
 Set Framerate 24
 Set TypingSpeed 45ms
@@ -38,7 +38,7 @@ Sleep 1400ms
 Enter Sleep 1200ms
 Enter Sleep 1800ms
 
-# Rest on the template list, then stop before generation.
-Sleep 1200ms
-Ctrl+C
-Sleep 600ms
+# Rest on the template list and end there: the recording stops before
+# generation, and Ctrl+C would leave the restored screen empty in the last
+# frame.
+Sleep 2s
