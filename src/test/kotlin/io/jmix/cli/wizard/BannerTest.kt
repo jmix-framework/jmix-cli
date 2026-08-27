@@ -10,11 +10,15 @@ import org.junit.jupiter.api.Test
 
 class BannerTest {
 
-    private fun render(width: Int, version: String? = null): String {
+    /**
+     * Renders the banner into a string. [blocks] is passed explicitly so the
+     * assertions hold on hosts whose console cannot show block glyphs.
+     */
+    private fun render(width: Int, version: String? = null, blocks: Boolean = true): String {
         val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = width)
         // Both are needed: the recorder reports the size, the terminal renders to it.
         val terminal = Terminal(ansiLevel = AnsiLevel.NONE, width = width, terminalInterface = recorder)
-        Banner.print(terminal, version)
+        Banner.print(terminal, version, blocks)
         return recorder.output()
     }
 
@@ -25,6 +29,15 @@ class BannerTest {
         assertTrue(output.contains("██"), "expected block art:\n$output")
         assertTrue(output.contains("Jmix CLI 1.2.3"))
         assertTrue(output.contains("Create a Jmix project"))
+    }
+
+    @Test
+    fun `a console without block glyphs gets the ascii wordmark`() {
+        val output = render(120, blocks = false)
+
+        assertFalse(output.contains("██"), "block art needs block glyphs:\n$output")
+        assertTrue(output.contains("|_|"), "expected ascii art:\n$output")
+        assertTrue(output.contains("Jmix CLI"))
     }
 
     @Test
@@ -55,7 +68,10 @@ class BannerTest {
     @Test
     fun `the logo is drawn in its own colors when the terminal supports them`() {
         val recorder = TerminalRecorder(ansiLevel = AnsiLevel.TRUECOLOR, width = 120)
-        Banner.print(Terminal(ansiLevel = AnsiLevel.TRUECOLOR, width = 120, terminalInterface = recorder), "1.0.0")
+        Banner.print(
+            Terminal(ansiLevel = AnsiLevel.TRUECOLOR, width = 120, terminalInterface = recorder),
+            "1.0.0", blocks = true,
+        )
         val output = recorder.output()
 
         // Sampled from the Jmix logo: pink, green, cyan and orange arcs.

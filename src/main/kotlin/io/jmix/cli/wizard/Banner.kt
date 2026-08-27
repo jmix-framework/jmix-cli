@@ -74,10 +74,13 @@ object Banner {
     private val ASCII_WIDTH = ASCII.maxOf { it.length } + 2
     private val WITH_LOGO_WIDTH = LOGO_WIDTH + LOGO_GAP.length + BLOCK_WIDTH
 
-    fun print(terminal: Terminal, version: String? = null) {
+    /**
+     * @param blocks whether the console can render block glyphs; overridable so
+     *   tests cover every rendering regardless of the host they run on.
+     */
+    fun print(terminal: Terminal, version: String? = null, blocks: Boolean = supportsBlocks()) {
         val width = terminal.size.width
         val subtitle = listOfNotNull("Jmix CLI", version).joinToString(" ")
-        val blocks = supportsBlocks()
 
         terminal.println()
         when {
@@ -130,7 +133,7 @@ object Banner {
      * them. Windows consoles older than Terminal render them as boxes, so the
      * ASCII form is used unless the session is a modern one.
      */
-    private fun supportsBlocks(): Boolean {
+    internal fun supportsBlocks(): Boolean {
         if (!System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) return true
         // Windows Terminal sets WT_SESSION; the legacy console does not.
         return System.getenv("WT_SESSION") != null
