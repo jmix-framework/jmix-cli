@@ -636,31 +636,48 @@ class NewCommand : CliktCommand(name = "new") {
         // abort with a non-zero exit after the project was already created.
         if (!interactive || !terminal.terminalInfo.inputInteractive) return
         val runTask = runTaskFor(info)
-        val open = ProjectLauncher.openCommand(info.projectDir)
-        val openChoice = "Open the project in ${open.opener.displayName}"
+        // Offered only when an IDE is actually installed; the file manager is
+        // never a question — it is the fallback below.
+        val ideaOpen = ProjectLauncher.ideaOpenCommand(info.projectDir)
+        val openChoice = ideaOpen?.let { "Open the project in ${it.opener.displayName}" }
         // Composite aggregator projects have no runnable task — offer only the open.
         val runChoice = runTask?.let { "Run the application (./gradlew $it)" }
 
         val entries = listOfNotNull(openChoice, runChoice).map { SelectList.Entry(it) }
-        val picked = when (val answer = prompts.chooseMany("What's next?", entries)) {
-            // No arrow-key widget: one yes/no question per option instead.
-            null -> listOfNotNull(
-                openChoice.takeIf { prompts.askYesNo("$openChoice?", default = false).requireValue() },
-                runChoice?.takeIf { prompts.askYesNo("$runChoice?", default = false).requireValue() },
-            )
-            is Answer.Back -> emptyList()
-            is Answer.Value -> answer.value
+        val picked = when {
+            entries.isEmpty() -> emptyList()
+            else -> when (val answer = prompts.chooseMany("What's next?", entries)) {
+                // No arrow-key widget: one yes/no question per option instead.
+                null -> listOfNotNull(
+                    openChoice?.takeIf { prompts.askYesNo("$it?", default = false).requireValue() },
+                    runChoice?.takeIf { prompts.askYesNo("$it?", default = false).requireValue() },
+                )
+                is Answer.Back -> emptyList()
+                is Answer.Value -> answer.value
+            }
         }
 
-        if (openChoice in picked) {
-            terminal.println(gray("Opening the project in ${open.opener.displayName}..."))
-            ProjectLauncher.open(open) { terminal.println(brightYellow("Warning: $it")) }
-        }
+        openProject(info, ideaOpen.takeIf { openChoice != null && openChoice in picked })
         if (runChoice != null && runChoice in picked) {
             runApplication(info, runTask)
         } else if (runTask != null) {
             offerJdkInstall(info)
         }
+    }
+
+    /**
+     * Opens the generated project: in the IDE when the user asked for it, and
+     * in the file manager otherwise — including when the IDE failed to start,
+     * so a finished project is always shown somewhere.
+     */
+    private fun openProject(info: ProjectCreationInfo, ideaOpen: ProjectLauncher.OpenCommand?) {
+        val warn: (String) -> Unit = { terminal.println(brightYellow("Warning: $it")) }
+        if (ideaOpen != null) {
+            terminal.println(gray("Opening the project in ${ideaOpen.opener.displayName}..."))
+            if (ProjectLauncher.open(ideaOpen, warn)) return
+        }
+        terminal.println(gray("Opening the project folder..."))
+        ProjectLauncher.open(ProjectLauncher.fileManagerOpenCommand(info.projectDir), warn)
     }
 
     private fun runApplication(info: ProjectCreationInfo, runTask: String) {

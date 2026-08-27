@@ -1,7 +1,10 @@
 package io.jmix.cli.env
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
@@ -94,15 +97,81 @@ class ProjectLauncherTest {
 
         assertEquals(app, ProjectLauncher.macIdeaApp(listOf(tempDir)))
 
-        val open = ProjectLauncher.openCommand(projectDir, os = "Mac OS X", pathEnv = "", macAppDirs = listOf(tempDir))
-        assertEquals(ProjectLauncher.Opener.IDEA, open.opener)
-        assertEquals(listOf("open", "-a", "$app", "$projectDir"), open.command)
+        val open = ProjectLauncher.ideaOpenCommand(projectDir, os = "Mac OS X", pathEnv = "", macAppDirs = listOf(tempDir))
+        assertEquals(ProjectLauncher.Opener.IDEA, open?.opener)
+        assertEquals(listOf("open", "-a", "$app", "$projectDir"), open?.command)
     }
 
     @Test
-    fun `falls back to file manager when idea is not found`(@TempDir tempDir: Path) {
-        val open = ProjectLauncher.openCommand(projectDir, os = "Linux", pathEnv = tempDir.toString(), macAppDirs = emptyList())
-        assertEquals(ProjectLauncher.Opener.FILE_MANAGER, open.opener)
-        assertEquals(listOf("xdg-open", "$projectDir"), open.command)
+    fun `no idea command without an installation, and the file manager always has one`(@TempDir tempDir: Path) {
+        assertNull(
+            ProjectLauncher.ideaOpenCommand(
+                projectDir, os = "Linux", pathEnv = tempDir.toString(), macAppDirs = emptyList(),
+            ),
+        )
+
+        val fallback = ProjectLauncher.fileManagerOpenCommand(projectDir, os = "Linux")
+        assertEquals(ProjectLauncher.Opener.FILE_MANAGER, fallback.opener)
+        assertEquals(listOf("xdg-open", "$projectDir"), fallback.command)
+    }
+
+    @Test
+    fun `idea open command is returned when an installation exists`(@TempDir tempDir: Path) {
+        val launcher = tempDir.resolve("idea")
+        Files.writeString(launcher, "#!/bin/sh\n")
+        launcher.toFile().setExecutable(true)
+
+        val open = ProjectLauncher.ideaOpenCommand(
+            projectDir, os = "Linux", pathEnv = tempDir.toString(), macAppDirs = emptyList(),
+        )
+
+        assertEquals(ProjectLauncher.Opener.IDEA, open?.opener)
+        assertEquals(listOf("$launcher", "$projectDir"), open?.command)
+    }
+
+    @Test
+    fun `open reports failure when the ide launcher cannot start`() {
+        val warnings = mutableListOf<String>()
+        val missing = ProjectLauncher.OpenCommand(
+            ProjectLauncher.Opener.IDEA, listOf("jmix-no-such-launcher", "$projectDir"),
+        )
+
+        assertFalse(ProjectLauncher.open(missing) { warnings.add(it) })
+        assertTrue(warnings.isNotEmpty(), "a failed open must warn")
+    }
+
+    @Test
+    fun `open reports failure when the ide launcher exits with an error`(@TempDir tempDir: Path) {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+        val launcher = tempDir.resolve("idea")
+        Files.writeString(launcher, "#!/bin/sh\nexit 1\n")
+        launcher.toFile().setExecutable(true)
+        val failing = ProjectLauncher.OpenCommand(ProjectLauncher.Opener.IDEA, listOf("$launcher", "$projectDir"))
+
+        assertFalse(ProjectLauncher.open(failing) {})
+    }
+
+    @Test
+    fun `open succeeds for a launcher that keeps running`(@TempDir tempDir: Path) {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+        // An IDE stays up; the probe must not mistake that for a failure.
+        val launcher = tempDir.resolve("idea")
+        Files.writeString(launcher, "#!/bin/sh\nsleep 30\n")
+        launcher.toFile().setExecutable(true)
+        val running = ProjectLauncher.OpenCommand(ProjectLauncher.Opener.IDEA, listOf("$launcher", "$projectDir"))
+
+        assertTrue(ProjectLauncher.open(running) {})
+    }
+
+    @Test
+    fun `open ignores the exit code of the file manager`(@TempDir tempDir: Path) {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+        // explorer.exe reports a non-zero code even when the window opens.
+        val opener = tempDir.resolve("open")
+        Files.writeString(opener, "#!/bin/sh\nexit 1\n")
+        opener.toFile().setExecutable(true)
+        val command = ProjectLauncher.OpenCommand(ProjectLauncher.Opener.FILE_MANAGER, listOf("$opener", "$projectDir"))
+
+        assertTrue(ProjectLauncher.open(command) {})
     }
 }
