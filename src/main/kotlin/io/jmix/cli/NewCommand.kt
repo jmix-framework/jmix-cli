@@ -812,10 +812,10 @@ class NewCommand : CliktCommand(name = "new") {
         const val BACKUP_REPOSITORY_URL = "https://nexus.jmix.io/repository/public"
 
         val USEFUL_LINKS = listOf(
-            UsefulLink("📖", "Documentation", "https://docs.jmix.io/jmix/intro.html"),
-            UsefulLink("🤖", "AI Assistant", "https://ai-assistant.jmix.io/"),
+            UsefulLink("📖", "Documentation", "https://docs.jmix.io"),
+            UsefulLink("🤖", "AI Assistant", "https://ai-assistant.jmix.io"),
             UsefulLink("🧰", "Agent Toolkit", "https://github.com/jmix-framework/jmix-agent-toolkit"),
-            UsefulLink("🧩", "Samples", "https://github.com/jmix-framework/jmix-samples-2"),
+            UsefulLink("🧩", "Demo Applications", "https://www.jmix.io/live-demo"),
             UsefulLink("💬", "Forum", "https://forum.jmix.io/"),
         )
 
