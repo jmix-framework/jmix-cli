@@ -1,5 +1,6 @@
 package io.jmix.cli.generator
 
+import io.jmix.cli.env.EnvironmentCheck
 import io.jmix.cli.template.TemplateMetadata
 import java.nio.file.Files
 import java.nio.file.Path
@@ -47,7 +48,10 @@ class ProjectGeneratorTest {
         return root
     }
 
-    private fun generate(locales: List<JmixLocale> = listOf(JmixLocale("en", "English", true))): Path {
+    private fun generate(
+        locales: List<JmixLocale> = listOf(JmixLocale("en", "English", true)),
+        createGitRepository: Boolean = false,
+    ): Path {
         val target = tempDir.resolve("out")
         val info = ProjectCreationInfo(
             name = "jmix-project",
@@ -57,7 +61,7 @@ class ProjectGeneratorTest {
             locales = locales,
             jmixVersion = "3.0.1",
             templateMetadata = TemplateMetadata(),
-            createGitRepository = false,
+            createGitRepository = createGitRepository,
         )
         ProjectGenerator(onWarning = {}).generate(buildFixtureTemplate(), info)
         return target
@@ -77,6 +81,27 @@ class ProjectGeneratorTest {
         val target = generate()
         assertTrue(Files.exists(target.resolve(".gitignore")))
         assertFalse(Files.exists(target.resolve("\${gitignore}")))
+    }
+
+    @Test
+    fun `git repository stages every generated file`() {
+        Assumptions.assumeTrue(EnvironmentCheck.isGitAvailable())
+        val target = generate(createGitRepository = true)
+
+        val process = ProcessBuilder("git", "diff", "--cached", "--name-only")
+            .directory(target.toFile())
+            .redirectErrorStream(true)
+            .start()
+        val staged = process.inputStream.bufferedReader().readLines().toSet()
+        assertEquals(0, process.waitFor())
+
+        val generated = Files.walk(target).use { files ->
+            files.filter { Files.isRegularFile(it) && !it.startsWith(target.resolve(".git")) }
+                .map { target.relativize(it).toString().replace('\\', '/') }
+                .toList()
+                .toSet()
+        }
+        assertEquals(generated, staged)
     }
 
     @Test

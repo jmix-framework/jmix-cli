@@ -45,6 +45,7 @@ download_asset() {
     local destination="$2"
     local base="${RELEASE_BASE_URL%/}"
 
+    echo "Downloading $name..."
     case "$base" in
         http://* | https://* | file://*)
             curl -fsSL "$base/$name" -o "$destination"

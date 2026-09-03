@@ -46,6 +46,7 @@ function Copy-ReleaseAsset {
         [Parameter(Mandatory = $true)][string]$Destination
     )
 
+    Write-Host "Downloading $Name..."
     if (Test-Path -LiteralPath $ReleaseBaseUrl -PathType Container) {
         Copy-Item -LiteralPath (Join-Path $ReleaseBaseUrl $Name) -Destination $Destination
     } else {

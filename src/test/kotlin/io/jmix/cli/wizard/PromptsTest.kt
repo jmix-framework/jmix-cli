@@ -352,6 +352,65 @@ class PromptsTest {
     }
 
     @Test
+    fun `full screen selector quits cleanly on q`() {
+        val recorder = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
+        recorder.inputEvents += KeyboardEvent("q")
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val result = assertThrows(CliktError::class.java) {
+            prompts.choose("Select theme", listOf("aura", "lumo"), { it })
+        }
+
+        assertEquals(0, result.statusCode)
+        assertTrue(recorder.output().contains("q"))
+        assertTrue(recorder.output().contains("quit"))
+    }
+
+    @Test
+    fun `IDE console selector quits cleanly on q`() {
+        val recorder = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = true)
+        recorder.inputEvents += KeyboardEvent("Q")
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val result = assertThrows(CliktError::class.java) {
+            prompts.choose("Select theme", listOf("aura", "lumo"), { it })
+        }
+
+        assertEquals(0, result.statusCode)
+    }
+
+    @Test
+    fun `raw typed prompt quits cleanly on ctrl q`() {
+        val recorder = TerminalRecorder(width = 120, height = 40)
+        recorder.inputEvents += KeyboardEvent("q", ctrl = true)
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val result = assertThrows(CliktError::class.java) {
+            prompts.ask("Enter project name", "untitled")
+        }
+
+        assertEquals(0, result.statusCode)
+        assertTrue(recorder.output().contains("ctrl+q"))
+        assertTrue(recorder.output().contains("quit"))
+    }
+
+    @Test
+    fun `raw typed prompt accepts plain q as input`() {
+        val recorder = TerminalRecorder(width = 120, height = 40)
+        recorder.inputEvents += listOf(KeyboardEvent("q"), KeyboardEvent("Enter"))
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        assertEquals("q", prompts.ask("Enter project name", "untitled").requireValue())
+    }
+
+    @Test
+    fun `line input fallback accepts plain q as input`() = withStdin("q\n") {
+        val prompts = Prompts(Terminal(terminalInterface = TerminalRecorder(inputInteractive = false)))
+
+        assertEquals("q", prompts.ask("Enter project name", "untitled").requireValue())
+    }
+
+    @Test
     fun `prompts fall back to defaults once stdin is exhausted`() = withEmptyStdin {
         val recorder = TerminalRecorder(inputInteractive = false)
         val prompts = Prompts(Terminal(terminalInterface = recorder))
@@ -419,9 +478,11 @@ class PromptsTest {
         assertTrue(recorder.output().contains("IdeaProjects  IdeaSettings"))
     }
 
-    private fun withEmptyStdin(block: () -> Unit) {
+    private fun withEmptyStdin(block: () -> Unit) = withStdin("", block)
+
+    private fun withStdin(input: String, block: () -> Unit) {
         val original = System.`in`
-        System.setIn(ByteArrayInputStream(ByteArray(0)))
+        System.setIn(ByteArrayInputStream(input.toByteArray()))
         try {
             block()
         } finally {

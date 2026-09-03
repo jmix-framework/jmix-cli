@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Project generation ported from Studio's ProjectCreator: evaluate `.globals`,
  * walk the template tree rendering paths and contents, generate messages_*
- * per locale, normalize gradlew, then optionally `git init`.
+ * per locale, normalize gradlew, then optionally initialize and stage a Git repository.
  */
 class ProjectGenerator(
     private val onWarning: (String) -> Unit = { System.err.println("Warning: $it") },
@@ -134,16 +134,24 @@ class ProjectGenerator(
 
     private fun initGitRepository(projectDir: Path) {
         try {
-            val process = ProcessBuilder("git", "init")
-                .directory(projectDir.toFile())
-                .redirectErrorStream(true)
-                .start()
-            process.inputStream.readAllBytes()
-            if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
-                onWarning("Failed to initialize git repository in $projectDir")
+            for (command in listOf(listOf("git", "init"), listOf("git", "add", "--all"))) {
+                val process = ProcessBuilder(command)
+                    .directory(projectDir.toFile())
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start()
+                if (!process.waitFor(30, TimeUnit.SECONDS)) {
+                    process.destroyForcibly()
+                    onWarning("Git command timed out in $projectDir: ${command.joinToString(" ")}")
+                    return
+                }
+                if (process.exitValue() != 0) {
+                    onWarning("Git command failed in $projectDir: ${command.joinToString(" ")}")
+                    return
+                }
             }
         } catch (e: Exception) {
-            onWarning("Failed to initialize git repository in $projectDir: ${e.message}")
+            onWarning("Failed to prepare git repository in $projectDir: ${e.message}")
         }
     }
 

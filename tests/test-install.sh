@@ -35,6 +35,7 @@ run_installer() {
 }
 
 first_output="$(run_installer "$release_dir")"
+[[ "$first_output" == *"Downloading $archive_name..."* ]]
 [[ "$first_output" == *"Installed Jmix CLI"* ]]
 [[ -x "$temp_dir/bin/jmix" ]]
 # Self-update reads these; never let the tests reach the real release feed.

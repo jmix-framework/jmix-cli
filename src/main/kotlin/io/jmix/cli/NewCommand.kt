@@ -40,6 +40,13 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
 
+internal fun projectLocationOptions(projectName: String, currentDir: Path, homeDir: Path): List<Pair<String, Path>> =
+    listOf(
+        "Current directory" to currentDir,
+        "Subdirectory" to currentDir.resolve(projectName).normalize(),
+        "IdeaProjects" to homeDir.resolve("IdeaProjects").resolve(projectName).normalize(),
+    )
+
 class NewCommand : CliktCommand(name = "new") {
 
     override fun help(context: Context) = "Create a new Jmix project"
@@ -524,25 +531,27 @@ class NewCommand : CliktCommand(name = "new") {
             state = state.copy(targetDir = toAbsolutePath(it))
             return Outcome.AUTO
         }
-        val currentDir = Path.of("").toAbsolutePath().resolve(state.name!!).normalize()
+        val currentDir = Path.of("").toAbsolutePath().normalize()
+        val subdirectory = currentDir.resolve(state.name!!).normalize()
         if (!interactive) {
             // Scripts get the conventional CWD-relative default.
-            state = state.copy(targetDir = state.targetDir ?: currentDir)
+            state = state.copy(targetDir = state.targetDir ?: subdirectory)
             return Outcome.AUTO
         }
-        val ideaDir = Path.of(System.getProperty("user.home"), "IdeaProjects", state.name!!)
-        val options = listOf(
-            "Current directory" to currentDir,
-            "IdeaProjects" to ideaDir,
-            OTHER_CHOICE to null,
+        val builtInOptions = projectLocationOptions(
+            state.name!!,
+            currentDir,
+            Path.of(System.getProperty("user.home")),
         )
+        val options: List<Pair<String, Path?>> = builtInOptions + (OTHER_CHOICE to null)
         val targetDir = when (val picked = prompts.choose(
             "Select project location", options, { it.first },
             { it.second?.toString() }, allowBack = true,
         )) {
             is Answer.Back -> return Outcome.BACK
             is Answer.Value -> picked.value.second ?: run {
-                val previousCustom = state.targetDir?.takeIf { it != currentDir && it != ideaDir }
+                val builtInPaths = builtInOptions.map { it.second }
+                val previousCustom = state.targetDir?.takeIf { it !in builtInPaths }
                 when (val typed = prompts.ask(
                     "Enter project location", previousCustom?.toString(), allowBack = true,
                     complete = { PathCompleter.complete(it) },
@@ -816,7 +825,7 @@ class NewCommand : CliktCommand(name = "new") {
             UsefulLink("🤖", "AI Assistant", "https://ai-assistant.jmix.io"),
             UsefulLink("🧰", "Agent Toolkit", "https://github.com/jmix-framework/jmix-agent-toolkit"),
             UsefulLink("🧩", "Demo Applications", "https://www.jmix.io/live-demo"),
-            UsefulLink("💬", "Forum", "https://forum.jmix.io/"),
+            UsefulLink("💬", "Forum", "https://forum.jmix.io"),
         )
 
         val COMMON_LOCALES = listOf(

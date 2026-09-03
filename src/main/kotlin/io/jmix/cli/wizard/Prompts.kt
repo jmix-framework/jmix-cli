@@ -1,6 +1,7 @@
 package io.jmix.cli.wizard
 
 import com.github.ajalt.clikt.core.CliktError
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.mordant.input.RawModeScope
 import com.github.ajalt.mordant.input.enterRawModeOrNull
 import com.github.ajalt.mordant.input.isCtrlC
@@ -107,8 +108,9 @@ internal data class SelectionUiState(
 /**
  * Interactive prompt helpers. Selection prompts render an arrow-key list with
  * an always-visible key bar (↑/↓ move, space toggles, enter confirms, esc goes
- * back), falling back to numbered lists where raw mode is unavailable (for
- * example, pipes). Typed prompts accept `<` to go back.
+ * back, q quits), falling back to numbered lists where raw mode is unavailable
+ * (for example, pipes). Raw typed prompts accept Esc to go back and Ctrl+Q to
+ * quit; line-input fallbacks accept `<` to go back.
  */
 class Prompts(
     private val terminal: Terminal,
@@ -383,6 +385,7 @@ class Prompts(
                 }
                 when {
                     key.isCtrlC -> abort()
+                    key.key.equals(QUIT_INPUT, ignoreCase = true) && !key.ctrl && !key.alt -> quit()
                     key.key == "Escape" && state.allowBack -> return SelectResult.Back
                     key.key == "ArrowUp" -> {
                         state = renderSelection(state.move(-1))
@@ -573,6 +576,7 @@ class Prompts(
                 val key = runCatching { rawMode.readKey() }.getOrElse { abort() }
                 when {
                     key.isCtrlC -> abort()
+                    key.key.equals(QUIT_INPUT, ignoreCase = true) && !key.ctrl && !key.alt -> quit()
                     key.key == "Escape" && state.allowBack -> return SelectResult.Back
                     key.key == "ArrowUp" -> {
                         val next = state.move(-1)
@@ -602,6 +606,7 @@ class Prompts(
             if (multi) add("space" to "toggle")
             add("enter" to if (multi) "confirm" else "select")
             if (allowBack) add("esc" to "back")
+            add(QUIT_INPUT to "quit")
         }
 
     private fun typedBarParts(
@@ -615,6 +620,7 @@ class Prompts(
             // Without raw mode the terminal only delivers whole lines, so Esc
             // cannot be detected — fall back to typing `<`.
             if (allowBack) add((if (rawMode) "esc" else "<") to "back")
+            if (rawMode) add("ctrl+$QUIT_INPUT" to "quit")
         }
 
     private sealed interface LineInput {
@@ -633,7 +639,7 @@ class Prompts(
         allowBack: Boolean,
         complete: ((String) -> PathCompletion)? = null,
     ): LineInput {
-        val rawMode = if (allowBack || complete != null) terminal.enterRawModeOrNull() else null
+        val rawMode = terminal.enterRawModeOrNull()
         if (rawMode == null) {
             printPromptWithBar(prompt, promptWidth, typedBarParts(allowBack, rawMode = false))
             val line = readlnOrNull()
@@ -658,6 +664,7 @@ class Prompts(
                 val key = runCatching { scope.readKey() }.getOrElse { abort() }
                 when {
                     key.isCtrlC -> abort()
+                    key.key.equals(QUIT_INPUT, ignoreCase = true) && key.ctrl && !key.alt -> quit()
                     key.key == "Escape" && allowBack -> {
                         clearPromptWithBar(cursorOnPrompt = true)
                         return LineInput.Back
@@ -783,8 +790,11 @@ class Prompts(
 
     private fun abort(): Nothing = throw CliktError("Aborted.")
 
+    private fun quit(): Nothing = throw ProgramResult(0)
+
     private companion object {
         const val BACK_INPUT = "<"
+        const val QUIT_INPUT = "q"
 
         /** Rows a frame needs below the banner: question, one entry, nav bar. */
         const val MIN_ROWS_BELOW_HEADER = 3

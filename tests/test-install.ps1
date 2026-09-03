@@ -23,6 +23,9 @@ try {
     if ($firstOutput -notmatch "Installed Jmix CLI") {
         throw "Installer did not report a new installation."
     }
+    if ($firstOutput -notmatch "Downloading $([regex]::Escape($archive.Name))\.\.\.") {
+        throw "Installer did not report the release download."
+    }
 
     $commandPath = Join-Path $binDir "jmix.cmd"
     if (-not (Test-Path -LiteralPath $commandPath -PathType Leaf)) {
