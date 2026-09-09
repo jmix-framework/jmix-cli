@@ -1,5 +1,6 @@
 package io.jmix.cli.generator
 
+import io.jmix.cli.addon.AddonProjectProfile
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -35,6 +36,13 @@ class ProjectGenerator(
         }
 
         setGradlewExecutable(info.projectDir)
+
+        if (info.addons.any { !it.included }) {
+            val profile = AddonProjectProfile.from(templateRoot)
+                ?: throw IOException("The template has no module for add-on installation.")
+            val buildFile = info.targetDir.resolve(TemplateEngine.render(profile.buildFile, binding))
+            AddonInstaller.install(info, buildFile)
+        }
 
         if (info.createGitRepository) {
             initGitRepository(info.projectDir)

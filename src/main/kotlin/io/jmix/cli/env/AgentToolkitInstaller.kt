@@ -14,8 +14,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Installs the Jmix Agent Toolkit
  * (https://github.com/jmix-framework/jmix-agent-toolkit) into a generated
- * project: guidelines files and project-local skills for every supported
- * agent, via the toolkit's non-interactive subcommands. Only the project
+ * project: guidelines for every supported agent and project-local skills
+ * for Claude, Codex, and OpenCode, via non-interactive subcommands. Only the project
  * directory is written to — global steps (MCP servers, Playwright) are the
  * toolkit wizard's business, not the CLI's. The downloaded script runs from a
  * file with a fixed argument list; no value ever passes through a shell
@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit
 object AgentToolkitInstaller {
 
     val ALL_AGENTS = listOf("claude", "codex", "opencode", "junie")
+    val SKILL_AGENTS = ALL_AGENTS - "junie"
 
     /** Toolkit branch for a Jmix version; majors are the only accepted shape. */
     fun branch(jmixVersion: String): String {
@@ -39,9 +40,9 @@ object AgentToolkitInstaller {
 
     fun skillsArgs(os: String = System.getProperty("os.name")): List<String> =
         if (isWindows(os)) {
-            listOf("skills", "-Agents", AGENTS_CSV, "-Scope", "local")
+            listOf("skills", "-Agents", SKILL_AGENTS_CSV, "-Scope", "local")
         } else {
-            listOf("skills", "--agents", AGENTS_CSV, "--scope", "local")
+            listOf("skills", "--agents", SKILL_AGENTS_CSV, "--scope", "local")
         }
 
     fun guidelinesArgs(os: String = System.getProperty("os.name")): List<String> =
@@ -124,6 +125,7 @@ object AgentToolkitInstaller {
         .build()
 
     private val AGENTS_CSV = ALL_AGENTS.joinToString(",")
+    private val SKILL_AGENTS_CSV = SKILL_AGENTS.joinToString(",")
     private const val STEP_TIMEOUT_MINUTES = 10L
     private const val RAW_CONTENT_BASE =
         "https://raw.githubusercontent.com/jmix-framework/jmix-agent-toolkit"

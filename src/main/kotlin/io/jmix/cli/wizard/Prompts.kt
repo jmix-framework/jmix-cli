@@ -5,6 +5,7 @@ import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.mordant.input.RawModeScope
 import com.github.ajalt.mordant.input.enterRawModeOrNull
 import com.github.ajalt.mordant.input.isCtrlC
+import com.github.ajalt.mordant.rendering.TextColors
 import com.github.ajalt.mordant.rendering.TextColors.brightGreen
 import com.github.ajalt.mordant.rendering.TextColors.brightMagenta
 import com.github.ajalt.mordant.rendering.TextColors.brightRed
@@ -34,9 +35,19 @@ data class WizardChoice(
     val value: String,
 )
 
+/** Stable phases; individual questions can be resolved by flags or template defaults. */
+enum class WizardStage(val title: String) {
+    GENERAL("General"),
+    LOCALIZATION("Localization"),
+    ADDONS("Add-ons"),
+    LOCATION("Location and Git"),
+    GENERATION("Finishing up"),
+}
+
 /** Immutable wizard data required by the interactive renderer. */
 data class WizardUiState(
     val choices: List<WizardChoice> = emptyList(),
+    val stage: WizardStage? = null,
 )
 
 internal data class SelectionWindow(
@@ -53,21 +64,37 @@ internal fun selectionWindow(
     cursorIndex: Int,
     previousFirstIndex: Int,
     maxVisibleEntries: Int?,
+    maxRows: Int = Int.MAX_VALUE,
+    rowCount: (index: Int, first: Boolean) -> Int = { _, _ -> 1 },
 ): SelectionWindow {
     require(entryCount > 0) { "Selection list must contain at least one entry" }
     require(cursorIndex in 0 until entryCount) { "Cursor index must point to an entry" }
     require(maxVisibleEntries == null || maxVisibleEntries > 0) { "Visible entry count must be positive" }
+    require(maxRows > 0) { "Visible row count must be positive" }
+    require(rowCount(cursorIndex, true) in 1..maxRows) { "The cursor entry must fit in the window" }
 
     val visibleCount = minOf(maxVisibleEntries ?: entryCount, entryCount)
     val maxFirstIndex = entryCount - visibleCount
     val currentFirstIndex = previousFirstIndex.coerceIn(0, maxFirstIndex)
-    val firstIndex = when {
+    var firstIndex = when {
         cursorIndex < currentFirstIndex -> cursorIndex
         cursorIndex >= currentFirstIndex + visibleCount -> cursorIndex - visibleCount + 1
         else -> currentFirstIndex
     }.coerceIn(0, maxFirstIndex)
 
-    return SelectionWindow(firstIndex, firstIndex + visibleCount)
+    fun endIndex(first: Int): Int {
+        var rows = 0
+        var end = first
+        while (end < minOf(first + visibleCount, entryCount)) {
+            rows += rowCount(end, end == first)
+            if (rows > maxRows) break
+            end++
+        }
+        return end
+    }
+
+    while (cursorIndex >= endIndex(firstIndex)) firstIndex++
+    return SelectionWindow(firstIndex, endIndex(firstIndex))
 }
 
 /** Immutable state for one interactive selection prompt. */
@@ -77,25 +104,68 @@ internal data class SelectionUiState(
     val multi: Boolean,
     val allowBack: Boolean,
     val maxVisibleEntries: Int?,
+    val filterTexts: List<String>? = null,
+    val lockedIndices: Set<Int> = emptySet(),
+    val groups: List<String>? = null,
     val cursorIndex: Int = 0,
     val firstVisibleIndex: Int = 0,
-    val selectedIndices: Set<Int> = entries.indices.filterTo(linkedSetOf()) { entries[it].selected },
+    val selectedIndices: Set<Int> = entries.indices.filterTo(linkedSetOf()) { entries[it].selected } + lockedIndices,
+    val filterQuery: String = "",
+    val editingFilter: Boolean = false,
+    val filterBeforeEdit: String = "",
 ) {
     init {
         require(entries.isNotEmpty()) { "Selection list must contain at least one entry" }
         require(cursorIndex in entries.indices) { "Cursor index must point to an entry" }
+        require(filterTexts == null || filterTexts.size == entries.size) {
+            "Filter text count must match the selection entry count"
+        }
+        require(lockedIndices.all { it in entries.indices }) { "Locked index must point to an entry" }
+        require(groups == null || groups.size == entries.size) { "Group count must match the selection entry count" }
     }
 
+    val visibleIndices: List<Int>
+        get() = if (filterTexts == null || filterQuery.isEmpty()) {
+            entries.indices.toList()
+        } else {
+            val words = filterQuery.trim().split(Regex("\\s+")).filter(String::isNotEmpty)
+            entries.indices.filter { index -> words.all { filterTexts[index].contains(it, ignoreCase = true) } }
+        }
+
     fun move(offset: Int): SelectionUiState {
-        val next = (cursorIndex + offset).coerceIn(entries.indices)
+        val visible = visibleIndices
+        if (visible.isEmpty()) return this
+        val position = visible.indexOf(cursorIndex).coerceAtLeast(0)
+        val next = visible[(position + offset).coerceIn(visible.indices)]
         return if (next == cursorIndex) this else copy(cursorIndex = next)
     }
 
     fun toggle(): SelectionUiState {
-        if (!multi) return this
+        if (!multi || cursorIndex in lockedIndices || cursorIndex !in visibleIndices) return this
         val next = selectedIndices.toMutableSet()
         if (!next.add(cursorIndex)) next.remove(cursorIndex)
         return copy(selectedIndices = next)
+    }
+
+    fun startFilterEdit(): SelectionUiState =
+        copy(editingFilter = true, filterBeforeEdit = filterQuery)
+
+    fun appendToFilter(text: String): SelectionUiState = withFilter(filterQuery + text)
+
+    fun eraseFilterCharacter(): SelectionUiState =
+        if (filterQuery.isEmpty()) this else withFilter(filterQuery.dropLast(1))
+
+    fun finishFilterEdit(): SelectionUiState = copy(editingFilter = false)
+
+    fun cancelFilterEdit(): SelectionUiState =
+        withFilter(filterBeforeEdit).copy(editingFilter = false)
+
+    fun setFilter(query: String): SelectionUiState = withFilter(query)
+
+    private fun withFilter(query: String): SelectionUiState {
+        val filtered = copy(filterQuery = query, firstVisibleIndex = 0)
+        val visible = filtered.visibleIndices
+        return if (visible.isEmpty() || cursorIndex in visible) filtered else filtered.copy(cursorIndex = visible.first())
     }
 
     fun pickedTitles(): List<String> = if (multi) {
@@ -123,6 +193,34 @@ class Prompts(
     private val wizardUiState: () -> WizardUiState = { WizardUiState() },
 ) {
     private val questionStyle = TextStyle(brightMagenta, bold = true)
+    private var lastPrintedStage: WizardStage? = null
+
+    /** Prints a phase once in the transcript, including generation outside the held screen. */
+    fun printProgress(compact: Boolean = !usesAlternateScreen) {
+        val stage = wizardUiState().stage ?: return
+        if (isInputExhausted || stage == lastPrintedStage) return
+        if (compact) {
+            terminal.println(cyan("Step ${stage.ordinal + 1}/${WizardStage.entries.size}: ${stage.title}"))
+        } else {
+            terminal.updateSize()
+            progressLines(stage, terminal.size.width, 2).forEach(terminal::println)
+        }
+        lastPrintedStage = stage
+    }
+
+    private fun progressLines(stage: WizardStage?, width: Int, maxRows: Int): List<String> {
+        if (stage == null || maxRows <= 0) return emptyList()
+        val columns = (width - 1).coerceAtLeast(1)
+        val count = "${stage.ordinal + 1}/${WizardStage.entries.size}"
+        val titleWidth = (columns - count.length - 1).coerceAtLeast(0)
+        val title = if (stage.title.length <= titleWidth) stage.title else {
+            stage.title.take((titleWidth - 1).coerceAtLeast(0)) + if (titleWidth > 0) "…" else ""
+        }
+        val heading = title.padEnd((columns - count.length).coerceAtLeast(0)) + gray(count.take(columns))
+        if (maxRows == 1) return listOf(heading)
+        val filled = (columns * (stage.ordinal + 1) / WizardStage.entries.size).coerceAtLeast(1)
+        return listOf(heading, TextColors.rgb("#6C5CE7")("━".repeat(filled)) + gray("─".repeat(columns - filled)))
+    }
 
     /**
      * True once piped stdin hit EOF. From that point every prompt resolves to
@@ -194,7 +292,7 @@ class Prompts(
         var lastError: String? = null
         while (true) {
             renderTypedFrame(lastError)
-            val line = when (val input = readLineWithBar(prompt, promptWidth, allowBack, complete)) {
+            val line = when (val input = readLineWithBar(prompt, promptWidth, allowBack, complete, lastError)) {
                 is LineInput.Back -> return Answer.Back
                 is LineInput.Text -> input.text
             }
@@ -295,25 +393,110 @@ class Prompts(
     }
 
     /**
-     * Multi-choice selection (space toggles). Returns chosen titles in list
-     * order, or null when the arrow-key widget is unavailable — the caller
-     * falls back to a typed prompt.
+     * Multi-choice selection (space toggles). Search-enabled lists provide a
+     * numbered fallback; other lists return null when raw mode is unavailable.
      */
     fun chooseMany(
         question: String,
         entries: List<SelectList.Entry>,
         allowBack: Boolean = false,
         maxVisibleEntries: Int? = null,
+        filterTexts: List<String>? = null,
+        lockedIndices: Set<Int> = emptySet(),
+        groups: List<String>? = null,
     ): Answer<List<String>>? = when (val result = runSelect(
         question = question,
         entries = entries,
         multi = true,
         allowBack = allowBack,
         maxVisibleEntries = maxVisibleEntries,
+        filterTexts = filterTexts,
+        lockedIndices = lockedIndices,
+        groups = groups,
     )) {
         is SelectResult.Picked -> Answer.Value(result.titles)
         SelectResult.Back -> Answer.Back
-        SelectResult.Unsupported -> null
+        SelectResult.Unsupported -> if (filterTexts == null) {
+            null
+        } else {
+            runSearchableChooseManyFallback(question, entries, allowBack, maxVisibleEntries, filterTexts, lockedIndices, groups)
+        }
+    }
+
+    private fun runSearchableChooseManyFallback(
+        question: String,
+        entries: List<SelectList.Entry>,
+        allowBack: Boolean,
+        maxVisibleEntries: Int?,
+        filterTexts: List<String>,
+        lockedIndices: Set<Int>,
+        groups: List<String>?,
+    ): Answer<List<String>> {
+        var state = SelectionUiState(
+            question = question,
+            entries = entries,
+            multi = true,
+            allowBack = allowBack,
+            maxVisibleEntries = maxVisibleEntries,
+            filterTexts = filterTexts,
+            lockedIndices = lockedIndices,
+            groups = groups,
+        )
+        if (isInputExhausted) return Answer.Value(state.pickedTitles())
+
+        while (true) {
+            terminal.println(questionStyle(question))
+            terminal.println(filterStatus(state))
+            val visible = state.visibleIndices
+            printNumberedEntries(state)
+            terminal.println(gray("/query filters; numbers toggle visible entries; Enter confirms"))
+            terminal.println(gray((if (allowBack) "< goes back; " else "") + "q quits"))
+            terminal.print(questionStyle("Selection:") + " ")
+
+            val line = readlnOrNull()
+            if (line == null) {
+                isInputExhausted = true
+                terminal.println()
+                terminal.println(gray("No more input — using defaults for the remaining steps."))
+                return Answer.Value(state.pickedTitles())
+            }
+            val input = line.trim()
+            when {
+                input.isEmpty() -> return Answer.Value(state.pickedTitles())
+                input == BACK_INPUT && allowBack -> return Answer.Back
+                input.equals(QUIT_INPUT, ignoreCase = true) -> quit()
+                input.startsWith("/") -> state = state.setFilter(input.drop(1).trim())
+                else -> {
+                    val numbers = input.split(',').map { it.trim().toIntOrNull() }
+                    if (numbers.any { it == null || it !in 1..visible.size }) {
+                        terminal.println(brightRed("Enter visible numbers separated by commas, /query, or Enter."))
+                    } else {
+                        numbers.filterNotNull().distinct().forEach { number ->
+                            state = state.copy(cursorIndex = visible[number - 1]).toggle()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun printNumberedEntries(state: SelectionUiState) {
+        val visible = state.visibleIndices
+        if (visible.isEmpty()) {
+            terminal.println(gray("  No matches."))
+            return
+        }
+        val numberWidth = visible.size.toString().length
+        visible.forEachIndexed { position, index ->
+            state.groups?.get(index)?.let { group ->
+                if (position == 0 || group != state.groups[visible[position - 1]]) terminal.println(cyan(group))
+            }
+            val marker = if (index in state.selectedIndices) brightGreen("[x]") else gray("[ ]")
+            val number = (position + 1).toString().padStart(numberWidth)
+            val included = if (index in state.lockedIndices) gray("(included) ") else ""
+            terminal.println("  $marker $number) $included${state.entries[index].title}")
+            descriptionLine(state.entries[index], terminal.size.width, indent = numberWidth + 8)?.let(terminal::println)
+        }
     }
 
     // --- Custom select loop ----------------------------------------------------
@@ -334,14 +517,23 @@ class Prompts(
         multi: Boolean,
         allowBack: Boolean,
         maxVisibleEntries: Int? = null,
+        filterTexts: List<String>? = null,
+        lockedIndices: Set<Int> = emptySet(),
+        groups: List<String>? = null,
     ): SelectResult {
-        val rawMode = terminal.enterRawModeOrNull() ?: return SelectResult.Unsupported
+        val rawMode = terminal.enterRawModeOrNull() ?: run {
+            printProgress(compact = true)
+            return SelectResult.Unsupported
+        }
         val initialState = SelectionUiState(
             question = question,
             entries = entries,
             multi = multi,
             allowBack = allowBack,
             maxVisibleEntries = maxVisibleEntries,
+            filterTexts = filterTexts,
+            lockedIndices = lockedIndices,
+            groups = groups,
         )
 
         // Mordant detects the IntelliJ Run console as interactive, but its
@@ -385,7 +577,17 @@ class Prompts(
                 }
                 when {
                     key.isCtrlC -> abort()
+                    state.editingFilter && key.key.equals(QUIT_INPUT, ignoreCase = true) && key.ctrl && !key.alt -> quit()
+                    state.editingFilter && key.key == "Escape" -> state = renderSelection(state.cancelFilterEdit())
+                    state.editingFilter && key.key == "Enter" -> state = renderSelection(state.finishFilterEdit())
+                    state.editingFilter && key.key == "Backspace" -> state = renderSelection(state.eraseFilterCharacter())
+                    state.editingFilter && key.key.equals("u", ignoreCase = true) && key.ctrl ->
+                        state = renderSelection(state.setFilter(""))
+                    state.editingFilter && key.key == "Spacebar" -> state = renderSelection(state.appendToFilter(" "))
+                    state.editingFilter && key.key.length == 1 && !key.ctrl && !key.alt ->
+                        state = renderSelection(state.appendToFilter(key.key))
                     key.key.equals(QUIT_INPUT, ignoreCase = true) && !key.ctrl && !key.alt -> quit()
+                    key.key == "/" && state.filterTexts != null -> state = renderSelection(state.startFilterEdit())
                     key.key == "Escape" && state.allowBack -> return SelectResult.Back
                     key.key == "ArrowUp" -> {
                         state = renderSelection(state.move(-1))
@@ -430,18 +632,24 @@ class Prompts(
      * would land on whatever the previous selection frame left behind.
      */
     private fun renderTypedFrame(error: String?) {
-        if (!alternateScreenHeld) return
+        if (!alternateScreenHeld) {
+            printProgress(compact = true)
+            return
+        }
         terminal.updateSize()
         val height = terminal.size.height.coerceAtLeast(1)
+        val uiState = wizardUiState()
         // Rows kept for the prompt, its navigation bar and the error line.
         val reserved = 4 + if (error != null) 1 else 0
-        val banner = headerLines(terminal.size.width.coerceAtLeast(1), height, reserved)
-        val choices = wizardUiState().choices
-            .takeLast((height - reserved - banner.size).coerceAtLeast(0))
+        val progress = progressLines(uiState.stage, terminal.size.width, height - reserved)
+        val banner = headerLines(terminal.size.width.coerceAtLeast(1), height, reserved + progress.size)
+        val choices = uiState.choices
+            .takeLast((height - reserved - banner.size - progress.size).coerceAtLeast(0))
         terminal.cursor.move {
             setPosition(0, 0)
             clearScreen()
         }
+        progress.forEach(terminal::println)
         banner.forEach { terminal.println(it) }
         choices.forEach { terminal.println(renderChoice(it)) }
         if (choices.isNotEmpty()) terminal.println()
@@ -455,50 +663,77 @@ class Prompts(
         terminal.updateSize()
         val terminalWidth = terminal.size.width.coerceAtLeast(1)
         val terminalHeight = terminal.size.height.coerceAtLeast(1)
+        val uiState = wizardUiState()
 
+        val barParts = selectBarParts(state)
         val navigation = when {
-            terminalHeight >= 4 -> renderBar(selectBarParts(state.multi, state.allowBack))
-            terminalHeight >= 3 -> renderBarLine(selectBarParts(state.multi, state.allowBack))
+            terminalHeight >= 4 -> renderBar(barParts)
+            terminalHeight >= 3 -> renderBarLine(barParts)
             else -> null
         }
         val navigationRows = navigation?.count { it == '\n' }?.plus(1) ?: 0
-        val showTitle = terminalHeight - navigationRows >= 2
-        val fixedSelectionRows = navigationRows + if (showTitle) 1 else 0
-        val requestedEntries = minOf(state.maxVisibleEntries ?: state.entries.size, state.entries.size)
-        val visibleEntryCount = minOf(
-            requestedEntries,
-            (terminalHeight - fixedSelectionRows).coerceAtLeast(1),
-        )
-        val window = selectionWindow(
-            entryCount = state.entries.size,
-            cursorIndex = state.cursorIndex,
+        val statusRows = if (state.filterTexts != null && terminalHeight >= 2) 1 else 0
+        val showTitle = terminalHeight - navigationRows - statusRows >= 2
+        val fixedSelectionRows = navigationRows + statusRows + if (showTitle) 1 else 0
+        // Keep the focused entry usable before spending rows on progress or history.
+        val minimumEntryRows = 1 + (if (state.groups != null) 1 else 0) +
+            (if (state.entries.any { it.description != null }) 1 else 0)
+        val progress = progressLines(uiState.stage, terminalWidth, terminalHeight - fixedSelectionRows - minimumEntryRows)
+        val entryRowBudget = (terminalHeight - fixedSelectionRows - progress.size).coerceAtLeast(1)
+        val showGroups = state.groups != null && entryRowBudget >= 2
+        val showDescriptions = entryRowBudget >= if (showGroups) 3 else 2
+        val visibleIndices = state.visibleIndices
+        val requestedEntries = minOf(state.maxVisibleEntries ?: visibleIndices.size, visibleIndices.size)
+        fun groupHeading(position: Int, first: Boolean): String? {
+            if (!showGroups) return null
+            val group = state.groups[visibleIndices[position]]
+            return group.takeIf { first || it != state.groups[visibleIndices[position - 1]] }
+        }
+        fun entryRows(position: Int, first: Boolean): Int = 1 +
+            (if (groupHeading(position, first) != null) 1 else 0) +
+            (if (showDescriptions && state.entries[visibleIndices[position]].description != null) 1 else 0)
+        val window = if (visibleIndices.isEmpty()) null else selectionWindow(
+            entryCount = visibleIndices.size,
+            cursorIndex = visibleIndices.indexOf(state.cursorIndex).coerceAtLeast(0),
             previousFirstIndex = state.firstVisibleIndex,
-            maxVisibleEntries = visibleEntryCount,
+            maxVisibleEntries = requestedEntries,
+            maxRows = entryRowBudget,
+            rowCount = ::entryRows,
         )
-        val positionedState = state.copy(firstVisibleIndex = window.firstIndex)
-        val position = if (window.size < state.entries.size) {
-            gray("  ${window.firstIndex + 1}\u2013${window.lastIndexExclusive} of ${state.entries.size}")
+        val positionedState = state.copy(firstVisibleIndex = window?.firstIndex ?: 0)
+        val position = if (window != null && window.size < visibleIndices.size) {
+            gray("  ${window.firstIndex + 1}\u2013${window.lastIndexExclusive} of ${visibleIndices.size}")
         } else {
             ""
         }
-        val selectionRows = fixedSelectionRows + window.size
-        val banner = headerLines(terminalWidth, terminalHeight, selectionRows)
-        val historyCapacity = (terminalHeight - selectionRows - banner.size - 1).coerceAtLeast(0)
-        val choices = wizardUiState().choices.takeLast(historyCapacity)
+        val selectionRows = fixedSelectionRows + (window?.let {
+            (it.firstIndex until it.lastIndexExclusive).sumOf { index -> entryRows(index, index == window.firstIndex) }
+        } ?: 1)
+        val banner = headerLines(terminalWidth, terminalHeight, selectionRows + progress.size)
+        val historyCapacity = (terminalHeight - selectionRows - banner.size - progress.size - 1).coerceAtLeast(0)
+        val choices = uiState.choices.takeLast(historyCapacity)
         val lines = buildList {
+            addAll(progress)
             addAll(banner)
             choices.forEach { add(renderChoice(it)) }
             if (choices.isNotEmpty()) add("")
             if (showTitle) add(questionStyle(state.question) + position)
-            (window.firstIndex until window.lastIndexExclusive).forEach { index ->
-                add(renderEntry(positionedState, index))
+            if (statusRows > 0) add(filterStatus(positionedState))
+            if (window == null) {
+                add(gray("  No matches."))
+            } else {
+                (window.firstIndex until window.lastIndexExclusive).forEach { visibleIndex ->
+                    groupHeading(visibleIndex, visibleIndex == window.firstIndex)?.let { add(cyan(it)) }
+                    val index = visibleIndices[visibleIndex]
+                    add(renderEntry(positionedState, index))
+                    if (showDescriptions) descriptionLine(state.entries[index], terminalWidth)?.let(::add)
+                }
             }
             navigation?.let { addAll(it.lines()) }
         }
         val viewport = Viewport(
-            // PRE keeps every option on exactly one terminal row. Viewport
-            // crops long labels horizontally instead of letting them wrap and
-            // push the navigation bar below a short terminal.
+            // Each heading, title and description has its own bounded row so
+            // wrapping cannot push the cursor or navigation below the screen.
             content = Text(lines.joinToString("\n"), whitespace = Whitespace.PRE),
             width = (terminalWidth - 1).coerceAtLeast(1),
             height = lines.size.coerceAtMost(terminalHeight),
@@ -511,6 +746,20 @@ class Prompts(
         terminal.print(viewport)
         return positionedState
     }
+
+    private fun filterStatus(state: SelectionUiState): String {
+        val query = state.filterQuery.ifEmpty { if (state.editingFilter) "" else "/ to search" }
+        val editing = if (state.editingFilter) brightMagenta(" (editing)") else ""
+        return cyan("Search: ") + query + editing + gray("  •  ${state.visibleIndices.size} shown  •  ${state.selectedIndices.size} selected")
+    }
+
+    private fun descriptionLine(entry: SelectList.Entry, width: Int, indent: Int = 6): String? =
+        entry.description?.let { description ->
+            val available = (width - indent - 1).coerceAtLeast(1)
+            val text = terminal.render(description).lineSequence().joinToString(" ") { it.trim() }
+            val clipped = if (text.length > available) text.take((available - 1).coerceAtLeast(0)) + "…" else text
+            gray(" ".repeat(indent) + clipped)
+        }
 
     private fun renderChoice(choice: WizardChoice): String =
         brightGreen("✓ ") + choice.label + ": " + cyan(choice.value)
@@ -526,7 +775,8 @@ class Prompts(
         }
         return if (state.multi) {
             val marker = if (selected) brightGreen("[x]") else gray("[ ]")
-            "$cursor $marker $title"
+            val included = if (index in state.lockedIndices) gray("(included) ") else ""
+            "$cursor $marker $included$title"
         } else {
             "$cursor $title"
         }
@@ -540,25 +790,36 @@ class Prompts(
         initialState: SelectionUiState,
         rawMode: RawModeScope,
     ): SelectResult {
+        printProgress(compact = true)
         var state = initialState
         val lineWidth = (terminal.size.width - 1).coerceAtLeast(1)
         val clearLine = " ".repeat(lineWidth)
 
         terminal.println(questionStyle(state.question))
-        terminal.println(renderBar(selectBarParts(state.multi, state.allowBack)))
+        val showCatalog = state.groups != null || state.entries.any { it.description != null }
+        if (showCatalog) printNumberedEntries(state)
+        terminal.println(renderBar(selectBarParts(state)))
 
         fun redraw() {
+            val visible = state.visibleIndices
+            val visiblePosition = visible.indexOf(state.cursorIndex)
             val marker = when {
+                visible.isEmpty() -> ""
                 !state.multi -> cyan("❯")
                 state.cursorIndex in state.selectedIndices -> cyan("❯ [x]")
                 else -> "❯ [ ]"
             }
-            val position = if (state.entries.size > 1) {
-                gray(" ${state.cursorIndex + 1}/${state.entries.size}")
+            val position = if (visible.size > 1 && visiblePosition >= 0) {
+                gray(" ${visiblePosition + 1}/${visible.size}")
             } else {
                 ""
             }
-            val styledLine = "$marker ${state.entries[state.cursorIndex].title}$position"
+            val entry = if (visible.isEmpty()) gray("No matches.") else {
+                val included = if (state.cursorIndex in state.lockedIndices) gray("(included) ") else ""
+                included + state.entries[state.cursorIndex].title + position
+            }
+            val search = if (state.filterTexts == null) "" else gray("  •  ") + filterStatus(state)
+            val styledLine = if (state.editingFilter) filterStatus(state) else "$marker $entry$search"
             val plainLine = ANSI_SEQUENCE.replace(styledLine, "")
             val visibleLine = if (plainLine.length <= lineWidth) {
                 styledLine
@@ -574,9 +835,19 @@ class Prompts(
             redraw()
             while (true) {
                 val key = runCatching { rawMode.readKey() }.getOrElse { abort() }
+                val wasEditingFilter = state.editingFilter
                 when {
                     key.isCtrlC -> abort()
+                    state.editingFilter && key.key.equals(QUIT_INPUT, ignoreCase = true) && key.ctrl && !key.alt -> quit()
+                    state.editingFilter && key.key == "Escape" -> state = state.cancelFilterEdit()
+                    state.editingFilter && key.key == "Enter" -> state = state.finishFilterEdit()
+                    state.editingFilter && key.key == "Backspace" -> state = state.eraseFilterCharacter()
+                    state.editingFilter && key.key.equals("u", ignoreCase = true) && key.ctrl -> state = state.setFilter("")
+                    state.editingFilter && key.key == "Spacebar" -> state = state.appendToFilter(" ")
+                    state.editingFilter && key.key.length == 1 && !key.ctrl && !key.alt ->
+                        state = state.appendToFilter(key.key)
                     key.key.equals(QUIT_INPUT, ignoreCase = true) && !key.ctrl && !key.alt -> quit()
+                    key.key == "/" && state.filterTexts != null -> state = state.startFilterEdit()
                     key.key == "Escape" && state.allowBack -> return SelectResult.Back
                     key.key == "ArrowUp" -> {
                         val next = state.move(-1)
@@ -592,6 +863,11 @@ class Prompts(
                     key.key == "Enter" -> return SelectResult.Picked(state.pickedTitles())
                     else -> continue
                 }
+                if (wasEditingFilter != state.editingFilter) {
+                    terminal.rawPrint("\r$clearLine\r")
+                    if (!state.editingFilter && showCatalog) printNumberedEntries(state)
+                    terminal.println(renderBar(selectBarParts(state)))
+                }
                 redraw()
             }
         } finally {
@@ -599,13 +875,22 @@ class Prompts(
         }
     }
 
-    private fun selectBarParts(multi: Boolean, allowBack: Boolean): List<Pair<String, String>> =
+    private fun selectBarParts(state: SelectionUiState): List<Pair<String, String>> =
         buildList {
+            if (state.editingFilter) {
+                add("backspace" to "erase")
+                add("ctrl+u" to "clear")
+                add("enter" to "apply")
+                add("esc" to "cancel")
+                add("ctrl+$QUIT_INPUT" to "quit")
+                return@buildList
+            }
             add("↑" to "up")
             add("↓" to "down")
-            if (multi) add("space" to "toggle")
-            add("enter" to if (multi) "confirm" else "select")
-            if (allowBack) add("esc" to "back")
+            if (state.multi) add("space" to "toggle")
+            if (state.filterTexts != null) add("/" to "search")
+            add("enter" to if (state.multi) "confirm" else "select")
+            if (state.allowBack) add("esc" to "back")
             add(QUIT_INPUT to "quit")
         }
 
@@ -638,6 +923,7 @@ class Prompts(
         promptWidth: Int,
         allowBack: Boolean,
         complete: ((String) -> PathCompletion)? = null,
+        error: String? = null,
     ): LineInput {
         val rawMode = terminal.enterRawModeOrNull()
         if (rawMode == null) {
@@ -659,9 +945,20 @@ class Prompts(
         val barParts = typedBarParts(allowBack, rawMode = true, hasCompletion = complete != null)
         printPromptWithBar(prompt, promptWidth, barParts)
         val buffer = StringBuilder()
+        var renderedSize = terminal.size
         rawMode.use { scope ->
             while (true) {
-                val key = runCatching { scope.readKey() }.getOrElse { abort() }
+                val key = readKeyOrNullCompat(scope)
+                if (alternateScreenHeld) {
+                    val size = terminal.updateSize()
+                    if (size.width != renderedSize.width || size.height != renderedSize.height) {
+                        renderTypedFrame(error)
+                        printPromptWithBar(prompt, promptWidth, barParts)
+                        terminal.print(buffer.toString())
+                        renderedSize = terminal.size
+                    }
+                }
+                if (key == null) continue
                 when {
                     key.isCtrlC -> abort()
                     key.key.equals(QUIT_INPUT, ignoreCase = true) && key.ctrl && !key.alt -> quit()

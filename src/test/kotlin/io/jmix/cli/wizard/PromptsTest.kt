@@ -21,6 +21,109 @@ import kotlin.time.TimeMark
 class PromptsTest {
 
     @Test
+    fun `progress follows stage jumps and back navigation inside the same screen`() {
+        val recorder = TerminalRecorder(width = 80, height = 20, supportsAnsiCursor = false)
+        recorder.inputEvents += listOf(KeyboardEvent("Enter"), KeyboardEvent("Escape"), KeyboardEvent("Enter"))
+        var stage = WizardStage.GENERAL
+        val prompts = Prompts(Terminal(terminalInterface = recorder)) { WizardUiState(stage = stage) }
+
+        prompts.useAlternateScreen {
+            prompts.choose("Template", listOf("application", "addon"), { it })
+            stage = WizardStage.LOCATION
+            assertEquals(Answer.Back, prompts.choose("Location", listOf("here", "other"), { it }, allowBack = true))
+            stage = WizardStage.ADDONS
+            prompts.choose("Add-ons", listOf("Quartz", "Reports"), { it }, allowBack = true)
+        }
+
+        val headings = recorder.output().split(CLEAR_FROM_ORIGIN).drop(1)
+            .map { ANSI_SEQUENCE.replace(it, "").lineSequence().first().trim() }
+        assertEquals(listOf("1/5", "4/5", "3/5"), headings.map { it.takeLast(3) })
+        assertTrue(headings[0].startsWith("General"))
+        assertTrue(headings[1].startsWith("Location and Git"))
+        assertTrue(headings[2].startsWith("Add-ons"))
+        assertEquals(1, recorder.output().occurrencesOf(ENTER_ALTERNATE_SCREEN))
+    }
+
+    @Test
+    fun `progress shrinks before the selected add-on loses its description and controls`() {
+        val heights = listOf(9, 8, 7, 4, 9)
+        val recorder = ResizingTerminalInterface(
+            initialSize = Size(100, heights.first()),
+            sizesAfterInput = emptyList(),
+            sizesOnTimeout = heights.drop(1).map { Size(100, it) },
+        )
+        recorder.inputEvents += KeyboardEvent("Enter")
+        val prompts = Prompts(Terminal(terminalInterface = recorder)) { WizardUiState(stage = WizardStage.ADDONS) }
+
+        prompts.useAlternateScreen {
+            prompts.chooseMany(
+                "Choose add-ons",
+                listOf(SelectList.Entry("Quartz", description = "Manage jobs"), SelectList.Entry("Reports", description = "Build reports")),
+                allowBack = true,
+                filterTexts = listOf("jobs", "reports"),
+                groups = listOf("Add-ons", "Add-ons"),
+            )
+        }
+
+        val frames = recorder.output().split(CLEAR_FROM_ORIGIN).drop(1)
+            .map { ANSI_SEQUENCE.replace(it.substringBefore(EXIT_ALTERNATE_SCREEN), "").trimEnd() }
+        assertEquals(heights.size, frames.size)
+        frames.zip(heights).forEach { (frame, height) ->
+            assertTrue(frame.lines().size <= height, frame)
+            assertTrue(frame.contains("Quartz"), frame)
+            assertTrue(frame.contains("Search:"), frame)
+            assertTrue(frame.contains("enter"), frame)
+            assertTrue(frame.contains("esc"), frame)
+            assertEquals(height >= 8, frame.contains("3/5"), frame)
+            assertEquals(height >= 9, frame.contains('━'), frame)
+            assertEquals(height >= 7, frame.contains("Manage jobs"), frame)
+        }
+    }
+
+    @Test
+    fun `transcript progress is printed once per stage and again after going back`() = withStdin("\n\n\n\n\n") {
+        val recorder = TerminalRecorder(inputInteractive = false)
+        var stage = WizardStage.GENERAL
+        val prompts = Prompts(Terminal(terminalInterface = recorder)) { WizardUiState(stage = stage) }
+
+        prompts.ask("Name", "demo")
+        prompts.ask("Package", "com.company.demo")
+        stage = WizardStage.ADDONS
+        prompts.choose("Add-ons", listOf("Quartz", "Reports"), { it })
+        stage = WizardStage.LOCATION
+        prompts.askYesNo("Create Git repository?", true)
+        stage = WizardStage.GENERAL
+        prompts.ask("Name", "demo")
+
+        val plain = ANSI_SEQUENCE.replace(recorder.output(), "")
+        assertEquals(
+            listOf("Step 1/5: General", "Step 3/5: Add-ons", "Step 4/5: Location and Git", "Step 1/5: General"),
+            Regex("Step [1-5]/5: [^\\r\\n]+").findAll(plain).map { it.value }.toList(),
+        )
+        assertFalse(plain.contains('━'))
+    }
+
+    @Test
+    fun `progress fits narrow terminals and disappears for post-generation prompts`() {
+        for (width in listOf(2, 4, 12, 80)) {
+            val recorder = TerminalRecorder(width = width, height = 10, supportsAnsiCursor = false)
+            var stage: WizardStage? = WizardStage.GENERATION
+            val prompts = Prompts(Terminal(terminalInterface = recorder)) { WizardUiState(stage = stage) }
+
+            prompts.printProgress()
+            val output = recorder.output()
+            val lines = ANSI_SEQUENCE.replace(output, "").trimEnd().lines()
+            assertEquals(2, lines.size)
+            assertTrue(lines.all { it.length < width }, lines.toString())
+            assertTrue(lines[1].all { it == '━' }, lines.toString())
+            if (width >= 4) assertTrue(lines[0].endsWith("5/5"), lines.toString())
+            stage = null
+            prompts.printProgress()
+            assertEquals(output, recorder.output())
+        }
+    }
+
+    @Test
     fun `selector repaints from origin after terminal narrows`() {
         val recorder = ResizingTerminalInterface(
             initialSize = Size(100, 40),
@@ -331,6 +434,227 @@ class PromptsTest {
     }
 
     @Test
+    fun `searchable selector filters supplied name and description text`() {
+        val recorder = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
+        recorder.inputEvents += listOf(KeyboardEvent("/")) +
+            "service SECUREx".map { KeyboardEvent(if (it == ' ') "Spacebar" else it.toString()) } + listOf(
+            KeyboardEvent("Backspace"), KeyboardEvent("Enter"),
+            KeyboardEvent(" "),
+            KeyboardEvent("Enter"),
+        )
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val selected = prompts.chooseMany(
+            question = "Select add-ons",
+            entries = listOf("Audit", "REST Data Store").map { SelectList.Entry(it) },
+            filterTexts = listOf("Audit tracks entity changes", "REST Data Store connects to a secure service"),
+        )!!.requireValue()
+
+        assertEquals(listOf("REST Data Store"), selected)
+        assertTrue(ANSI_SEQUENCE.replace(recorder.output(), "").contains("Search: service SECURE"))
+    }
+
+    @Test
+    fun `searchable selector retains selections hidden by a filter`() {
+        val recorder = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
+        recorder.inputEvents += listOf(
+            KeyboardEvent(" "),
+            KeyboardEvent("/"), KeyboardEvent("b"), KeyboardEvent("Enter"),
+            KeyboardEvent(" "), KeyboardEvent("Enter"),
+        )
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val selected = prompts.chooseMany(
+            question = "Select add-ons",
+            entries = listOf("Alpha", "Beta").map { SelectList.Entry(it) },
+            filterTexts = listOf("Alpha", "Beta"),
+        )!!.requireValue()
+
+        assertEquals(listOf("Alpha", "Beta"), selected)
+    }
+
+    @Test
+    fun `locked searchable entries stay selected`() {
+        for (ansiCursor in listOf(false, true)) {
+            val recorder = TerminalRecorder(width = 55, height = 24, supportsAnsiCursor = ansiCursor)
+            recorder.inputEvents += listOf(KeyboardEvent(" "), KeyboardEvent("Enter"))
+            val prompts = Prompts(Terminal(terminalInterface = recorder))
+            val required = "Required add-on with a description longer than the terminal width"
+            val selected = prompts.chooseMany(
+                question = "Select add-ons",
+                entries = listOf(required, "Optional").map { SelectList.Entry(it) },
+                filterTexts = listOf("Required", "Optional"),
+                lockedIndices = setOf(0),
+            )!!.requireValue()
+
+            assertEquals(listOf(required), selected)
+            assertTrue(recorder.output().contains("included"))
+        }
+    }
+
+    @Test
+    fun `searchable selector can confirm retained choices with no matches`() {
+        val recorder = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
+        recorder.inputEvents += listOf(
+            KeyboardEvent("/"),
+            KeyboardEvent("z"), KeyboardEvent("z"), KeyboardEvent("z"),
+            KeyboardEvent("Enter"), KeyboardEvent("Enter"),
+        )
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val selected = prompts.chooseMany(
+            question = "Select add-ons",
+            entries = listOf(SelectList.Entry("Required", selected = true)),
+            filterTexts = listOf("Required"),
+        )!!.requireValue()
+
+        assertEquals(listOf("Required"), selected)
+        assertTrue(recorder.output().contains("No matches."))
+    }
+
+    @Test
+    fun `plain q edits a search while ctrl q quits`() {
+        val plainQ = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
+        plainQ.inputEvents += listOf(
+            KeyboardEvent("/"), KeyboardEvent("q"), KeyboardEvent("Enter"),
+            KeyboardEvent(" "), KeyboardEvent("Enter"),
+        )
+        val prompts = Prompts(Terminal(terminalInterface = plainQ))
+
+        assertEquals(
+            listOf("Queue"),
+            prompts.chooseMany(
+                "Select add-ons",
+                listOf(SelectList.Entry("Queue")),
+                filterTexts = listOf("Queue processing"),
+            )!!.requireValue(),
+        )
+
+        val ctrlQ = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
+        ctrlQ.inputEvents += listOf(KeyboardEvent("/"), KeyboardEvent("q", ctrl = true))
+        val quitPrompts = Prompts(Terminal(terminalInterface = ctrlQ))
+        val result = assertThrows(CliktError::class.java) {
+            quitPrompts.chooseMany(
+                "Select add-ons",
+                listOf(SelectList.Entry("Queue")),
+                filterTexts = listOf("Queue processing"),
+            )
+        }
+        assertEquals(0, result.statusCode)
+    }
+
+    @Test
+    fun `escape cancels search editing then goes back`() {
+        val recorder = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
+        recorder.inputEvents += listOf(
+            KeyboardEvent("/"), KeyboardEvent("a"), KeyboardEvent("Enter"),
+            KeyboardEvent("/"), KeyboardEvent("b"), KeyboardEvent("Escape"),
+            KeyboardEvent("Escape"),
+        )
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val answer = prompts.chooseMany(
+            question = "Select add-ons",
+            entries = listOf("Alpha", "Beta").map { SelectList.Entry(it) },
+            allowBack = true,
+            filterTexts = listOf("Alpha", "Beta"),
+        )
+
+        assertEquals(Answer.Back, answer)
+        assertTrue(ANSI_SEQUENCE.replace(recorder.output(), "").contains("Search: a"))
+    }
+
+    @Test
+    fun `grouped picker renders descriptions below names and keeps the focused entry on short screens`() {
+        for (height in listOf(1, 4, 8, 12, 30)) {
+            val recorder = TerminalRecorder(width = 80, height = height, supportsAnsiCursor = false)
+            recorder.inputEvents += List(5) { KeyboardEvent("ArrowDown") } + listOf(KeyboardEvent(" "), KeyboardEvent("Enter"))
+            val entries = (1..6).map { SelectList.Entry("Add-on $it", "Description for $it") }
+            val selected = Prompts(Terminal(terminalInterface = recorder)).chooseMany(
+                "Select add-ons", entries, allowBack = true, maxVisibleEntries = 10,
+                filterTexts = entries.map { it.title }, lockedIndices = setOf(0),
+                groups = listOf("Included in template", "Add-ons", "Add-ons", "Add-ons", "Translations", "Translations"),
+            )!!.requireValue()
+
+            assertEquals(listOf("Add-on 1", "Add-on 6"), selected)
+            val frame = ANSI_SEQUENCE.replace(recorder.output().substringAfterLast(CLEAR_FROM_ORIGIN)
+                .substringBefore(EXIT_ALTERNATE_SCREEN), "")
+            assertTrue(frame.contains("❯ [x] Add-on 6"), "Cursor should be visible at height $height: $frame")
+            assertTrue(frame.lines().size <= height, "Frame must fit height $height: $frame")
+            if (height >= 8) {
+                assertTrue(frame.contains("Translations"))
+                val lines = frame.lines()
+                val nameRow = lines.indexOfFirst { "Add-on 6" in it }
+                assertEquals("Description for 6", lines[nameRow + 1].trim())
+                assertTrue(frame.contains("enter"))
+            }
+        }
+    }
+
+    @Test
+    fun `search clears with ctrl u and restores groups without losing selected add-ons`() {
+        for (ansiCursor in listOf(false, true)) {
+            val recorder = TerminalRecorder(width = 100, height = 20, supportsAnsiCursor = ansiCursor)
+            recorder.inputEvents += listOf(
+                KeyboardEvent("/"), KeyboardEvent("q"), KeyboardEvent("Enter"), KeyboardEvent(" "),
+                KeyboardEvent("/"), KeyboardEvent("u", ctrl = true), KeyboardEvent("Enter"), KeyboardEvent("Enter"),
+            )
+            val selected = Prompts(Terminal(terminalInterface = recorder)).chooseMany(
+                "Select add-ons",
+                listOf(SelectList.Entry("Quartz", "Schedule background jobs"), SelectList.Entry("German", "German translation")),
+                filterTexts = listOf("Quartz scheduling Maintenance Haulmont", "German Localization Haulmont"),
+                groups = listOf("Add-ons", "Translations"),
+            )!!.requireValue()
+
+            assertEquals(listOf("Quartz"), selected)
+            val output = ANSI_SEQUENCE.replace(recorder.output(), "")
+            assertTrue(output.contains("Schedule background jobs"))
+            assertTrue(output.contains("German translation"))
+            assertTrue(output.contains("Translations"))
+            assertTrue(output.contains("ctrl+u"))
+            assertFalse(output.contains("No matches."))
+        }
+    }
+
+    @Test
+    fun `searchable numbered fallback filters and toggles visible entries`() = withStdin("/second\n1\n\n") {
+        val recorder = TerminalRecorder(inputInteractive = false, outputInteractive = false)
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val selected = prompts.chooseMany(
+            question = "Select add-ons",
+            entries = listOf("First", "Second").map { SelectList.Entry(it, "$it description") },
+            allowBack = true,
+            filterTexts = listOf("First add-on", "Second add-on"),
+            groups = listOf("Included in template", "Add-ons"),
+            lockedIndices = setOf(0),
+        )!!.requireValue()
+
+        assertEquals(listOf("First", "Second"), selected)
+        assertTrue(recorder.output().contains("/query filters"))
+        val filtered = ANSI_SEQUENCE.replace(recorder.output().substringAfterLast("Select add-ons"), "")
+        assertTrue(filtered.contains("Add-ons"))
+        assertTrue(filtered.contains("Second description"))
+        assertFalse(filtered.contains("Included in template"))
+    }
+
+    @Test
+    fun `searchable numbered fallback confirms defaults on EOF`() = withEmptyStdin {
+        val recorder = TerminalRecorder(inputInteractive = false, outputInteractive = false)
+        val prompts = Prompts(Terminal(terminalInterface = recorder))
+
+        val selected = prompts.chooseMany(
+            question = "Select add-ons",
+            entries = listOf(SelectList.Entry("Required", selected = true)),
+            filterTexts = listOf("Required"),
+        )!!.requireValue()
+
+        assertEquals(listOf("Required"), selected)
+        assertTrue(prompts.isInputExhausted)
+        assertTrue(recorder.output().contains("No more input"))
+    }
+
+    @Test
     fun `IDE console selector returns to previous step on escape`() {
         val recorder = TerminalRecorder(
             width = 120,
@@ -401,6 +725,36 @@ class PromptsTest {
         val prompts = Prompts(Terminal(terminalInterface = recorder))
 
         assertEquals("q", prompts.ask("Enter project name", "untitled").requireValue())
+    }
+
+    @Test
+    fun `typed prompt redraws its value and history after idle resize`() {
+        val recorder = ResizingTerminalInterface(
+            initialSize = Size(100, 30),
+            sizesAfterInput = emptyList(),
+            sizesOnTimeout = listOf(Size(50, 5), Size(100, 30)),
+            inputEventsBeforeTimeout = 4,
+        )
+        recorder.inputEvents += "demo".map { KeyboardEvent(it.toString()) }
+        recorder.inputEvents += listOf(KeyboardEvent("Backspace"), KeyboardEvent("q"), KeyboardEvent("Enter"))
+        val prompts = Prompts(Terminal(terminalInterface = recorder)) {
+            WizardUiState(listOf(WizardChoice("Jmix version", "3.0.1")), WizardStage.GENERAL)
+        }
+
+        prompts.useAlternateScreen {
+            assertEquals("demq", prompts.ask("Enter project name", allowBack = true).requireValue())
+        }
+
+        val frames = recorder.output().split(CLEAR_FROM_ORIGIN).drop(1)
+        assertEquals(3, frames.size, "Initial frame and both idle resizes must be drawn")
+        frames.drop(1).forEach { frame ->
+            val plain = ANSI_SEQUENCE.replace(frame, "")
+            assertTrue(plain.contains("Enter project name"), plain)
+            assertTrue(plain.contains("demo"), plain)
+            assertTrue(plain.contains("ctrl+q"), plain)
+            assertTrue(plain.contains("1/5"), plain)
+        }
+        assertTrue(frames.last().contains("3.0.1"), "Expanded frame must restore completed choices")
     }
 
     @Test
@@ -494,6 +848,7 @@ class PromptsTest {
         initialSize: Size,
         private val sizesAfterInput: List<Size>,
         private val sizesOnTimeout: List<Size> = emptyList(),
+        private val inputEventsBeforeTimeout: Int = 0,
         private val delegate: TerminalRecorder = TerminalRecorder(
             width = initialSize.width,
             height = initialSize.height,
@@ -519,9 +874,11 @@ class PromptsTest {
         override fun shouldAutoUpdateSize(): Boolean = false
 
         override fun readInputEvent(timeout: TimeMark, mouseTracking: MouseTracking): InputEvent? {
-            sizesOnTimeout.getOrNull(timeoutIndex++)?.let {
-                currentSize = it
-                throw TimeoutException()
+            if (inputIndex >= inputEventsBeforeTimeout) {
+                sizesOnTimeout.getOrNull(timeoutIndex++)?.let {
+                    currentSize = it
+                    throw TimeoutException()
+                }
             }
             sizesAfterInput.getOrNull(inputIndex++)?.let { currentSize = it }
             return delegate.readInputEvent(timeout, mouseTracking)

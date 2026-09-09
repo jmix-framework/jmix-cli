@@ -92,7 +92,7 @@ object Bindings {
     }
 
     // Studio's ProjectGenerationBindingHelper.isAddonTemplate.
-    private fun isAddonTemplate(info: ProjectCreationInfo): Boolean =
+    internal fun isAddonTemplate(info: ProjectCreationInfo): Boolean =
         if (PlatformVersions.compare(info.jmixVersion, "1.3.999") <= 0) {
             info.templateMetadata.name in LEGACY_ADDON_NAMES
         } else {

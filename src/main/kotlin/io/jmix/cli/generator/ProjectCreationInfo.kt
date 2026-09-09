@@ -1,6 +1,7 @@
 package io.jmix.cli.generator
 
 import io.jmix.cli.template.TemplateMetadata
+import io.jmix.cli.addon.ResolvedAddon
 import java.nio.file.Path
 
 /**
@@ -34,6 +35,7 @@ data class ProjectCreationInfo(
     val jmixVersion: String,
     val templateMetadata: TemplateMetadata,
     val createGitRepository: Boolean = true,
+    val addons: List<ResolvedAddon> = emptyList(),
 ) {
     val rootPath: String get() = rootPackage.replace('.', '/')
 

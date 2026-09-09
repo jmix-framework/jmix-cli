@@ -3,172 +3,96 @@
 [![CI](https://github.com/jmix-framework/jmix-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jmix-framework/jmix-cli/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Jmix CLI creates [Jmix](https://www.jmix.io/) projects from the command line:
-a keyboard-driven wizard for local use, a non-interactive mode for AI agents, scripts and
-CI. It uses the same templates and rendering model as Jmix Studio and produces
-equivalent projects.
+Create [Jmix](https://www.jmix.io/) projects with an interactive wizard or from
+scripts and AI agents, using the same project templates as Jmix Studio.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Creating a project with the Jmix CLI wizard" width="800">
+  <img src="docs/demo.gif" alt="Jmix CLI welcome, add-on selection, and project creation" width="800">
 </p>
 
-## Quick start
+## Install
 
-macOS / Linux:
+**macOS / Linux**
 
 ```shell
 curl -fsSL https://github.com/jmix-framework/jmix-cli/releases/latest/download/install.sh | bash
 ```
 
-Windows (PowerShell):
+**Windows (PowerShell)**
 
 ```powershell
 irm https://github.com/jmix-framework/jmix-cli/releases/latest/download/install.ps1 | iex
 ```
 
-The installer downloads a checksummed, self-contained build with its own Java
-runtime, installs the `jmix` command, and starts the wizard. Run `jmix` to
-open it again.
+The installer starts the wizard. The CLI bundles its own Java runtime;
+building generated projects needs a compatible JDK, which the wizard can help install.
 
-## Usage
-
-### Interactive wizard
-
-Run `jmix` or `jmix new`. Selection lists show their controls at the bottom:
-
-```text
-───────────────────────────────────────
-↑ up • ↓ down • space toggle • enter confirm • esc back • q quit
-```
-
-In raw terminals, typed prompts use `Ctrl+Q` to quit; plain `q` remains ordinary input.
-
-### Non-interactive generation
-
-For AI agents, scripts and CI, pass a project name and `--non-interactive`:
+## Create a project
 
 ```shell
-jmix new jmix-project \
-    --non-interactive \
+jmix
+```
+
+Choose a template, languages, add-ons, and project location. Follow the keyboard
+hints at the bottom of each step. In text input, use **Ctrl+Q** to quit.
+
+The progress bar tracks General, Localization, Add-ons, Location and Git, and Finishing up.
+
+The add-on picker offers compatible **free add-ons**. Press **/** to search,
+**Space** to toggle, and **Enter** to confirm. Template-included add-ons are
+checked and locked; matching translations are preselected and can be unchecked.
+In line-input consoles, use `/query` and comma-separated selection numbers.
+
+For scripts and AI agents, pass `--non-interactive`:
+
+```shell
+jmix new demo --non-interactive \
     --template application \
-    --package com.company.jmixproject \
     --locales en,de \
-    --no-git
+    --addons quartz,german-translation
+
+cd demo
+./gradlew bootRun
 ```
 
-### Options
+Non-interactive mode creates `./<name>` and installs no additional add-ons unless
+`--addons` is supplied. Use `--path` for another location or `--no-git` to skip
+Git initialization. On Windows, run `gradlew.bat bootRun`.
 
-| Option               | Description                                                    | Default                                                                                              |
-|----------------------|----------------------------------------------------------------|------------------------------------------------------------------------------------------------------|
-| `<name>`             | Project name                                                   | Required in non-interactive mode                                                                     |
-| `--template`         | Template ID, such as `application` or `application-kotlin`     | First available project template                                                                     |
-| `--jmix-version`     | Jmix platform version                                          | Latest stable version                                                                                |
-| `--package`          | Base Java package                                              | `com.company.<project-name>`                                                                         |
-| `--project-id`       | Prefix for entity, table, and bean names; maximum 7 characters | Template default                                                                                     |
-| `--theme`            | UI theme: `aura` or `lumo`                                     | Depends on Jmix version and template                                                                 |
-| `--locales`          | Comma-separated locale codes                                   | `en`                                                                                                 |
-| `--path`             | Target directory                                               | `./<project-name>`; the wizard also offers the current directory, `~/IdeaProjects`, or a custom path |
-| `--repository`       | Maven repository containing Jmix templates                     | Jmix public repository                                                                               |
-| `--no-git`           | Do not initialize a Git repository                             | Git initialization enabled                                                                           |
-| `--include-unstable` | Include RC and snapshot versions in version selection          | Disabled                                                                                             |
-| `--force`            | Generate into a non-empty directory without confirmation       | Disabled                                                                                             |
-| `--non-interactive`  | Do not prompt; use arguments, options, and defaults            | Disabled                                                                                             |
+Generated projects include [Jmix Agent Toolkit](https://github.com/jmix-framework/jmix-agent-toolkit)
+guidelines and skills for supported AI coding assistants.
 
-`jmix new --help` shows the authoritative reference.
-
-### Updates and cleanup
-
-Installed builds check for a new release at startup, at most once every ten
-minutes, and install it before the command starts, so an update applies to the
-command you just typed rather than the next one. A check that cannot complete
-is reported and the command continues. Superseded versions and unused template
-caches are removed automatically.
+## Options and updates
 
 ```shell
-jmix update              # update immediately and remove old versions
-jmix --no-update new     # run without checking for updates
+jmix new --help          # all project options
+jmix update              # update the installed CLI
+jmix --no-update new     # skip the startup update check
 ```
 
-Updates are also skipped whenever `CI` is set, and with
-`JMIX_CLI_NO_AUTO_UPDATE=1`. Source builds never self-update.
+Installed builds check for updates automatically. Set `JMIX_CLI_NO_AUTO_UPDATE=1`
+to disable checks; they are also skipped when `CI` is set or running from source.
 
-### Templates and offline use
-
-Templates come from the `io.jmix.templates.studio:jmix-studio-templates` Maven
-artifact — the Jmix public repository by default, its backup at
-`nexus.jmix.io`, or a custom repository chosen in the wizard or via
-`--repository`. Downloads are cached per
-repository under `~/.jmix/templates/` and work offline afterwards; snapshots
-are refreshed whenever the repository is reachable.
+Templates and the add-on catalog are cached under `~/.jmix/`. Offline use requires
+cached templates and, when installing add-ons, the relevant Gradle dependencies.
+Use `--repository` to select a custom template repository.
 
 ## Development
 
-Building from source needs JDK 17+ to launch the Gradle wrapper; the build
-provisions JDK 25 itself.
-
-### Run from source
+JDK 17+ is needed to launch Gradle; the build provisions its JDK 25 toolchain.
 
 ```shell
 git clone https://github.com/jmix-framework/jmix-cli.git
 cd jmix-cli
-./run.sh
+./run.sh                          # launch from source on macOS/Linux
+./gradlew build                   # build and test
+JMIX_CLI_IT=true ./gradlew test   # network-backed integration tests
 ```
 
-`run.sh` is a macOS/Linux shortcut for `./gradlew run --console=plain`
-(Windows: `gradlew.bat`). Arguments pass through either launcher:
-
-```shell
-./run.sh new jmix-project --no-git
-./gradlew run --args="new jmix-project --no-git" --console=plain
-```
-
-### Build and test
-
-Standard checks:
-
-```shell
-./gradlew build
-```
-
-Integration tests against the real template repository:
-
-```shell
-JMIX_CLI_IT=true ./gradlew test
-```
-
-### Update the README demo
-
-The header GIF is recorded with [vhs](https://github.com/charmbracelet/vhs)
-from [docs/demo.tape](docs/demo.tape):
-
-```shell
-./gradlew releaseBundle
-JMIX_DEMO_DIR=$(mktemp -d) JMIX_CLI_NO_AUTO_UPDATE=1 vhs docs/demo.tape
-```
-
-`jmix` must be on PATH — link it to the launcher inside the built image.
-
-### Build distributions
-
-- `./gradlew installDist` — local distribution under `build/install/jmix-cli/`.
-- `./gradlew releaseBundle` — self-contained platform archive with SHA-256
-  checksum under `build/release/`.
-
-See [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for supported platforms and
-the release process.
-
-## Contributing
-
-Issues and pull requests are welcome. Before opening a pull request:
-
-1. Add or update tests for changed behavior.
-2. Run the checks above; include the integration test for changes to template discovery, rendering, bindings, or generation.
-3. Update this README for user-visible changes.
-4. Keep generated output compatible with Jmix Studio templates.
-
-See [AGENTS.md](AGENTS.md) for architecture, invariants, and development
-guidance.
+- [Contributor guide](AGENTS.md) — conventions, feature docs, and verification.
+- [Distribution guide](docs/DISTRIBUTION.md) — platform bundles and releases.
+- [Demo recording](docs/demo.tape) — reproduce the README GIF with VHS.
 
 ## License
 
-Jmix CLI is available under the [Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE).

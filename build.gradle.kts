@@ -28,6 +28,8 @@ dependencies {
     implementation(libs.mordant.jna)
     implementation(libs.groovy.templates)
     implementation(libs.gson)
+    implementation(libs.maven.artifact)
+    implementation(libs.semver4j)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

@@ -1,0 +1,17 @@
+import groovy.json.JsonOutput
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+gradle.projectsEvaluated {
+    def target = gradle.rootProject.project(System.getenv('JMIX_CLI_MODULE'))
+    target.tasks.register('jmixCliResolveAddons') {
+        doLast {
+            def artifacts = target.configurations.runtimeClasspath.incoming.artifacts.artifacts
+                .findAll { it.id.componentIdentifier instanceof ModuleComponentIdentifier }
+                .collect {
+                    def id = it.id.componentIdentifier
+                    [group: id.group, name: id.module, version: id.version, file: it.file.absolutePath]
+                }
+            new File(System.getenv('JMIX_CLI_METADATA')).setText(JsonOutput.toJson(artifacts), 'UTF-8')
+        }
+    }
+}

@@ -31,13 +31,13 @@ class AgentToolkitInstallerTest {
     }
 
     @Test
-    fun `installs local skills and guidelines for all agents`() {
+    fun `installs local skills without Junie and guidelines for all agents`() {
         assertEquals(
-            listOf("skills", "--agents", agentsCsv, "--scope", "local"),
+            listOf("skills", "--agents", "claude,codex,opencode", "--scope", "local"),
             AgentToolkitInstaller.skillsArgs(os = "Linux"),
         )
         assertEquals(
-            listOf("skills", "-Agents", agentsCsv, "-Scope", "local"),
+            listOf("skills", "-Agents", "claude,codex,opencode", "-Scope", "local"),
             AgentToolkitInstaller.skillsArgs(os = "Windows 11"),
         )
         assertEquals(

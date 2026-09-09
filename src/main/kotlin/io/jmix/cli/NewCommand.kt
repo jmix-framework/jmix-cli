@@ -14,6 +14,10 @@ import com.github.ajalt.mordant.rendering.TextColors.gray
 import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.widgets.SelectList
+import io.jmix.cli.addon.AddonCatalog
+import io.jmix.cli.addon.AddonProjectProfile
+import io.jmix.cli.addon.ResolvedAddon
+import io.jmix.cli.addon.translationAddonIds
 import io.jmix.cli.env.AgentToolkitInstaller
 import io.jmix.cli.env.EnvironmentCheck
 import io.jmix.cli.env.JdkInstaller
@@ -21,8 +25,10 @@ import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.generator.JmixLocale
 import io.jmix.cli.generator.ProjectCreationInfo
 import io.jmix.cli.generator.ProjectGenerator
+import io.jmix.cli.generator.AddonInstaller
 import io.jmix.cli.generator.Repository
 import io.jmix.cli.repo.TemplateRepository
+import io.jmix.cli.repo.AddonRepository
 import io.jmix.cli.template.Template
 import io.jmix.cli.template.TemplateCatalog
 import io.jmix.cli.template.TemplateParams
@@ -34,6 +40,7 @@ import io.jmix.cli.wizard.PathCompleter
 import io.jmix.cli.wizard.Prompts
 import io.jmix.cli.wizard.Validation
 import io.jmix.cli.wizard.WizardChoice
+import io.jmix.cli.wizard.WizardStage
 import io.jmix.cli.wizard.WizardUiState
 import io.jmix.cli.wizard.requireValue
 import java.nio.file.Files
@@ -59,6 +66,7 @@ class NewCommand : CliktCommand(name = "new") {
     private val projectIdOpt by option("--project-id", help = "Project id — prefix for entity, table and bean names (max 7 chars)")
     private val themeOpt by option("--theme", help = "UI theme (aura or lumo)")
     private val localesOpt by option("--locales", help = "Comma-separated locale codes (default: en)")
+    private val addonsOpt by option("--addons", help = "Comma-separated free add-on IDs (default: none; e.g. quartz,reports)")
     private val pathOpt by option("--path", help = "Target directory (default: ./<name>)")
     private val repositoryOpt by option("--repository", help = "Maven repository URL (default: ${ProjectCreationInfo.DEFAULT_REPOSITORY_URL})")
     private val noGit by option("--no-git", help = "Skip git repository initialization").flag()
@@ -80,10 +88,13 @@ class NewCommand : CliktCommand(name = "new") {
         val projectId: String? = null,
         val theme: String? = null,
         val localeCodes: String? = null,
+        val addons: List<ResolvedAddon>? = null,
+        val suggestedTranslationIds: Set<String> = emptySet(),
+        val autoSelectedTranslationIds: Set<String> = emptySet(),
         val targetDir: Path? = null,
         val createGit: Boolean? = null,
     ) {
-        fun toUiState(activeStepIndex: Int): WizardUiState {
+        fun toUiState(activeStepIndex: Int, stage: WizardStage? = null): WizardUiState {
             val choices = listOf(
                 name?.let { WizardChoice("Project name", it) },
                 repositoryUrl?.let { WizardChoice("Repository", it) },
@@ -93,19 +104,21 @@ class NewCommand : CliktCommand(name = "new") {
                 projectId?.let { WizardChoice("Project id", it.ifEmpty { "(none)" }) },
                 theme?.takeIf { it.isNotEmpty() }?.let { WizardChoice("Theme", it) },
                 localeCodes?.let { WizardChoice("Locales", it) },
+                addons?.let { selected -> WizardChoice("Add-ons", selected.joinToString(", ") { it.addon.name }.ifEmpty { "(none)" }) },
                 targetDir?.let { WizardChoice("Location", it.toString()) },
                 createGit?.let { WizardChoice("Git repository", if (it) "yes" else "no") },
             )
-            return WizardUiState(choices.take(activeStepIndex).filterNotNull())
+            return WizardUiState(choices.take(activeStepIndex).filterNotNull(), stage)
         }
     }
 
     private val terminal = Terminal()
     private var state = WizardState()
     private var activeStepIndex = 0
+    private var wizardStage: WizardStage? = null
     private val prompts = Prompts(
         terminal,
-        wizardUiState = { state.toUiState(activeStepIndex) },
+        wizardUiState = { state.toUiState(activeStepIndex, wizardStage) },
         // The banner stays on screen as the wizard's header instead of being
         // wiped by the first frame.
         header = { width -> Banner.lines(width, cliVersion()) },
@@ -122,6 +135,7 @@ class NewCommand : CliktCommand(name = "new") {
     private lateinit var repositoryUrl: String
     private var catalog: TemplateCatalog? = null
     private var catalogVersion: String? = null
+    private var addonCatalog: AddonCatalog? = null
 
     override fun run() {
         try {
@@ -152,6 +166,7 @@ class NewCommand : CliktCommand(name = "new") {
 
         val targetDir = state.targetDir!!
         checkJdkEnvironment(state.jmixVersion!!)
+        if (state.addons.orEmpty().any { !it.included }) AddonInstaller.requireJavaHome(state.jmixVersion!!)
         checkTargetDir(targetDir)
 
         val info = ProjectCreationInfo(
@@ -165,8 +180,11 @@ class NewCommand : CliktCommand(name = "new") {
             jmixVersion = state.jmixVersion!!,
             templateMetadata = state.template!!.metadata,
             createGitRepository = state.createGit!!,
+            addons = state.addons.orEmpty(),
         )
 
+        wizardStage = WizardStage.GENERATION.takeIf { interactive }
+        prompts.printProgress()
         terminal.println(gray("Generating project..."))
         try {
             ProjectGenerator { terminal.println(brightYellow("Warning: $it")) }
@@ -179,6 +197,7 @@ class NewCommand : CliktCommand(name = "new") {
 
         installAgentToolkit(info)
         printSuccess(info)
+        wizardStage = null
         offerOpenAndRun(info)
     }
 
@@ -188,14 +207,25 @@ class NewCommand : CliktCommand(name = "new") {
      */
     private fun runWizardSteps() {
         val steps = listOf(
-            ::stepName, ::stepRepository, ::stepVersion, ::stepTemplate, ::stepPackage,
-            ::stepProjectId, ::stepTheme, ::stepLocales, ::stepPath, ::stepGit,
+            WizardStage.GENERAL to ::stepName,
+            WizardStage.GENERAL to ::stepRepository,
+            WizardStage.GENERAL to ::stepVersion,
+            WizardStage.GENERAL to ::stepTemplate,
+            WizardStage.GENERAL to ::stepPackage,
+            WizardStage.GENERAL to ::stepProjectId,
+            WizardStage.GENERAL to ::stepTheme,
+            WizardStage.LOCALIZATION to ::stepLocales,
+            WizardStage.ADDONS to ::stepAddons,
+            WizardStage.LOCATION to ::stepPath,
+            WizardStage.LOCATION to ::stepGit,
         )
         val prompted = BooleanArray(steps.size)
         var i = 0
         while (i < steps.size) {
             activeStepIndex = i
-            val outcome = steps[i]()
+            val (stage, step) = steps[i]
+            wizardStage = stage.takeIf { interactive }
+            val outcome = step()
             prompted[i] = outcome == Outcome.PROMPTED
             if (outcome == Outcome.BACK) {
                 var j = i - 1
@@ -521,6 +551,89 @@ class NewCommand : CliktCommand(name = "new") {
             }
             .ifEmpty { listOf(JmixLocale("en", "English", default = true)) }
 
+    private fun stepAddons(): Outcome {
+        val explicitIds = addonsOpt?.let { value ->
+            if (value.isBlank()) emptyList() else value.split(',').map(String::trim).also {
+                if (it.any(String::isEmpty)) throw CliktError("Add-on IDs cannot be empty. Use --addons quartz,reports.")
+            }
+        }
+        if (explicitIds?.isEmpty() == true || (explicitIds == null && (!interactive || prompts.isInputExhausted))) {
+            state = state.copy(addons = emptyList())
+            return Outcome.AUTO
+        }
+        val profile = AddonProjectProfile.from(catalogFor(state.jmixVersion!!).templateRoot(state.template!!.id))
+        if (profile == null) {
+            if (!explicitIds.isNullOrEmpty()) throw CliktError("This template has no application or add-on module to install add-ons into.")
+            state = state.copy(addons = emptyList())
+            return Outcome.AUTO
+        }
+        while (addonCatalog == null) {
+            try {
+                addonCatalog = AddonRepository().catalog()
+            } catch (e: java.io.IOException) {
+                if (explicitIds != null) throw e
+                when (val answer = prompts.choose(
+                    "Add-on catalog unavailable: ${e.message}",
+                    listOf("Retry", "Continue without additional add-ons"), { it }, allowBack = true,
+                )) {
+                    is Answer.Back -> return Outcome.BACK
+                    is Answer.Value -> if (answer.value != "Retry" || prompts.isInputExhausted) {
+                        state = state.copy(addons = emptyList())
+                        return Outcome.PROMPTED
+                    }
+                }
+            }
+        }
+        val catalog = addonCatalog!!
+        if (explicitIds != null) {
+            state = state.copy(addons = catalog.select(explicitIds, state.jmixVersion!!, profile))
+            return Outcome.AUTO
+        }
+        val available = catalog.available(state.jmixVersion!!, profile)
+        if (available.isEmpty()) {
+            state = state.copy(addons = emptyList())
+            summary("Add-ons", "No compatible free add-ons")
+            return Outcome.AUTO
+        }
+        val previous = state.addons.orEmpty().map { it.id }.toSet()
+        val suggestedTranslations = translationAddonIds(available, state.localeCodes.orEmpty().split(','))
+        // Only add new suggestions: revisiting the step must respect unchecked translations.
+        val newSuggestions = suggestedTranslations - state.suggestedTranslationIds - previous
+        val automatic = (state.autoSelectedTranslationIds intersect suggestedTranslations) + newSuggestions
+        val selected = previous - (state.autoSelectedTranslationIds - suggestedTranslations) + newSuggestions
+        val unavailable = previous - available.map { it.id }.toSet()
+        val question = "Select add-ons" + if (unavailable.isEmpty()) "" else " (no longer compatible: ${unavailable.joinToString(", ")})"
+        val labels = available.map { "${it.addon.name} (${it.id})" }
+        val entries = available.mapIndexed { index, addon ->
+            SelectList.Entry(labels[index], addon.addon.about.ifBlank { addon.addon.description }.takeIf(String::isNotBlank),
+                addon.included || addon.id in selected)
+        }
+        return when (val answer = prompts.chooseMany(
+            question, entries, allowBack = true, maxVisibleEntries = 10,
+            filterTexts = available.map {
+                "${it.id} ${it.addon.name} ${it.addon.about} ${it.addon.description} ${it.addon.tags.joinToString(" ")} ${it.addon.vendor}"
+            },
+            lockedIndices = available.indices.filterTo(linkedSetOf()) { available[it].included },
+            groups = available.map {
+                when {
+                    it.included -> "Included in template"
+                    it.addon.category == "Translation" -> "Translations"
+                    else -> "Add-ons"
+                }
+            },
+        )) {
+            is Answer.Back -> Outcome.BACK
+            is Answer.Value -> {
+                val chosen = available.filterIndexed { index, _ -> labels[index] in answer.value }
+                state = state.copy(addons = chosen, suggestedTranslationIds = suggestedTranslations,
+                    autoSelectedTranslationIds = automatic intersect chosen.map { it.id }.toSet())
+                summary("Add-ons", chosen.joinToString(", ") { it.addon.name }.ifEmpty { "(none)" })
+                Outcome.PROMPTED
+            }
+            null -> error("Searchable selection must support line input")
+        }
+    }
+
     private fun localeDisplayName(code: String): String =
         Locale.forLanguageTag(code.replace('_', '-'))
             .getDisplayName(Locale.ENGLISH)
@@ -739,14 +852,18 @@ class NewCommand : CliktCommand(name = "new") {
 
     /**
      * Installs the Jmix Agent Toolkit automatically: guidelines files and
-     * project-local skills for every supported agent. A failure must never
+     * project-local skills. A failure must never
      * fail the already-generated project — warn and move on.
      */
     private fun installAgentToolkit(info: ProjectCreationInfo) {
         terminal.println(gray("Installing the Jmix Agent Toolkit (guidelines and skills for AI coding agents)..."))
         try {
             AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion)
-            summary("Agent Toolkit", "guidelines and local skills for ${AgentToolkitInstaller.ALL_AGENTS.joinToString(", ")}")
+            summary(
+                "Agent Toolkit",
+                "guidelines for ${AgentToolkitInstaller.ALL_AGENTS.joinToString(", ")}; " +
+                    "local skills for ${AgentToolkitInstaller.SKILL_AGENTS.joinToString(", ")}",
+            )
         } catch (e: Exception) {
             terminal.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
             terminal.println(brightYellow("Install it later: https://github.com/jmix-framework/jmix-agent-toolkit"))
