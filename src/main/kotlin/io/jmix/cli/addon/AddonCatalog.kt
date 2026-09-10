@@ -29,6 +29,11 @@ data class AddonDependency(
 
 data class AddonCompatibility(val platformRequirement: String, val artifactVersions: List<String>)
 
+enum class AddonGroup(val title: String) {
+    FEATURES("Features"), UI("UI"), INTEGRATIONS("Integrations"), SECURITY("Security"),
+    SYSTEM("System"), OTHER("Other"), TRANSLATIONS("Translations"),
+}
+
 data class Addon(
     val id: String,
     val name: String,
@@ -41,7 +46,18 @@ data class Addon(
     val category: String = "Add-on",
     val tags: List<String> = emptyList(),
     val vendor: String = "",
-)
+) {
+    // ponytail: one primary group per add-on; tag filters would support overlapping categories.
+    val group: AddonGroup get() = when {
+        category == "Translation" -> AddonGroup.TRANSLATIONS
+        "Security" in tags -> AddonGroup.SECURITY
+        "Integration" in tags -> AddonGroup.INTEGRATIONS
+        "System" in tags -> AddonGroup.SYSTEM
+        "UI" in tags -> AddonGroup.UI
+        "Features" in tags -> AddonGroup.FEATURES
+        else -> AddonGroup.OTHER
+    }
+}
 
 data class ResolvedAddon(val addon: Addon, val version: String, val dependencies: List<AddonDependency>, val included: Boolean) {
     val id: String get() = addon.id
@@ -86,7 +102,8 @@ class AddonCatalog(val addons: List<Addon>) {
     fun available(version: String, profile: AddonProjectProfile): List<ResolvedAddon> = addons
         .filter { !it.commercial && installable(it) }
         .mapNotNull { resolve(it, version, profile) }
-        .sortedWith(compareBy<ResolvedAddon> { if (it.included) 0 else if (it.addon.category == "Translation") 2 else 1 }
+        .sortedWith(compareBy<ResolvedAddon> { !it.included }
+            .thenBy { it.addon.group }
             .thenByDescending { it.addon.weight }
             .thenBy(String.CASE_INSENSITIVE_ORDER) { it.addon.name }
             .thenBy { it.id })
@@ -95,7 +112,7 @@ class AddonCatalog(val addons: List<Addon>) {
         val available = available(version, profile).associateBy { it.id }
         return ids.distinct().map { id ->
             val addon = addons.find { it.id == id }
-                ?: throw IOException("Unknown add-on '$id'. Use an ID from the add-on selection list.")
+                ?: throw IOException("Unknown add-on '$id'. Run 'jmix new' without --addons to choose interactively.")
             if (addon.commercial) throw IOException("Add-on '$id' is commercial. This CLI currently installs free add-ons only.")
             if (!installable(addon)) throw IOException("Add-on '$id' has no supported runtime dependency metadata in the Studio catalog. " +
                 "Follow the vendor's installation instructions.")

@@ -18,6 +18,8 @@ previous prompted step and preserves answers that remain valid.
   per phase; non-interactive generation has no progress header.
 - Lists use arrows to move, Space to toggle, Enter to confirm, Esc to go back,
   and `q` to quit. Text prompts use Ctrl+Q to quit; plain `q` is ordinary input.
+  Quit shortcuts also accept the Russian-layout `й/Й` equivalents, including
+  Ctrl+Й when the terminal reports Ctrl. Plain `й` remains text in prompts and search.
 - [Add-on selection](add-ons.md) supports `/` search. Enter leaves search editing;
   another Enter confirms the selection. Ctrl+U clears the query, Esc leaves
   search editing before navigating back, and Ctrl+Q quits while editing.
@@ -38,8 +40,9 @@ previous prompted step and preserves answers that remain valid.
 ## Verification and demo
 
 Run `./gradlew test --tests 'io.jmix.cli.wizard.*'` and exercise the real CLI in
-both terminal modes. Cover back/forward navigation, text containing `q`, search,
-selection retention, locked items, and narrow/resized terminals.
+both terminal modes. Cover back/forward navigation, English/Russian quit shortcuts,
+text and search containing `q` and `й`, selection retention, template-included add-ons
+omitted, and narrow/resized terminals.
 
 The README GIF uses real CLI checkpoints captured by [demo.tape](../demo.tape).
 [render-demo.sh](../render-demo.sh) keeps the CLI's own progress bar, aligns the

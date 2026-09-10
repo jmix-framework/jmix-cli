@@ -30,22 +30,31 @@ class AddonCatalogTest {
     }
 
     @Test
-    fun `picker groups included and translation add-ons with Studio featured order within each group`() {
+    fun `picker groups marketplace tags once with Studio featured order within each group`() {
         val sample = AddonCatalog.parse(CATALOG_JSON).addons.first()
-        fun addon(id: String, name: String, weight: Int, category: String = "Add-on") = sample.copy(
-            id = id, name = name, weight = weight, category = category,
+        fun addon(id: String, name: String, weight: Int, vararg tags: String, category: String = "Add-on") = sample.copy(
+            id = id, name = name, weight = weight, category = category, tags = tags.toList(),
             dependencies = listOf(AddonDependency("demo", id)),
         )
         val catalog = AddonCatalog(listOf(
-            addon("alpha", "Alpha", 10),
-            addon("translation", "Translation", 2000, "Translation"),
+            addon("alpha", "Alpha", 10, "Features"),
+            addon("translation", "Translation", 2000, "Security", category = "Translation"),
             addon("included", "Included", 0),
-            addon("zulu", "Zulu", 1000),
-            addon("beta", "Beta", 10),
+            addon("zulu", "Zulu", 1000, "Features"),
+            addon("beta", "Beta", 10, "Features"),
+            addon("charts", "Charts", 2000, "Features", "UI"),
+            addon("quartz", "Quartz", 2000, "System", "Integration"),
+            addon("saml", "SAML", 2000, "Integration", "Security"),
+            addon("jmx", "JMX Console", 2000, "UI", "System"),
+            addon("unknown", "Unknown", 2000, "New tag"),
+            addon("untagged", "Untagged", 10),
             addon("paid", "Paid", 5000).copy(commercial = true),
         ))
-        assertEquals(listOf("included", "zulu", "alpha", "beta", "translation"),
-            catalog.available("3.0.1", AddonProjectProfile("build.gradle", setOf("demo:included"))).map { it.id })
+        val available = catalog.available("3.0.1", AddonProjectProfile("build.gradle", setOf("demo:included")))
+        assertEquals(listOf("included", "zulu", "alpha", "beta", "charts", "quartz", "saml", "jmx",
+            "unknown", "untagged", "translation"), available.map { it.id })
+        assertEquals(listOf("Features", "Features", "Features", "UI", "Integrations", "Security", "System",
+            "Other", "Other", "Translations"), available.filterNot { it.included }.map { it.addon.group.title })
         assertEquals(Int.MAX_VALUE,
             AddonCatalog.parse(CATALOG_JSON.replace("\"weight\":760", "\"weight\":null")).addons.first().weight)
         assertEquals(Int.MAX_VALUE, AddonCatalog.parse(CATALOG_JSON).addons.last().weight)

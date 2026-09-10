@@ -589,10 +589,11 @@ class NewCommand : CliktCommand(name = "new") {
             state = state.copy(addons = catalog.select(explicitIds, state.jmixVersion!!, profile))
             return Outcome.AUTO
         }
-        val available = catalog.available(state.jmixVersion!!, profile)
+        val compatible = catalog.available(state.jmixVersion!!, profile)
+        val available = compatible.filterNot { it.included }
         if (available.isEmpty()) {
             state = state.copy(addons = emptyList())
-            summary("Add-ons", "No compatible free add-ons")
+            summary("Add-ons", "No additional compatible free add-ons")
             return Outcome.AUTO
         }
         val previous = state.addons.orEmpty().map { it.id }.toSet()
@@ -601,30 +602,23 @@ class NewCommand : CliktCommand(name = "new") {
         val newSuggestions = suggestedTranslations - state.suggestedTranslationIds - previous
         val automatic = (state.autoSelectedTranslationIds intersect suggestedTranslations) + newSuggestions
         val selected = previous - (state.autoSelectedTranslationIds - suggestedTranslations) + newSuggestions
-        val unavailable = previous - available.map { it.id }.toSet()
+        val unavailable = previous - compatible.map { it.id }.toSet()
         val question = "Select add-ons" + if (unavailable.isEmpty()) "" else " (no longer compatible: ${unavailable.joinToString(", ")})"
-        val labels = available.map { "${it.addon.name} (${it.id})" }
-        val entries = available.mapIndexed { index, addon ->
-            SelectList.Entry(labels[index], addon.addon.about.ifBlank { addon.addon.description }.takeIf(String::isNotBlank),
-                addon.included || addon.id in selected)
+        val entries = available.map { addon ->
+            SelectList.Entry(addon.addon.name, addon.addon.about.ifBlank { addon.addon.description }.takeIf(String::isNotBlank),
+                addon.id in selected)
         }
         return when (val answer = prompts.chooseMany(
             question, entries, allowBack = true, maxVisibleEntries = 10,
             filterTexts = available.map {
-                "${it.id} ${it.addon.name} ${it.addon.about} ${it.addon.description} ${it.addon.tags.joinToString(" ")} ${it.addon.vendor}"
+                "${it.id} ${it.addon.name} ${it.addon.about} ${it.addon.description} ${it.addon.tags.joinToString(" ")} ${it.addon.group.title} ${it.addon.vendor}"
             },
-            lockedIndices = available.indices.filterTo(linkedSetOf()) { available[it].included },
-            groups = available.map {
-                when {
-                    it.included -> "Included in template"
-                    it.addon.category == "Translation" -> "Translations"
-                    else -> "Add-ons"
-                }
-            },
+            groups = available.map { it.addon.group.title },
+            values = available.map { it.id },
         )) {
             is Answer.Back -> Outcome.BACK
             is Answer.Value -> {
-                val chosen = available.filterIndexed { index, _ -> labels[index] in answer.value }
+                val chosen = available.filter { it.id in answer.value }
                 state = state.copy(addons = chosen, suggestedTranslationIds = suggestedTranslations,
                     autoSelectedTranslationIds = automatic intersect chosen.map { it.id }.toSet())
                 summary("Add-ons", chosen.joinToString(", ") { it.addon.name }.ifEmpty { "(none)" })

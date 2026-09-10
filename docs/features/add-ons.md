@@ -14,12 +14,21 @@ and does not fetch the catalog or resolve add-on dependencies.
 - Compatibility uses the Jmix version and the actual template's dependencies,
   including its UI stack. Templates without a supported module skip the picker.
   Commercial add-ons and entries without supported runtime metadata are excluded.
-- Groups are **Included in template**, **Add-ons**, and **Translations**.
+- Groups are **Features**, **UI**, **Integrations**, **Security**, **System**,
+  **Other**, and **Translations**, in that order; empty groups are omitted.
+  Studio catalog tags determine one group per add-on. For overlapping tags,
+  precedence is Security, Integration, System, UI, then Features; unknown or
+  missing tags use Other. Translation category entries always use Translations.
   Within a group, higher catalog weight comes first, matching Studio's featured
   ordering; name and ID break ties.
-- Template-included entries are checked and locked. Descriptions appear below
-  names. Search matches words across IDs, names, descriptions, tags, and vendors;
+- Add-ons supplied by the template are omitted from the picker. Names appear
+  without ID suffixes, with descriptions below. Search matches words across
+  IDs, names, descriptions, groups, tags, and vendors;
   filtering does not discard selections.
+  The heading shows the visible range when scrolling and the total selected
+  count, including choices hidden by search. The Search row contains only the
+  query or its placeholder. Its label is gray to distinguish it from cyan group
+  headings; editing controls appear in the keyboard hints.
 - Suggest translations from compatible catalog artifacts. Normalize locale case
   and `_`/`-`, prefer an exact locale, then its language. Revisited steps preserve
   manual selections and opt-outs; changed languages replace only automatic choices.
@@ -48,7 +57,8 @@ feature; see [issue #7](https://github.com/jmix-framework/jmix-cli/issues/7).
   [Prompts.kt](../../src/main/kotlin/io/jmix/cli/wizard/Prompts.kt) — selection state and UI.
 
 Run catalog, repository, installer, and prompt tests. Exercise both terminal
-modes with search, locked entries, translation opt-outs, and changed locales.
+modes with group headings, search across groups, template-included entries
+omitted, translation opt-outs, and changed locales.
 For installer changes, generate and build an application with add-ons; inspect
 its dependencies and Liquibase includes. Include an add-on template when module
 configuration changes, and verify non-interactive use with and without `--addons`.

@@ -38,9 +38,9 @@ hints at the bottom of each step. In text input, use **Ctrl+Q** to quit.
 
 The progress bar tracks General, Localization, Add-ons, Location and Git, and Finishing up.
 
-The add-on picker offers compatible **free add-ons**. Press **/** to search,
-**Space** to toggle, and **Enter** to confirm. Template-included add-ons are
-checked and locked; matching translations are preselected and can be unchecked.
+The add-on picker groups compatible **free add-ons** by purpose. Press **/** to search,
+**Space** to toggle, and **Enter** to confirm. Add-ons supplied by the template
+are omitted; matching translations are preselected and can be unchecked.
 In line-input consoles, use `/query` and comma-separated selection numbers.
 
 For scripts and AI agents, pass `--non-interactive`:

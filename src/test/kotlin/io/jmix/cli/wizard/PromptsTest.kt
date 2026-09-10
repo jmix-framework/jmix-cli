@@ -374,7 +374,7 @@ class PromptsTest {
         assertEquals(setOf(0), initial.selectedIndices)
         assertEquals(1, updated.cursorIndex)
         assertEquals(setOf(0, 1), updated.selectedIndices)
-        assertEquals(listOf("en — English", "de — German"), updated.pickedTitles())
+        assertEquals(listOf("en — English", "de — German"), updated.pickedValues())
     }
 
     @Test
@@ -434,6 +434,27 @@ class PromptsTest {
     }
 
     @Test
+    fun `multi choice values distinguish identical titles in every terminal mode`() {
+        for ((interactive, ansiCursor) in listOf(true to false, true to true, false to false)) {
+            withStdin("2\n\n") {
+                val recorder = TerminalRecorder(width = 80, height = 20,
+                    inputInteractive = interactive, supportsAnsiCursor = ansiCursor)
+                recorder.inputEvents += listOf(KeyboardEvent("ArrowDown"), KeyboardEvent(" "), KeyboardEvent("Enter"))
+                val selected = Prompts(Terminal(terminalInterface = recorder)).chooseMany(
+                    "Select add-ons",
+                    listOf(SelectList.Entry("Same name"), SelectList.Entry("Same name")),
+                    filterTexts = listOf("First add-on", "Second add-on"),
+                    values = listOf("first-id", "second-id"),
+                )!!.requireValue()
+
+                assertEquals(listOf("second-id"), selected)
+                assertFalse(recorder.output().contains("first-id"))
+                assertFalse(recorder.output().contains("second-id"))
+            }
+        }
+    }
+
+    @Test
     fun `searchable selector filters supplied name and description text`() {
         val recorder = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
         recorder.inputEvents += listOf(KeyboardEvent("/")) +
@@ -471,6 +492,11 @@ class PromptsTest {
         )!!.requireValue()
 
         assertEquals(listOf("Alpha", "Beta"), selected)
+        val output = ANSI_SEQUENCE.replace(recorder.output(), "")
+        for (count in 0..2) assertTrue(output.contains("Select add-ons  •  $count selected"), output)
+        val searches = output.lineSequence().filter { it.startsWith("Search:") }.map(String::trimEnd).toList()
+        assertTrue(searches.contains("Search: b"))
+        assertTrue(searches.all { it in listOf("Search: / to search", "Search:", "Search: b") }, searches.toString())
     }
 
     @Test
@@ -513,34 +539,75 @@ class PromptsTest {
     }
 
     @Test
-    fun `plain q edits a search while ctrl q quits`() {
-        val plainQ = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
-        plainQ.inputEvents += listOf(
-            KeyboardEvent("/"), KeyboardEvent("q"), KeyboardEvent("Enter"),
-            KeyboardEvent(" "), KeyboardEvent("Enter"),
-        )
-        val prompts = Prompts(Terminal(terminalInterface = plainQ))
+    fun `English and Russian q exit add-on selection before and after search in every terminal mode`() {
+        for ((interactive, ansiCursor) in listOf(true to false, true to true, false to false)) {
+            for (query in listOf("", "jobs", "no matches")) {
+                for (key in listOf("q", "Q", "й", "Й")) {
+                    withStdin((if (query.isEmpty()) "" else "/$query\n") + "$key\n") {
+                        val recorder = TerminalRecorder(
+                            width = 100, height = 20,
+                            inputInteractive = interactive, supportsAnsiCursor = ansiCursor,
+                        )
+                        if (query.isNotEmpty()) {
+                            recorder.inputEvents += KeyboardEvent("/")
+                            recorder.inputEvents += query.map { KeyboardEvent(it.toString()) }
+                            recorder.inputEvents += KeyboardEvent("Enter")
+                        }
+                        recorder.inputEvents += listOf(KeyboardEvent(key), KeyboardEvent("Enter"))
+                        val prompts = Prompts(Terminal(terminalInterface = recorder))
 
-        assertEquals(
-            listOf("Queue"),
-            prompts.chooseMany(
-                "Select add-ons",
-                listOf(SelectList.Entry("Queue")),
-                filterTexts = listOf("Queue processing"),
-            )!!.requireValue(),
-        )
-
-        val ctrlQ = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = false)
-        ctrlQ.inputEvents += listOf(KeyboardEvent("/"), KeyboardEvent("q", ctrl = true))
-        val quitPrompts = Prompts(Terminal(terminalInterface = ctrlQ))
-        val result = assertThrows(CliktError::class.java) {
-            quitPrompts.chooseMany(
-                "Select add-ons",
-                listOf(SelectList.Entry("Queue")),
-                filterTexts = listOf("Queue processing"),
-            )
+                        val result = assertThrows(CliktError::class.java) {
+                            prompts.chooseMany(
+                                "Select add-ons",
+                                listOf(SelectList.Entry("Quartz"), SelectList.Entry("German", selected = true)),
+                                filterTexts = listOf("Quartz jobs", "German translation"),
+                                groups = listOf("Integrations", "Translations"),
+                            )
+                        }
+                        assertEquals(0, result.statusCode)
+                        assertFalse(prompts.isInputExhausted)
+                    }
+                }
+            }
         }
-        assertEquals(0, result.statusCode)
+    }
+
+    @Test
+    fun `English and Russian q edit a search while ctrl quits`() {
+        for (ansiCursor in listOf(false, true)) {
+            for (key in listOf("q", "Q", "й", "Й")) {
+                val plainQ = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = ansiCursor)
+                plainQ.inputEvents += listOf(
+                    KeyboardEvent("/"), KeyboardEvent(key), KeyboardEvent("Enter"),
+                    KeyboardEvent(" "), KeyboardEvent("Enter"),
+                )
+                val prompts = Prompts(Terminal(terminalInterface = plainQ))
+
+                assertEquals(
+                    listOf("Queue"),
+                    prompts.chooseMany(
+                        "Select add-ons",
+                        listOf(SelectList.Entry("Queue")),
+                        filterTexts = listOf("$key processing"),
+                    )!!.requireValue(),
+                )
+
+                val ctrlQ = TerminalRecorder(width = 120, height = 40, supportsAnsiCursor = ansiCursor)
+                ctrlQ.inputEvents += listOf(
+                    KeyboardEvent("/"), KeyboardEvent(key, ctrl = true),
+                    KeyboardEvent("Enter"), KeyboardEvent("Enter"),
+                )
+                val quitPrompts = Prompts(Terminal(terminalInterface = ctrlQ))
+                val result = assertThrows(CliktError::class.java) {
+                    quitPrompts.chooseMany(
+                        "Select add-ons",
+                        listOf(SelectList.Entry("Queue")),
+                        filterTexts = listOf("Queue processing"),
+                    )
+                }
+                assertEquals(0, result.statusCode)
+            }
+        }
     }
 
     @Test
@@ -587,6 +654,9 @@ class PromptsTest {
                 val nameRow = lines.indexOfFirst { "Add-on 6" in it }
                 assertEquals("Description for 6", lines[nameRow + 1].trim())
                 assertTrue(frame.contains("enter"))
+                assertTrue(lines.first().startsWith("Select add-ons"))
+                assertTrue(lines.first().trimEnd().endsWith("2 selected"), frame)
+                assertEquals("Search: / to search", lines[1].trim())
             }
         }
     }
@@ -613,6 +683,9 @@ class PromptsTest {
             assertTrue(output.contains("Translations"))
             assertTrue(output.contains("ctrl+u"))
             assertFalse(output.contains("No matches."))
+            assertFalse(output.contains(" shown"))
+            assertFalse(output.contains("(editing)"))
+            if (ansiCursor) assertTrue(output.contains("1 selected  •  Search: / to search"), output)
         }
     }
 
@@ -636,6 +709,8 @@ class PromptsTest {
         assertTrue(filtered.contains("Add-ons"))
         assertTrue(filtered.contains("Second description"))
         assertFalse(filtered.contains("Included in template"))
+        assertEquals("•  2 selected", filtered.lineSequence().first().trim())
+        assertEquals("Search: second", filtered.lines()[1].trim())
     }
 
     @Test
@@ -704,27 +779,29 @@ class PromptsTest {
     }
 
     @Test
-    fun `raw typed prompt quits cleanly on ctrl q`() {
-        val recorder = TerminalRecorder(width = 120, height = 40)
-        recorder.inputEvents += KeyboardEvent("q", ctrl = true)
-        val prompts = Prompts(Terminal(terminalInterface = recorder))
+    fun `raw typed prompt quits cleanly on English or Russian ctrl q`() {
+        for (key in listOf("q", "Q", "й", "Й")) {
+            val recorder = TerminalRecorder(width = 120, height = 40)
+            recorder.inputEvents += listOf(KeyboardEvent(key, ctrl = true), KeyboardEvent("Enter"))
+            val prompts = Prompts(Terminal(terminalInterface = recorder))
 
-        val result = assertThrows(CliktError::class.java) {
-            prompts.ask("Enter project name", "untitled")
+            val result = assertThrows(CliktError::class.java) {
+                prompts.ask("Enter project name", "untitled")
+            }
+
+            assertEquals(0, result.statusCode)
+            assertTrue(recorder.output().contains("ctrl+q"))
+            assertTrue(recorder.output().contains("quit"))
         }
-
-        assertEquals(0, result.statusCode)
-        assertTrue(recorder.output().contains("ctrl+q"))
-        assertTrue(recorder.output().contains("quit"))
     }
 
     @Test
-    fun `raw typed prompt accepts plain q as input`() {
+    fun `raw typed prompt accepts plain English and Russian q as input`() {
         val recorder = TerminalRecorder(width = 120, height = 40)
-        recorder.inputEvents += listOf(KeyboardEvent("q"), KeyboardEvent("Enter"))
+        recorder.inputEvents += "qQйЙ".map { KeyboardEvent(it.toString()) } + KeyboardEvent("Enter")
         val prompts = Prompts(Terminal(terminalInterface = recorder))
 
-        assertEquals("q", prompts.ask("Enter project name", "untitled").requireValue())
+        assertEquals("qQйЙ", prompts.ask("Enter project name", "untitled").requireValue())
     }
 
     @Test
@@ -758,10 +835,10 @@ class PromptsTest {
     }
 
     @Test
-    fun `line input fallback accepts plain q as input`() = withStdin("q\n") {
+    fun `line input fallback accepts plain English and Russian q as input`() = withStdin("qQйЙ\n") {
         val prompts = Prompts(Terminal(terminalInterface = TerminalRecorder(inputInteractive = false)))
 
-        assertEquals("q", prompts.ask("Enter project name", "untitled").requireValue())
+        assertEquals("qQйЙ", prompts.ask("Enter project name", "untitled").requireValue())
     }
 
     @Test

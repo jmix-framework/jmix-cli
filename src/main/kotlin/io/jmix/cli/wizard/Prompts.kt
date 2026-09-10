@@ -113,6 +113,7 @@ internal data class SelectionUiState(
     val filterQuery: String = "",
     val editingFilter: Boolean = false,
     val filterBeforeEdit: String = "",
+    val values: List<String> = entries.map { it.title },
 ) {
     init {
         require(entries.isNotEmpty()) { "Selection list must contain at least one entry" }
@@ -122,6 +123,7 @@ internal data class SelectionUiState(
         }
         require(lockedIndices.all { it in entries.indices }) { "Locked index must point to an entry" }
         require(groups == null || groups.size == entries.size) { "Group count must match the selection entry count" }
+        require(values.size == entries.size) { "Value count must match the selection entry count" }
     }
 
     val visibleIndices: List<Int>
@@ -168,10 +170,10 @@ internal data class SelectionUiState(
         return if (visible.isEmpty() || cursorIndex in visible) filtered else filtered.copy(cursorIndex = visible.first())
     }
 
-    fun pickedTitles(): List<String> = if (multi) {
-        entries.filterIndexed { index, _ -> index in selectedIndices }.map { it.title }
+    fun pickedValues(): List<String> = if (multi) {
+        values.filterIndexed { index, _ -> index in selectedIndices }
     } else {
-        listOf(entries[cursorIndex].title)
+        listOf(values[cursorIndex])
     }
 }
 
@@ -323,7 +325,7 @@ class Prompts(
         if (isInputExhausted) return Answer.Value(default)
         val options = if (default) listOf(YES, NO) else listOf(NO, YES)
         when (val result = runSelect(question, options.map { SelectList.Entry(it) }, multi = false, allowBack)) {
-            is SelectResult.Picked -> return Answer.Value(result.titles.single() == YES)
+            is SelectResult.Picked -> return Answer.Value(result.values.single() == YES)
             SelectResult.Back -> return Answer.Back
             SelectResult.Unsupported -> {}
         }
@@ -370,7 +372,7 @@ class Prompts(
         }
         when (val result = runSelect(question, labels.map { SelectList.Entry(it) }, multi = false, allowBack)) {
             is SelectResult.Picked ->
-                return Answer.Value(items[labels.indexOf(result.titles.single()).coerceAtLeast(0)])
+                return Answer.Value(items[labels.indexOf(result.values.single()).coerceAtLeast(0)])
             SelectResult.Back -> return Answer.Back
             SelectResult.Unsupported -> {}
         }
@@ -395,6 +397,7 @@ class Prompts(
     /**
      * Multi-choice selection (space toggles). Search-enabled lists provide a
      * numbered fallback; other lists return null when raw mode is unavailable.
+     * Values can supply stable IDs independently of the displayed entry titles.
      */
     fun chooseMany(
         question: String,
@@ -404,6 +407,7 @@ class Prompts(
         filterTexts: List<String>? = null,
         lockedIndices: Set<Int> = emptySet(),
         groups: List<String>? = null,
+        values: List<String> = entries.map { it.title },
     ): Answer<List<String>>? = when (val result = runSelect(
         question = question,
         entries = entries,
@@ -413,13 +417,14 @@ class Prompts(
         filterTexts = filterTexts,
         lockedIndices = lockedIndices,
         groups = groups,
+        values = values,
     )) {
-        is SelectResult.Picked -> Answer.Value(result.titles)
+        is SelectResult.Picked -> Answer.Value(result.values)
         SelectResult.Back -> Answer.Back
         SelectResult.Unsupported -> if (filterTexts == null) {
             null
         } else {
-            runSearchableChooseManyFallback(question, entries, allowBack, maxVisibleEntries, filterTexts, lockedIndices, groups)
+            runSearchableChooseManyFallback(question, entries, allowBack, maxVisibleEntries, filterTexts, lockedIndices, groups, values)
         }
     }
 
@@ -431,6 +436,7 @@ class Prompts(
         filterTexts: List<String>,
         lockedIndices: Set<Int>,
         groups: List<String>?,
+        values: List<String>,
     ): Answer<List<String>> {
         var state = SelectionUiState(
             question = question,
@@ -441,11 +447,12 @@ class Prompts(
             filterTexts = filterTexts,
             lockedIndices = lockedIndices,
             groups = groups,
+            values = values,
         )
-        if (isInputExhausted) return Answer.Value(state.pickedTitles())
+        if (isInputExhausted) return Answer.Value(state.pickedValues())
 
         while (true) {
-            terminal.println(questionStyle(question))
+            terminal.println(questionStyle(question) + selectionCount(state))
             terminal.println(filterStatus(state))
             val visible = state.visibleIndices
             printNumberedEntries(state)
@@ -458,13 +465,13 @@ class Prompts(
                 isInputExhausted = true
                 terminal.println()
                 terminal.println(gray("No more input — using defaults for the remaining steps."))
-                return Answer.Value(state.pickedTitles())
+                return Answer.Value(state.pickedValues())
             }
             val input = line.trim()
             when {
-                input.isEmpty() -> return Answer.Value(state.pickedTitles())
+                input.isEmpty() -> return Answer.Value(state.pickedValues())
                 input == BACK_INPUT && allowBack -> return Answer.Back
-                input.equals(QUIT_INPUT, ignoreCase = true) -> quit()
+                isQuitInput(input) -> quit()
                 input.startsWith("/") -> state = state.setFilter(input.drop(1).trim())
                 else -> {
                     val numbers = input.split(',').map { it.trim().toIntOrNull() }
@@ -502,7 +509,7 @@ class Prompts(
     // --- Custom select loop ----------------------------------------------------
 
     private sealed interface SelectResult {
-        data class Picked(val titles: List<String>) : SelectResult
+        data class Picked(val values: List<String>) : SelectResult
         data object Back : SelectResult
         data object Unsupported : SelectResult
     }
@@ -520,6 +527,7 @@ class Prompts(
         filterTexts: List<String>? = null,
         lockedIndices: Set<Int> = emptySet(),
         groups: List<String>? = null,
+        values: List<String> = entries.map { it.title },
     ): SelectResult {
         val rawMode = terminal.enterRawModeOrNull() ?: run {
             printProgress(compact = true)
@@ -534,6 +542,7 @@ class Prompts(
             filterTexts = filterTexts,
             lockedIndices = lockedIndices,
             groups = groups,
+            values = values,
         )
 
         // Mordant detects the IntelliJ Run console as interactive, but its
@@ -577,7 +586,7 @@ class Prompts(
                 }
                 when {
                     key.isCtrlC -> abort()
-                    state.editingFilter && key.key.equals(QUIT_INPUT, ignoreCase = true) && key.ctrl && !key.alt -> quit()
+                    state.editingFilter && isQuitInput(key.key) && key.ctrl && !key.alt -> quit()
                     state.editingFilter && key.key == "Escape" -> state = renderSelection(state.cancelFilterEdit())
                     state.editingFilter && key.key == "Enter" -> state = renderSelection(state.finishFilterEdit())
                     state.editingFilter && key.key == "Backspace" -> state = renderSelection(state.eraseFilterCharacter())
@@ -586,7 +595,7 @@ class Prompts(
                     state.editingFilter && key.key == "Spacebar" -> state = renderSelection(state.appendToFilter(" "))
                     state.editingFilter && key.key.length == 1 && !key.ctrl && !key.alt ->
                         state = renderSelection(state.appendToFilter(key.key))
-                    key.key.equals(QUIT_INPUT, ignoreCase = true) && !key.ctrl && !key.alt -> quit()
+                    isQuitInput(key.key) && !key.ctrl && !key.alt -> quit()
                     key.key == "/" && state.filterTexts != null -> state = renderSelection(state.startFilterEdit())
                     key.key == "Escape" && state.allowBack -> return SelectResult.Back
                     key.key == "ArrowUp" -> {
@@ -604,7 +613,7 @@ class Prompts(
                         renderedWidth = terminal.size.width
                         renderedHeight = terminal.size.height
                     }
-                    key.key == "Enter" -> return SelectResult.Picked(state.pickedTitles())
+                    key.key == "Enter" -> return SelectResult.Picked(state.pickedValues())
                 }
             }
         } finally {
@@ -717,7 +726,7 @@ class Prompts(
             addAll(banner)
             choices.forEach { add(renderChoice(it)) }
             if (choices.isNotEmpty()) add("")
-            if (showTitle) add(questionStyle(state.question) + position)
+            if (showTitle) add(questionStyle(state.question) + position + selectionCount(state))
             if (statusRows > 0) add(filterStatus(positionedState))
             if (window == null) {
                 add(gray("  No matches."))
@@ -749,9 +758,11 @@ class Prompts(
 
     private fun filterStatus(state: SelectionUiState): String {
         val query = state.filterQuery.ifEmpty { if (state.editingFilter) "" else "/ to search" }
-        val editing = if (state.editingFilter) brightMagenta(" (editing)") else ""
-        return cyan("Search: ") + query + editing + gray("  •  ${state.visibleIndices.size} shown  •  ${state.selectedIndices.size} selected")
+        return gray("Search: ") + query
     }
+
+    private fun selectionCount(state: SelectionUiState): String =
+        if (state.filterTexts == null) "" else gray("  •  ${state.selectedIndices.size} selected")
 
     private fun descriptionLine(entry: SelectList.Entry, width: Int, indent: Int = 6): String? =
         entry.description?.let { description ->
@@ -819,7 +830,7 @@ class Prompts(
                 included + state.entries[state.cursorIndex].title + position
             }
             val search = if (state.filterTexts == null) "" else gray("  •  ") + filterStatus(state)
-            val styledLine = if (state.editingFilter) filterStatus(state) else "$marker $entry$search"
+            val styledLine = if (state.editingFilter) filterStatus(state) else "$marker $entry${selectionCount(state)}$search"
             val plainLine = ANSI_SEQUENCE.replace(styledLine, "")
             val visibleLine = if (plainLine.length <= lineWidth) {
                 styledLine
@@ -838,7 +849,7 @@ class Prompts(
                 val wasEditingFilter = state.editingFilter
                 when {
                     key.isCtrlC -> abort()
-                    state.editingFilter && key.key.equals(QUIT_INPUT, ignoreCase = true) && key.ctrl && !key.alt -> quit()
+                    state.editingFilter && isQuitInput(key.key) && key.ctrl && !key.alt -> quit()
                     state.editingFilter && key.key == "Escape" -> state = state.cancelFilterEdit()
                     state.editingFilter && key.key == "Enter" -> state = state.finishFilterEdit()
                     state.editingFilter && key.key == "Backspace" -> state = state.eraseFilterCharacter()
@@ -846,7 +857,7 @@ class Prompts(
                     state.editingFilter && key.key == "Spacebar" -> state = state.appendToFilter(" ")
                     state.editingFilter && key.key.length == 1 && !key.ctrl && !key.alt ->
                         state = state.appendToFilter(key.key)
-                    key.key.equals(QUIT_INPUT, ignoreCase = true) && !key.ctrl && !key.alt -> quit()
+                    isQuitInput(key.key) && !key.ctrl && !key.alt -> quit()
                     key.key == "/" && state.filterTexts != null -> state = state.startFilterEdit()
                     key.key == "Escape" && state.allowBack -> return SelectResult.Back
                     key.key == "ArrowUp" -> {
@@ -860,7 +871,7 @@ class Prompts(
                         state = next
                     }
                     (key.key == " " || key.key == "Spacebar") && state.multi -> state = state.toggle()
-                    key.key == "Enter" -> return SelectResult.Picked(state.pickedTitles())
+                    key.key == "Enter" -> return SelectResult.Picked(state.pickedValues())
                     else -> continue
                 }
                 if (wasEditingFilter != state.editingFilter) {
@@ -961,7 +972,7 @@ class Prompts(
                 if (key == null) continue
                 when {
                     key.isCtrlC -> abort()
-                    key.key.equals(QUIT_INPUT, ignoreCase = true) && key.ctrl && !key.alt -> quit()
+                    isQuitInput(key.key) && key.ctrl && !key.alt -> quit()
                     key.key == "Escape" && allowBack -> {
                         clearPromptWithBar(cursorOnPrompt = true)
                         return LineInput.Back
@@ -1084,6 +1095,10 @@ class Prompts(
     } catch (e: RuntimeException) {
         if (e.message?.contains(WINDOWS_POLL_TIMEOUT_MESSAGE) == true) null else abort()
     }
+
+    // ponytail: terminals expose characters, so other layouts need explicit aliases.
+    private fun isQuitInput(input: String): Boolean =
+        input.equals(QUIT_INPUT, ignoreCase = true) || input.equals("й", ignoreCase = true)
 
     private fun abort(): Nothing = throw CliktError("Aborted.")
 

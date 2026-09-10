@@ -66,7 +66,7 @@ Sleep 1800ms
 # German translation is already selected; add Quartz using search.
 Type "/jobs"
 Enter
-Wait+Screen /Quartz \(quartz\)/
+Wait+Screen /Quartz/
 Sleep 300ms
 Screenshot build/demo/filtered.png
 Sleep 700ms
