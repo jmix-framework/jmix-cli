@@ -8,6 +8,8 @@ version. Do not report the private bundled runtime as an installed development J
 
 - Discover JDKs from the environment and known installation locations, including
   CLI-managed installations. Keep version compatibility rules in `JdkVersions`.
+  Resolve launcher shims (including macOS `/usr/bin/java`) to the actual JDK home
+  reported by Java before setting `JAVA_HOME`. Java probes have a bounded timeout.
 - Plain project generation warns when no compatible JDK is found. Installing
   additional add-ons requires one and fails before generation if it is missing.
 - The interactive follow-up can install a compatible Temurin JDK. Downloads must

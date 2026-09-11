@@ -9,7 +9,7 @@ data class Jdk(val majorVersion: Int, val home: Path)
 /**
  * Locates JDKs on the machine: JAVA_HOME, PATH, SDKMAN, and OS-standard
  * install locations. Versions are read from the `release` file when present,
- * falling back to `java -version` output.
+ * falling back to the version and actual home reported by the Java executable.
  */
 object JdkDetector {
 
@@ -23,7 +23,7 @@ object JdkDetector {
         }
         return candidates
             .filter { Files.isDirectory(it) }
-            .mapNotNull { home -> majorVersionOf(home)?.let { Jdk(it, home.normalize()) } }
+            .mapNotNull(::detectJdk)
             .distinctBy { it.home }
             .sortedByDescending { it.majorVersion }
     }
@@ -73,8 +73,12 @@ object JdkDetector {
     private fun listChildren(dir: Path): List<Path> =
         if (Files.isDirectory(dir)) Files.list(dir).use { it.toList() } else emptyList()
 
-    fun majorVersionOf(javaHome: Path): Int? =
-        versionFromReleaseFile(javaHome) ?: versionFromJavaExecutable(javaHome)
+    fun majorVersionOf(javaHome: Path): Int? = detectJdk(javaHome)?.majorVersion
+
+    internal fun detectJdk(javaHome: Path): Jdk? {
+        val home = runCatching { javaHome.toRealPath() }.getOrNull() ?: return null
+        return versionFromReleaseFile(home)?.let { Jdk(it, home) } ?: jdkFromJavaExecutable(home)
+    }
 
     private fun versionFromReleaseFile(javaHome: Path): Int? {
         val release = javaHome.resolve("release")
@@ -83,17 +87,32 @@ object JdkDetector {
         return parseMajorVersion(line.removePrefix("JAVA_VERSION=").trim('"'))
     }
 
-    private fun versionFromJavaExecutable(javaHome: Path): Int? {
+    private fun jdkFromJavaExecutable(javaHome: Path): Jdk? {
         val exe = javaHome.resolve("bin").resolve(if (isWindows()) "java.exe" else "java")
         if (!Files.isExecutable(exe)) return null
+        val log = Files.createTempFile("jmix-java-", ".log")
+        var process: Process? = null
         return try {
-            val process = ProcessBuilder(exe.toString(), "-version")
-                .redirectErrorStream(true).start()
-            val output = process.inputStream.bufferedReader().readText()
-            process.waitFor(10, TimeUnit.SECONDS)
-            Regex("version \"([^\"]+)\"").find(output)?.let { parseMajorVersion(it.groupValues[1]) }
+            process = ProcessBuilder(exe.toString(), "-XshowSettings:properties", "-version")
+                .redirectErrorStream(true).redirectOutput(log.toFile()).start()
+            if (!process.waitFor(10, TimeUnit.SECONDS) || process.exitValue() != 0) return null
+            val output = Files.readString(log)
+            val version = Regex("version \"([^\"]+)\"").find(output)
+                ?.let { parseMajorVersion(it.groupValues[1]) } ?: return null
+            // A launcher such as macOS /usr/bin/java is not itself a JDK home.
+            val reportedHome = Regex("(?m)^\\s*java\\.home\\s*=\\s*(.+)$").find(output)
+                ?.groupValues?.get(1)?.trim() ?: return null
+            val home = Path.of(reportedHome).toRealPath()
+            // Java 8 reports the nested JRE, while JAVA_HOME should point at the JDK.
+            val jdkHome = if (home.fileName.toString() == "jre" && Files.isRegularFile(home.parent.resolve("release"))) {
+                home.parent
+            } else home
+            Jdk(version, jdkHome)
         } catch (e: Exception) {
             null
+        } finally {
+            process?.takeIf { it.isAlive }?.destroyForcibly()?.waitFor(10, TimeUnit.SECONDS)
+            Files.deleteIfExists(log)
         }
     }
 
