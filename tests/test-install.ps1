@@ -26,6 +26,13 @@ try {
     if ($firstOutput -notmatch "Downloading $([regex]::Escape($archive.Name))\.\.\.") {
         throw "Installer did not report the release download."
     }
+    if ($firstOutput -notmatch "Verifying $([regex]::Escape($archive.Name))" -or
+        $firstOutput -notmatch "Extracting $([regex]::Escape($archive.Name))") {
+        throw "Installer did not report verification and extraction."
+    }
+    if ($firstOutput.Contains([string][char]27)) {
+        throw "Redirected installer output contains terminal escape sequences."
+    }
 
     $commandPath = Join-Path $binDir "jmix.cmd"
     if (-not (Test-Path -LiteralPath $commandPath -PathType Leaf)) {

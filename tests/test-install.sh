@@ -37,6 +37,9 @@ run_installer() {
 first_output="$(run_installer "$release_dir")"
 [[ "$first_output" == *"Downloading $archive_name..."* ]]
 [[ "$first_output" == *"Installed Jmix CLI"* ]]
+[[ "$first_output" == *"Verifying $archive_name..."* ]]
+[[ "$first_output" == *"Extracting $archive_name..."* ]]
+[[ "$first_output" != *$'\033'* && "$first_output" != *$'\r'* ]]
 [[ -x "$temp_dir/bin/jmix" ]]
 # Self-update reads these; never let the tests reach the real release feed.
 export JMIX_CLI_NO_AUTO_UPDATE=1
@@ -75,6 +78,12 @@ start_output="$(
 )"
 [[ "$start_output" == *"Starting the Jmix project wizard"* ]]
 [[ "$start_output" == *"Jmix CLI"* ]]
+
+# URL downloads use curl too; redirected output must stay plain and quiet.
+url_output="$(run_installer "file://$release_dir" 2>&1)"
+[[ "$url_output" == *"already up to date"* ]]
+[[ "$url_output" != *$'\033'* && "$url_output" != *$'\r'* ]]
+[[ "$url_output" != *"100.0%"* ]]
 
 tampered_dir="$temp_dir/tampered-release"
 mkdir -p "$tampered_dir"

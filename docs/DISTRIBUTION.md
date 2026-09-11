@@ -27,6 +27,14 @@ The release also includes `install.sh` and `install.ps1`. README downloads the
 installer from the same release as the application archives, keeping the
 bootstrap script and archive layout in sync.
 
+In a terminal, the bootstrap installer highlights download, verification,
+extraction, and wizard startup messages. On macOS/Linux, curl shows its native
+download progress bar (or activity indicator when the size is unknown).
+PowerShell shows native progress for installation phases and web downloads,
+and closes its progress display before starting the wizard and on failure.
+Redirected output and CI use plain status lines; `NO_COLOR` disables colored
+status messages.
+
 The stable asset names allow installers to use GitHub's
 `releases/latest/download` URL while the release tag records the exact version.
 Installations are stored by archive checksum, so installing the same release is

@@ -7,6 +7,21 @@ readonly RELEASE_BASE_URL="${JMIX_CLI_RELEASE_BASE_URL:-$DEFAULT_RELEASE_BASE_UR
 readonly INSTALL_ROOT="${JMIX_CLI_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/jmix-cli}"
 readonly BIN_DIR="${JMIX_CLI_BIN_DIR:-$HOME/.local/bin}"
 
+interactive_output=false
+if [[ -t 1 && -t 2 && "${TERM:-dumb}" != "dumb" && -z "${CI:-}" ]]; then
+    interactive_output=true
+fi
+
+status() {
+    local color="$1"
+    shift
+    if [[ "$interactive_output" == true && -z "${NO_COLOR:-}" ]]; then
+        printf '\033[1;%sm%s\033[0m\n' "$color" "$*"
+    else
+        printf '%s\n' "$*"
+    fi
+}
+
 fail() {
     echo "Jmix CLI installer: $*" >&2
     exit 1
@@ -45,10 +60,14 @@ download_asset() {
     local destination="$2"
     local base="${RELEASE_BASE_URL%/}"
 
-    echo "Downloading $name..."
+    status 36 "Downloading $name..."
     case "$base" in
         http://* | https://* | file://*)
-            curl -fsSL "$base/$name" -o "$destination"
+            local progress_options=(-s)
+            if [[ "$interactive_output" == true ]]; then
+                progress_options=(--progress-bar)
+            fi
+            curl -fSL "${progress_options[@]}" "$base/$name" -o "$destination"
             ;;
         *)
             cp "$base/$name" "$destination"
@@ -61,6 +80,7 @@ checksum_file="$temp_dir/$checksum_name"
 download_asset "$archive_name" "$archive_file"
 download_asset "$checksum_name" "$checksum_file"
 
+status 36 "Verifying $archive_name..."
 expected_checksum="$(awk 'NR == 1 { print tolower($1) }' "$checksum_file")"
 [[ "$expected_checksum" =~ ^[[:xdigit:]]{64}$ ]] || fail "invalid checksum file for $archive_name."
 
@@ -98,6 +118,7 @@ else
     [[ ! -e "$version_dir" ]] || fail "incomplete installation found at $version_dir."
     extract_dir="$temp_dir/extracted"
     mkdir -p "$extract_dir" "$versions_dir"
+    status 36 "Extracting $archive_name..."
     tar -xzf "$archive_file" -C "$extract_dir"
     [[ -x "$extract_dir/$image_name/$launcher_relative" ]] || fail "release archive has an unexpected layout."
     : > "$extract_dir/$image_name/$INSTALL_MARKER"
@@ -136,7 +157,7 @@ mkdir -p "$INSTALL_ROOT"
 printf '%s\n' "$BIN_DIR" > "$INSTALL_ROOT/bin-dir"
 
 if [[ "$installed" == true ]]; then
-    echo "Installed Jmix CLI at $command_path"
+    status 32 "Installed Jmix CLI at $command_path"
 fi
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
@@ -147,7 +168,7 @@ if [[ "${JMIX_CLI_NO_RUN:-0}" == "1" ]]; then
     exit 0
 fi
 
-echo "Starting the Jmix project wizard..."
+status 36 "Starting the Jmix project wizard..."
 cleanup
 trap - EXIT HUP INT TERM
 if { exec 3</dev/tty; } 2>/dev/null; then

@@ -20,6 +20,26 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$interactiveOutput = -not [Console]::IsOutputRedirected -and -not [Console]::IsErrorRedirected -and
+    $env:TERM -ne "dumb" -and -not $env:CI
+
+function Write-InstallStatus {
+    param([string]$Message, [switch]$Progress)
+
+    if ($interactiveOutput -and -not $env:NO_COLOR) {
+        Write-Host $Message -ForegroundColor Cyan
+    } else {
+        Write-Host $Message
+    }
+    if ($interactiveOutput) {
+        if ($Progress) {
+            Write-Progress -Id 1 -Activity "Installing Jmix CLI" -Status $Message
+        } else {
+            Write-Progress -Id 1 -Activity "Installing Jmix CLI" -Completed
+        }
+    }
+}
+
 if ($env:OS -ne "Windows_NT") {
     throw "Jmix CLI installer: install.ps1 supports Windows only."
 }
@@ -46,11 +66,13 @@ function Copy-ReleaseAsset {
         [Parameter(Mandatory = $true)][string]$Destination
     )
 
-    Write-Host "Downloading $Name..."
+    Write-InstallStatus "Downloading $Name..." -Progress
     if (Test-Path -LiteralPath $ReleaseBaseUrl -PathType Container) {
         Copy-Item -LiteralPath (Join-Path $ReleaseBaseUrl $Name) -Destination $Destination
     } else {
         $url = $ReleaseBaseUrl.TrimEnd("/") + "/" + $Name
+        # Keep Invoke-WebRequest's own byte progress quiet in logs as well.
+        if (-not $interactiveOutput) { $ProgressPreference = "SilentlyContinue" }
         Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $Destination
     }
 }
@@ -60,6 +82,7 @@ try {
     Copy-ReleaseAsset -Name $archiveName -Destination $archiveFile
     Copy-ReleaseAsset -Name $checksumName -Destination $checksumFile
 
+    Write-InstallStatus "Verifying $archiveName..." -Progress
     $checksumContent = Get-Content -LiteralPath $checksumFile -Raw
     if ([string]::IsNullOrWhiteSpace($checksumContent)) {
         throw "Jmix CLI installer: invalid checksum file for $archiveName."
@@ -89,6 +112,7 @@ try {
         $extractDir = Join-Path $tempDir "extracted"
         New-Item -ItemType Directory -Path $extractDir | Out-Null
         New-Item -ItemType Directory -Force -Path $versionsDir | Out-Null
+        Write-InstallStatus "Extracting $archiveName..." -Progress
         Expand-Archive -LiteralPath $archiveFile -DestinationPath $extractDir
         $imageDir = Join-Path $extractDir "jmix"
         if (-not (Test-Path -LiteralPath (Join-Path $imageDir "jmix.exe") -PathType Leaf)) {
@@ -124,7 +148,7 @@ try {
     Set-Content -LiteralPath (Join-Path $InstallRoot "bin-dir") -Value $BinDir -Encoding UTF8
 
     if ($installed) {
-        Write-Host "Installed Jmix CLI at $commandPath"
+        Write-InstallStatus "Installed Jmix CLI at $commandPath"
     }
 
     if (-not $SkipPathUpdate -and $env:JMIX_CLI_SKIP_PATH_UPDATE -ne "1") {
@@ -140,6 +164,9 @@ try {
         $env:Path = "$BinDir;$env:Path"
     }
 } finally {
+    if ($interactiveOutput) {
+        Write-Progress -Id 1 -Activity "Installing Jmix CLI" -Completed
+    }
     if (Test-Path -LiteralPath $tempDir) {
         Remove-Item -LiteralPath $tempDir -Recurse -Force
     }
@@ -149,5 +176,5 @@ if ($NoRun -or $env:JMIX_CLI_NO_RUN -eq "1") {
     return
 }
 
-Write-Host "Starting the Jmix project wizard..."
+Write-InstallStatus "Starting the Jmix project wizard..."
 & $launcher @CliArguments
