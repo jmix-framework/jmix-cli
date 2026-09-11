@@ -18,7 +18,6 @@ import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption
 import java.util.concurrent.TimeUnit
 import java.util.jar.JarFile
 import javax.xml.XMLConstants
@@ -66,10 +65,20 @@ object AddonInstaller {
             }
         }
         if (additions.isEmpty()) return
-        val block = additions.entries.joinToString("\n", "\n// Selected Jmix add-ons\ndependencies {\n", "\n}\n") { (coordinates, value) ->
-            "    ${value.first} '$coordinates:${value.second}'"
+        val declarations = additions.entries.joinToString("\n", "// Selected Jmix add-ons\n") { (coordinates, value) ->
+            "${value.first} '$coordinates:${value.second}'"
         }
-        Files.writeString(buildFile, block, StandardOpenOption.APPEND)
+        prependDependencies(buildFile, declarations)
+    }
+
+    private fun prependDependencies(buildFile: Path, declarations: String) {
+        val text = Files.readString(buildFile)
+        val block = Regex("(?m)^dependencies[ \\t]*\\{").find(text)
+            ?: throw IOException("Cannot find the generated project's top-level dependencies block in $buildFile.")
+        val offset = block.range.last + 1
+        val newline = if ("\r\n" in text) "\r\n" else "\n"
+        val insertion = newline + declarations.prependIndent("    ").replace("\n", newline) + newline
+        Files.writeString(buildFile, text.replaceRange(offset, offset, insertion))
     }
 
     private fun resolveArtifacts(projectDir: Path, moduleDir: Path, javaHome: Path): List<Artifact> {
@@ -205,8 +214,8 @@ object AddonInstaller {
             ?: throw IOException("Cannot identify the generated add-on's test configuration for Jmix Security.")
         val starter = "io.jmix.security:jmix-security-starter"
         if (starter !in AddonProjectProfile.dependencyCoordinates(Files.readString(buildFile))) {
-            Files.writeString(buildFile, "\n// Security bootstrap for generated add-on tests\ndependencies {\n" +
-                "    testImplementation '$starter'\n}\n", StandardOpenOption.APPEND)
+            prependDependencies(buildFile, "// Security bootstrap for generated add-on tests\n" +
+                "testImplementation '$starter'")
         }
         if (files.any { Files.readString(it).contains("UserRepository") }) return
         val text = Files.readString(config)

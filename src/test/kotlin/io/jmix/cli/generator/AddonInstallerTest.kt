@@ -15,6 +15,8 @@ import java.util.jar.JarOutputStream
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class AddonInstallerTest {
     @TempDir lateinit var tempDir: Path
@@ -66,15 +68,37 @@ class AddonInstallerTest {
         assertThrows(IOException::class.java) { AddonInstaller.sortModules(listOf(first, second.copy(dependsOn = listOf("A")))) }
     }
 
-    @Test
-    fun `dependencies retain template entries and do not duplicate selections`() {
+    @ParameterizedTest
+    @ValueSource(strings = ["\n", "\r\n"])
+    fun `dependencies start the main block and do not duplicate selections`(newline: String) {
         val build = tempDir.resolve("build.gradle")
-        Files.writeString(build, "dependencies { implementation 'demo:existing' }\n")
+        val buildscript = """
+            buildscript {
+                dependencies { classpath 'demo:plugin' }
+            }
+
+        """.trimIndent().replace("\n", newline)
+        Files.writeString(build, buildscript + "dependencies {${newline}    implementation 'demo:existing'${newline}}$newline")
         AddonInstaller.appendDependencies(info(), build)
         AddonInstaller.appendDependencies(info(), build)
         val text = Files.readString(build)
+        assertTrue(text.startsWith(buildscript))
+        assertTrue(text.contains("dependencies {$newline    // Selected Jmix add-ons$newline    implementation 'demo:sample-starter:3.0.1'"))
+        assertEquals(1, Regex("(?m)^dependencies").findAll(text).count())
         assertTrue(text.contains("demo:existing"))
+        assertTrue(text.indexOf("demo:sample-starter") < text.indexOf("demo:existing"))
         assertEquals(1, Regex("demo:sample-starter:3.0.1").findAll(text).count())
+        if (newline == "\r\n") assertFalse(text.replace(newline, "").contains('\n'))
+    }
+
+    @Test
+    fun `missing main dependencies block leaves the build file unchanged`() {
+        val build = tempDir.resolve("build.gradle")
+        val text = "buildscript {\n    dependencies { classpath 'demo:plugin' }\n}\n"
+        Files.writeString(build, text)
+
+        assertThrows(IOException::class.java) { AddonInstaller.appendDependencies(info(), build) }
+        assertEquals(text, Files.readString(build))
     }
 
     @Test
@@ -178,6 +202,7 @@ class AddonInstallerTest {
             assertFalse(Files.readString(build).contains("security-starter"))
             repeat(2) { AddonInstaller.configureTestSecurity(build, listOf(security)) }
             assertEquals(1, Regex("testImplementation 'io.jmix.security:jmix-security-starter'").findAll(Files.readString(build)).count())
+            assertEquals(1, Regex("(?m)^dependencies").findAll(Files.readString(build)).count())
             assertEquals(if (repository.isEmpty()) 1 else 0,
                 Regex("addonTestUserRepository").findAll(Files.readString(config)).count())
             if (extension == "kt") assertTrue(Files.readString(config).contains("open fun addonTestUserRepository"))

@@ -41,6 +41,9 @@ and does not fetch the catalog or resolve add-on dependencies.
 Additional add-ons require a compatible development JDK before generation.
 The installer adds dependencies without duplicating template entries, resolves
 artifacts with the generated Gradle wrapper, and reads module metadata from JARs.
+Selected dependencies go at the start of the module's existing `dependencies`
+block under `// Selected Jmix add-ons`. Test security prerequisites use the same
+block; installation does not append additional `dependencies` blocks.
 It configures Liquibase includes and, for add-on templates, module dependencies
 and test security. Configuration completes before Git staging.
 
