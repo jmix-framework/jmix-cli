@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Compose real CLI checkpoints into a short, smoothly looping README demo.
-# Requires ffmpeg and gifsicle. Run after docs/demo.tape.
+# Requires ffmpeg. Run after docs/demo.tape.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 capture_dir="$PWD/build/demo"
 # Keep the CLI's own progress bar, align search and keyboard hints, and focus
-# the final panels on the selected location and the successful generation.
+# the final panels on the selected location and the successful generation
+# (created line, next steps, and the equivalent non-interactive command).
 # ponytail: crops assume the tape's 1000x560 layout; update them if its font or size changes.
 ffmpeg -y -v error \
     -loop 1 -framerate 25 -t 2.0 -i "$capture_dir/welcome.png" \
@@ -38,8 +39,8 @@ ffmpeg -y -v error \
         [lc][lh]overlay=0:0:shortest=1[ld];
         [ld][lf]overlay=0:496:shortest=1,format=yuv444p,settb=AVTB[s7];
         [7:v]split=2[successHeader][successBody];
-        [successHeader]crop=1000:44:0:106,pad=1000:64:0:20:color=0x1e1f29[sh];
-        [successBody]crop=1000:140:0:240,pad=1000:560:0:64:color=0x1e1f29[sc];
+        [successHeader]crop=1000:44:0:140,pad=1000:64:0:20:color=0x1e1f29[sh];
+        [successBody]crop=1000:184:0:186,pad=1000:560:0:64:color=0x1e1f29[sc];
         [sc][sh]overlay=0:0:shortest=1,format=yuv444p,settb=AVTB[s8];
         [s1][s2]xfade=transition=fade:duration=0.4:offset=1.6[x1];
         [x1][s3]xfade=transition=fade:duration=0.4:offset=4.2[x2];
@@ -53,6 +54,4 @@ ffmpeg -y -v error \
             split[frames][colors];
         [colors]palettegen=stats_mode=full[palette];
         [frames][palette]paletteuse=dither=none:diff_mode=rectangle
-    " -t 13.28 -loop 0 "$capture_dir/demo.gif"
-
-gifsicle -O3 "$capture_dir/demo.gif" -o docs/demo.gif
+    " -t 13.28 -loop 0 docs/demo.gif

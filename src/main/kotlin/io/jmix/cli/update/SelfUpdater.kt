@@ -1,5 +1,8 @@
 package io.jmix.cli.update
 
+import io.jmix.cli.util.contentLength
+import io.jmix.cli.util.copyWithProgress
+import io.jmix.cli.util.hostOf
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketException
@@ -59,6 +62,9 @@ class SelfUpdater(
     private val requestTimeout: Duration = EXPLICIT_REQUEST_TIMEOUT,
     private val autoUpdateEnabled: Boolean = autoUpdateAllowed(),
     private val echo: (String) -> Unit = ::println,
+    /** Names each install phase for a progress indicator; download bytes go to [onProgress]. */
+    private val onStatus: (String) -> Unit = {},
+    private val onProgress: (Long, Long) -> Unit = { _, _ -> },
 ) {
     private val binDir: Path = binDir.toAbsolutePath().normalize()
 
@@ -279,15 +285,17 @@ class SelfUpdater(
     }
 
     private fun installVersion(checksum: String) {
-        echo("Downloading the latest Jmix CLI release...")
+        onStatus("Downloading ${installation.archiveName} from ${hostOf(assetUrl(installation.archiveName))}")
         Files.createDirectories(installation.installRoot)
         // Temp dir inside the install root so the final move stays on one filesystem.
         val tempDir = Files.createTempDirectory(installation.installRoot, TEMP_PREFIX)
         try {
             val archive = tempDir.resolve(installation.archiveName)
             fetchTo(installation.archiveName, archive)
+            onStatus("Verifying the checksum of ${installation.archiveName}")
             verifyChecksum(archive, checksum)
             val extractDir = Files.createDirectory(tempDir.resolve("extracted"))
+            onStatus("Extracting the new Jmix CLI version")
             extract(archive, extractDir)
             val image = extractDir.resolve(installation.imageName)
             val launcher = image.resolve(installation.launcherRelativePath)
@@ -452,7 +460,8 @@ class SelfUpdater(
 
     private fun fetchTo(name: String, destination: Path) {
         if (!isHttpBase()) {
-            Files.copy(localAsset(name), destination, StandardCopyOption.REPLACE_EXISTING)
+            val source = localAsset(name)
+            copyWithProgress(Files.newInputStream(source), destination, Files.size(source), onProgress)
             return
         }
         val response = http.send(request(name), HttpResponse.BodyHandlers.ofInputStream())
@@ -460,7 +469,7 @@ class SelfUpdater(
             response.body().close()
             throw IOException("HTTP ${response.statusCode()} from ${assetUrl(name)}")
         }
-        response.body().use { Files.copy(it, destination, StandardCopyOption.REPLACE_EXISTING) }
+        copyWithProgress(response.body(), destination, response.contentLength(), onProgress)
     }
 
     private fun request(name: String): HttpRequest {
@@ -548,6 +557,7 @@ class SelfUpdater(
                 installation,
                 requestTimeout = AUTO_REQUEST_TIMEOUT,
                 echo = { System.err.println(it) },
+                onStatus = { System.err.println("$it...") },
             )
             // Local bookkeeping runs even when the release check is skipped:
             // marking this version in use is what keeps cleanup from pruning a

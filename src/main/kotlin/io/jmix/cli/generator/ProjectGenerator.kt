@@ -15,9 +15,12 @@ import java.util.concurrent.TimeUnit
  */
 class ProjectGenerator(
     private val onWarning: (String) -> Unit = { System.err.println("Warning: $it") },
+    /** Names each phase before it starts, for a progress indicator. */
+    private val onStatus: (String) -> Unit = {},
 ) {
 
     fun generate(templateRoot: Path, info: ProjectCreationInfo) {
+        onStatus("Rendering the project files")
         val binding = Bindings.createBinding(info)
 
         evaluateGlobals(templateRoot, binding)
@@ -41,10 +44,12 @@ class ProjectGenerator(
             val profile = AddonProjectProfile.from(templateRoot)
                 ?: throw IOException("The template has no module for add-on installation.")
             val buildFile = info.targetDir.resolve(TemplateEngine.render(profile.buildFile, binding))
+            onStatus("Resolving add-on dependencies with the Gradle wrapper (this can take a few minutes)")
             AddonInstaller.install(info, buildFile)
         }
 
         if (info.createGitRepository) {
+            onStatus("Initializing the Git repository")
             initGitRepository(info.projectDir)
         }
     }

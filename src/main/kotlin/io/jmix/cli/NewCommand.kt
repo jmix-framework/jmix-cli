@@ -34,10 +34,12 @@ import io.jmix.cli.template.TemplateCatalog
 import io.jmix.cli.template.TemplateParams
 import io.jmix.cli.update.SelfUpdater
 import io.jmix.cli.util.PlatformVersions
+import io.jmix.cli.util.hostOf
 import io.jmix.cli.wizard.Answer
 import io.jmix.cli.wizard.Banner
 import io.jmix.cli.wizard.PathCompleter
 import io.jmix.cli.wizard.Prompts
+import io.jmix.cli.wizard.StatusReporter
 import io.jmix.cli.wizard.Validation
 import io.jmix.cli.wizard.WizardChoice
 import io.jmix.cli.wizard.WizardStage
@@ -53,6 +55,46 @@ internal fun projectLocationOptions(projectName: String, currentDir: Path, homeD
         "Subdirectory" to currentDir.resolve(projectName).normalize(),
         "IdeaProjects" to homeDir.resolve("IdeaProjects").resolve(projectName).normalize(),
     )
+
+/**
+ * The `jmix new` command line that recreates [info] without prompting, run from
+ * [currentDir]. Options equal to the non-interactive defaults are left out; the
+ * Jmix version is always pinned because "latest" moves.
+ */
+internal fun nonInteractiveCommand(
+    info: ProjectCreationInfo,
+    templateId: String,
+    installToolkit: Boolean,
+    currentDir: Path,
+    os: String = System.getProperty("os.name"),
+): String {
+    val templateProjectId = info.templateMetadata.param(TemplateParams.PROJECT_ID)?.defaultValue ?: ""
+    val addonIds = info.addons.filterNot { it.included }.map { it.id }
+    val repositoryUrl = info.repositories.firstOrNull()?.url
+    val args = buildList {
+        add("jmix"); add("new"); add(info.name); add("--non-interactive")
+        add("--jmix-version"); add(info.jmixVersion)
+        add("--template"); add(templateId)
+        add("--package"); add(info.rootPackage)
+        if (info.projectId.isNotEmpty()) { add("--project-id"); add(info.projectId) }
+        else if (templateProjectId.isNotEmpty()) add("--project-id=")
+        if (info.projectTheme.isNotEmpty()) { add("--theme"); add(info.projectTheme) }
+        add("--locales"); add(info.locales.joinToString(",") { it.code })
+        if (addonIds.isNotEmpty()) { add("--addons"); add(addonIds.joinToString(",")) }
+        if (info.targetDir != currentDir.resolve(info.name).normalize()) { add("--path"); add(info.targetDir.toString()) }
+        if (repositoryUrl != null && repositoryUrl != ProjectCreationInfo.DEFAULT_REPOSITORY_URL) {
+            add("--repository"); add(repositoryUrl)
+        }
+        if (!info.createGitRepository) add("--no-git")
+        if (!installToolkit) add("--no-agents-toolkit")
+    }
+    return args.joinToString(" ") { shellQuote(it, os) }
+}
+
+/** Quotes native command arguments for PowerShell on Windows and POSIX shells elsewhere. */
+internal fun shellQuote(arg: String, os: String = System.getProperty("os.name")): String =
+    if (arg.isNotEmpty() && arg.all { it.isLetterOrDigit() || it in "-_./:@%+=," }) arg
+    else "'" + arg.replace("'", if (os.startsWith("Windows", ignoreCase = true)) "''" else "'\\''") + "'"
 
 class NewCommand : CliktCommand(name = "new") {
 
@@ -70,6 +112,9 @@ class NewCommand : CliktCommand(name = "new") {
     private val pathOpt by option("--path", help = "Target directory (default: ./<name>)")
     private val repositoryOpt by option("--repository", help = "Maven repository URL (default: ${ProjectCreationInfo.DEFAULT_REPOSITORY_URL})")
     private val noGit by option("--no-git", help = "Skip git repository initialization").flag()
+    private val noAgentsToolkit by option(
+        "--no-agents-toolkit", help = "Skip installing the Jmix Agent Toolkit (guidelines and skills for AI coding agents)",
+    ).flag()
     private val includeUnstable by option("--include-unstable", help = "Offer unstable (RC/snapshot) Jmix versions").flag()
     private val force by option("--force", help = "Generate into a non-empty directory without asking").flag()
     private val nonInteractive by option("--non-interactive", help = "Never prompt; use flags and defaults").flag()
@@ -93,6 +138,7 @@ class NewCommand : CliktCommand(name = "new") {
         val autoSelectedTranslationIds: Set<String> = emptySet(),
         val targetDir: Path? = null,
         val createGit: Boolean? = null,
+        val installToolkit: Boolean? = null,
     ) {
         fun toUiState(activeStepIndex: Int, stage: WizardStage? = null): WizardUiState {
             val choices = listOf(
@@ -106,13 +152,16 @@ class NewCommand : CliktCommand(name = "new") {
                 localeCodes?.let { WizardChoice("Locales", it) },
                 addons?.let { selected -> WizardChoice("Add-ons", selected.joinToString(", ") { it.addon.name }.ifEmpty { "(none)" }) },
                 targetDir?.let { WizardChoice("Location", it.toString()) },
-                createGit?.let { WizardChoice("Git repository", if (it) "yes" else "no") },
+                if (createGit != null && installToolkit != null) {
+                    WizardChoice(SETUP_LABEL, setupSummary(createGit, installToolkit))
+                } else null,
             )
             return WizardUiState(choices.take(activeStepIndex).filterNotNull(), stage)
         }
     }
 
     private val terminal = Terminal()
+    private val status = StatusReporter(terminal)
     private var state = WizardState()
     private var activeStepIndex = 0
     private var wizardStage: WizardStage? = null
@@ -185,17 +234,21 @@ class NewCommand : CliktCommand(name = "new") {
 
         wizardStage = WizardStage.GENERATION.takeIf { interactive }
         prompts.printProgress()
-        terminal.println(gray("Generating project..."))
+        val templateRoot = catalogFor(info.jmixVersion).templateRoot(state.template!!.id)
         try {
-            ProjectGenerator { terminal.println(brightYellow("Warning: $it")) }
-                .generate(catalogFor(info.jmixVersion).templateRoot(state.template!!.id), info)
+            status.run("Generating the project") { progress ->
+                ProjectGenerator(
+                    onWarning = { progress.println(brightYellow("Warning: $it")) },
+                    onStatus = progress::relabel,
+                ).generate(templateRoot, info)
+            }
         } catch (e: RuntimeException) {
             // Groovy rendering errors (e.g. a missing binding) are template
             // bugs — fail with a message, not a stack trace.
             throw CliktError("Project generation failed: ${e.message ?: e.toString()}")
         }
 
-        installAgentToolkit(info)
+        if (state.installToolkit == true) installAgentToolkit(info)
         printSuccess(info)
         wizardStage = null
         offerOpenAndRun(info)
@@ -217,7 +270,7 @@ class NewCommand : CliktCommand(name = "new") {
             WizardStage.LOCALIZATION to ::stepLocales,
             WizardStage.ADDONS to ::stepAddons,
             WizardStage.LOCATION to ::stepPath,
-            WizardStage.LOCATION to ::stepGit,
+            WizardStage.LOCATION to ::stepSetup,
         )
         val prompted = BooleanArray(steps.size)
         var i = 0
@@ -248,8 +301,9 @@ class NewCommand : CliktCommand(name = "new") {
     private fun catalogFor(version: String): TemplateCatalog {
         if (catalogVersion != version) {
             catalog?.close()
-            terminal.println(gray("Loading templates $version..."))
-            catalog = TemplateCatalog(repo.templatesJar(version))
+            catalog = status.run("Loading templates $version from ${hostOf(repositoryUrl)}") { progress ->
+                TemplateCatalog(repo.templatesJar(version, progress::progress))
+            }
             catalogVersion = version
         }
         return catalog!!
@@ -368,10 +422,9 @@ class NewCommand : CliktCommand(name = "new") {
 
     private var versionsCache: List<String>? = null
 
-    private fun fetchVersionsOnce(): List<String> = versionsCache ?: run {
-        terminal.println(gray("Fetching available Jmix versions..."))
-        repo.fetchVersions(includeUnstable).also { versionsCache = it }
-    }
+    private fun fetchVersionsOnce(): List<String> = versionsCache
+        ?: status.run("Fetching Jmix versions from ${hostOf(repositoryUrl)}") { repo.fetchVersions(includeUnstable) }
+            .also { versionsCache = it }
 
     private fun stepTemplate(): Outcome {
         val templates = catalogFor(state.jmixVersion!!).projectTemplates()
@@ -569,7 +622,9 @@ class NewCommand : CliktCommand(name = "new") {
         }
         while (addonCatalog == null) {
             try {
-                addonCatalog = AddonRepository().catalog()
+                addonCatalog = status.run("Loading the add-on catalog from ${hostOf(AddonRepository.DEFAULT_CATALOG_URL)}") {
+                    AddonRepository().catalog()
+                }
             } catch (e: java.io.IOException) {
                 if (explicitIds != null) throw e
                 when (val answer = prompts.choose(
@@ -681,34 +736,59 @@ class NewCommand : CliktCommand(name = "new") {
         return Path.of(expanded).toAbsolutePath().normalize()
     }
 
-    private fun stepGit(): Outcome {
-        if (noGit) {
-            state = state.copy(createGit = false)
-            return Outcome.AUTO
-        }
-        if (!EnvironmentCheck.isGitAvailable()) {
+    /** Optional setup after generation, offered as one checklist; both are on by default. */
+    private enum class SetupOption(val title: String, val description: String) {
+        GIT("Initialize Git repository", "git init and stage the generated files"),
+        TOOLKIT("Install Jmix Agent Toolkit", "guidelines and skills for AI coding agents"),
+    }
+
+    private fun stepSetup(): Outcome {
+        val gitAvailable = !noGit && EnvironmentCheck.isGitAvailable()
+        if (!noGit && !gitAvailable) {
             terminal.println(brightYellow("git is not available — skipping repository initialization."))
-            state = state.copy(createGit = false)
+        }
+        // Decided by flags or the environment; null means the wizard asks.
+        val git: Boolean? = if (gitAvailable) null else false
+        val toolkit: Boolean? = if (noAgentsToolkit) false else null
+        if (!interactive || (git != null && toolkit != null)) {
+            state = state.copy(createGit = git ?: true, installToolkit = toolkit ?: true)
             return Outcome.AUTO
         }
-        if (!interactive) {
-            state = state.copy(createGit = true)
-            return Outcome.AUTO
-        }
-        return when (val answer = prompts.askYesNo("Create Git repository?", state.createGit ?: true, allowBack = true)) {
-            is Answer.Back -> Outcome.BACK
-            is Answer.Value -> {
-                state = state.copy(createGit = answer.value)
-                summary("Git repository", if (answer.value) "yes" else "no")
-                Outcome.PROMPTED
+
+        val offered = listOfNotNull(SetupOption.GIT.takeIf { git == null }, SetupOption.TOOLKIT.takeIf { toolkit == null })
+        val previous = mapOf(SetupOption.GIT to state.createGit, SetupOption.TOOLKIT to state.installToolkit)
+        fun default(option: SetupOption) = previous[option] ?: true
+        val entries = offered.map { SelectList.Entry(it.title, it.description, default(it)) }
+        val picked: Set<SetupOption> = when (val answer = prompts.chooseMany(
+            "Select project setup", entries, allowBack = true, values = offered.map { it.name },
+        )) {
+            // No arrow-key widget: one yes/no question per option instead.
+            null -> offered.filterTo(linkedSetOf()) { option ->
+                when (val yesNo = prompts.askYesNo("${option.title}?", default(option), allowBack = true)) {
+                    is Answer.Back -> return Outcome.BACK
+                    is Answer.Value -> {
+                        state = when (option) {
+                            SetupOption.GIT -> state.copy(createGit = yesNo.value)
+                            SetupOption.TOOLKIT -> state.copy(installToolkit = yesNo.value)
+                        }
+                        yesNo.value
+                    }
+                }
             }
+            is Answer.Back -> return Outcome.BACK
+            is Answer.Value -> answer.value.map(SetupOption::valueOf).toSet()
         }
+        val createGit = git ?: (SetupOption.GIT in picked)
+        val installToolkit = toolkit ?: (SetupOption.TOOLKIT in picked)
+        state = state.copy(createGit = createGit, installToolkit = installToolkit)
+        summary(SETUP_LABEL, setupSummary(createGit, installToolkit))
+        return Outcome.PROMPTED
     }
 
     // --- Post-wizard checks and output ----------------------------------------
 
     private fun checkJdkEnvironment(jmixVersion: String) {
-        val check = EnvironmentCheck.checkJdk(jmixVersion)
+        val check = status.run("Detecting installed JDKs") { EnvironmentCheck.checkJdk(jmixVersion) }
         if (check.compatible.isNotEmpty()) {
             val jdk = check.compatible.first()
             terminal.println(gray("Found compatible JDK ${jdk.majorVersion} at ${jdk.home}"))
@@ -759,6 +839,10 @@ class NewCommand : CliktCommand(name = "new") {
         } else {
             terminal.println("  2. Read README.md for instructions on adding subprojects.")
         }
+        terminal.println()
+        terminal.println(bold("CLI command:"))
+        val currentDir = Path.of("").toAbsolutePath().normalize()
+        terminal.println("  " + cyan(nonInteractiveCommand(info, state.template!!.id, state.installToolkit!!, currentDir)))
         terminal.println()
         terminal.println(bold("Useful links:"))
         val labelWidth = USEFUL_LINKS.maxOf { it.label.length }
@@ -850,9 +934,10 @@ class NewCommand : CliktCommand(name = "new") {
      * fail the already-generated project — warn and move on.
      */
     private fun installAgentToolkit(info: ProjectCreationInfo) {
-        terminal.println(gray("Installing the Jmix Agent Toolkit (guidelines and skills for AI coding agents)..."))
         try {
-            AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion)
+            status.run("Installing the Jmix Agent Toolkit") { progress ->
+                AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion, progress::relabel)
+            }
             summary(
                 "Agent Toolkit",
                 "guidelines for ${AgentToolkitInstaller.ALL_AGENTS.joinToString(", ")}; " +
@@ -882,25 +967,15 @@ class NewCommand : CliktCommand(name = "new") {
 
     private fun installJdk(info: ProjectCreationInfo): Path? {
         val major = jdkVersionToInstall(info)
-        terminal.println(gray("Downloading JDK $major (Temurin)..."))
         return try {
-            var lastPercent = -1
-            val home = JdkInstaller.install(major) { done, total ->
-                if (total > 0) {
-                    val percent = (done * 100 / total).toInt()
-                    if (percent != lastPercent) {
-                        lastPercent = percent
-                        terminal.rawPrint("\r  $percent% of ${total / MEGABYTE} MB")
-                    }
-                }
+            val home = status.run("Installing JDK $major (Temurin)") { progress ->
+                JdkInstaller.install(major, onStatus = progress::relabel, onProgress = progress::progress)
             }
-            terminal.println()
             terminal.println(brightGreen("✓ ") + "Installed JDK $major at " + cyan(home.toString()))
             home
         } catch (e: Exception) {
             // Also covers JSON parse errors from an unexpected API response —
             // never a stack trace after the project was already generated.
-            terminal.println()
             terminal.println(brightYellow("Warning: JDK installation failed: ${e.message}"))
             terminal.println(brightYellow(EnvironmentCheck.installHint(setOf(major))))
             null
@@ -926,7 +1001,11 @@ class NewCommand : CliktCommand(name = "new") {
         const val MINOR_VERSIONS_SHOWN = 4
         const val LOCALE_OPTIONS_SHOWN = 6
         const val OTHER_CHOICE = "Other..."
-        const val MEGABYTE = 1024L * 1024
+        const val SETUP_LABEL = "Setup"
+
+        fun setupSummary(createGit: Boolean, installToolkit: Boolean): String =
+            listOfNotNull("Git repository".takeIf { createGit }, "Agent Toolkit".takeIf { installToolkit })
+                .joinToString(", ").ifEmpty { "(none)" }
 
         // Studio's RepoConfigurationItem offers the same two Jmix repositories.
         const val BACKUP_REPOSITORY_URL = "https://nexus.jmix.io/repository/public"
@@ -940,9 +1019,9 @@ class NewCommand : CliktCommand(name = "new") {
         )
 
         val COMMON_LOCALES = listOf(
-            "en" to "English", "de" to "German", "fr" to "French", "es" to "Spanish",
-            "it" to "Italian", "pt" to "Portuguese", "nl" to "Dutch", "pl" to "Polish",
-            "cs" to "Czech", "tr" to "Turkish", "uk" to "Ukrainian", "ru" to "Russian",
+            "en" to "English", "ru" to "Russian", "de" to "German", "fr" to "French",
+            "es" to "Spanish", "it" to "Italian", "pt" to "Portuguese", "nl" to "Dutch",
+            "pl" to "Polish", "cs" to "Czech", "tr" to "Turkish", "uk" to "Ukrainian",
             "ar" to "Arabic", "zh" to "Chinese", "ja" to "Japanese", "ko" to "Korean",
         )
     }

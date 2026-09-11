@@ -40,7 +40,7 @@ enum class WizardStage(val title: String) {
     GENERAL("General"),
     LOCALIZATION("Localization"),
     ADDONS("Add-ons"),
-    LOCATION("Location and Git"),
+    LOCATION("Location and setup"),
     GENERATION("Finishing up"),
 }
 
@@ -221,7 +221,7 @@ class Prompts(
         val heading = title.padEnd((columns - count.length).coerceAtLeast(0)) + gray(count.take(columns))
         if (maxRows == 1) return listOf(heading)
         val filled = (columns * (stage.ordinal + 1) / WizardStage.entries.size).coerceAtLeast(1)
-        return listOf(heading, TextColors.rgb("#6C5CE7")("━".repeat(filled)) + gray("─".repeat(columns - filled)))
+        return listOf(heading, ACCENT("━".repeat(filled)) + gray("─".repeat(columns - filled)))
     }
 
     /**
@@ -1117,7 +1117,6 @@ class Prompts(
         const val WINDOWS_POLL_TIMEOUT_MESSAGE = "Timeout reading from console input"
         const val ENTER_ALTERNATE_SCREEN = "\u001B[?1049h"
         const val EXIT_ALTERNATE_SCREEN = "\u001B[?1049l"
-        val ANSI_SEQUENCE = Regex("\u001B\\[[0-?]*[ -/]*[@-~]")
         val RESIZE_POLL_INTERVAL = 100.milliseconds
     }
 }

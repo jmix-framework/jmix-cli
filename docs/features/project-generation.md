@@ -23,8 +23,19 @@ complete option reference.
   requires interactive confirmation or `--force`; a file cannot be a target directory.
 - Install selected [add-ons](add-ons.md) before optional `git init` and
   `git add --all`. Generation does not create a commit. `--no-git` skips Git setup.
-- Install the [Agent Toolkit](environment-and-toolkit.md) after generation.
+- Install the [Agent Toolkit](environment-and-toolkit.md) after generation unless
+  `--no-agents-toolkit` is passed or the wizard's setup entry is unchecked.
   Its failure produces a warning and does not discard the project.
+- Report download progress through the callbacks in
+  [Downloads.kt](../../src/main/kotlin/io/jmix/cli/util/Downloads.kt): the
+  template jar reports bytes against Content-Length, generation reports its
+  phases (rendering, add-on resolution, Git).
+- Finish by printing the equivalent `jmix new <name> --non-interactive ...`
+  command under `CLI command:` (`nonInteractiveCommand`): the Jmix version is
+  pinned, defaults such as
+  `./<name>` and the public repository are omitted. Arguments are quoted for
+  PowerShell on Windows and POSIX shells on macOS/Linux, including paths with
+  spaces or apostrophes.
 
 ## Code
 

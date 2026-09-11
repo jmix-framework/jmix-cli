@@ -39,7 +39,7 @@ class PromptsTest {
             .map { ANSI_SEQUENCE.replace(it, "").lineSequence().first().trim() }
         assertEquals(listOf("1/5", "4/5", "3/5"), headings.map { it.takeLast(3) })
         assertTrue(headings[0].startsWith("General"))
-        assertTrue(headings[1].startsWith("Location and Git"))
+        assertTrue(headings[1].startsWith("Location and setup"))
         assertTrue(headings[2].startsWith("Add-ons"))
         assertEquals(1, recorder.output().occurrencesOf(ENTER_ALTERNATE_SCREEN))
     }
@@ -97,7 +97,7 @@ class PromptsTest {
 
         val plain = ANSI_SEQUENCE.replace(recorder.output(), "")
         assertEquals(
-            listOf("Step 1/5: General", "Step 3/5: Add-ons", "Step 4/5: Location and Git", "Step 1/5: General"),
+            listOf("Step 1/5: General", "Step 3/5: Add-ons", "Step 4/5: Location and setup", "Step 1/5: General"),
             Regex("Step [1-5]/5: [^\\r\\n]+").findAll(plain).map { it.value }.toList(),
         )
         assertFalse(plain.contains('━'))

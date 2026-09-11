@@ -5,7 +5,8 @@
 # On Linux: export PATH="$PWD/build/jpackage/image/jmix/bin:$PATH"
 # Set JAVA_HOME to a development JDK compatible with the demo's Jmix version.
 # Capture: mkdir -p build/demo
-#          JMIX_DEMO_DIR=$(mktemp -d) vhs docs/demo.tape
+#          JMIX_DEMO_DIR=$(mktemp -d /tmp/jmix-demo.XXXXXX) vhs docs/demo.tape
+#          (a short directory keeps the "created at" line on one row)
 # Render: bash docs/render-demo.sh
 #
 # Stable checkpoints from one complete wizard, including its real progress bar.
@@ -51,7 +52,9 @@ Sleep 300ms
 Screenshot build/demo/project-info.png
 Sleep 3s
 Enter
+# Russian is listed second; German is the third entry.
 Wait+Screen /Select locales/
+Down
 Down
 Space
 Sleep 300ms
@@ -83,6 +86,9 @@ Down
 Sleep 300ms
 Screenshot build/demo/location.png
 Sleep 2s
+Enter
+# Setup checklist: keep the Agent Toolkit checked.
+Wait+Screen /Select project setup/
 Enter
 Hide
 Wait+Screen@5m /What's next/

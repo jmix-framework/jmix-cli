@@ -10,6 +10,8 @@ Source builds do not self-update. `jmix update` requests an immediate update.
   non-empty `CI` environment variable.
 - Failed automatic checks report the problem and continue with the current
   version. Diagnostics go to stderr so piped stdout remains usable.
+- `jmix update` shows a progress indicator naming the release host with byte
+  counts while downloading; the startup check prints its phases as plain stderr lines.
 - Verify archive checksums and extraction paths, serialize updates, and switch
   the launcher only to a complete installation. Preserve arguments and terminal
   input when restarting into an updated image.

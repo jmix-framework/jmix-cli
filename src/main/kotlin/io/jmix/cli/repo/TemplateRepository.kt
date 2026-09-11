@@ -2,6 +2,8 @@ package io.jmix.cli.repo
 
 import io.jmix.cli.util.JmixVersionComparator
 import io.jmix.cli.util.PlatformVersions
+import io.jmix.cli.util.contentLength
+import io.jmix.cli.util.copyWithProgress
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
@@ -66,9 +68,10 @@ class TemplateRepository(
     /**
      * Path to the templates jar for [version], downloading into the cache if
      * absent or corrupt. Snapshot versions are re-fetched on every run (falling
-     * back to the cache offline) so they never go stale.
+     * back to the cache offline) so they never go stale. A download reports
+     * [onProgress] as (bytes so far, total or -1); a cache hit reports nothing.
      */
-    fun templatesJar(version: String): Path {
+    fun templatesJar(version: String, onProgress: (Long, Long) -> Unit = { _, _ -> }): Path {
         val jar = repoCacheDir.resolve("$TEMPLATES_ARTIFACT_ID-$version.jar")
         val cached = Files.exists(jar) && isZip(jar)
         if (Files.exists(jar) && !cached) Files.deleteIfExists(jar)
@@ -81,12 +84,12 @@ class TemplateRepository(
         if (cached) {
             // Snapshot: prefer a fresh remote copy, keep the cache as offline fallback.
             return try {
-                downloadJar(version, jar)
+                downloadJar(version, jar, onProgress)
             } catch (e: Exception) {
                 jar
             }
         }
-        return downloadJar(version, jar)
+        return downloadJar(version, jar, onProgress)
     }
 
     /** True when the repository host answers; used by the environment check. */
@@ -103,7 +106,7 @@ class TemplateRepository(
         false
     }
 
-    private fun downloadJar(version: String, jar: Path): Path {
+    private fun downloadJar(version: String, jar: Path, onProgress: (Long, Long) -> Unit): Path {
         Files.createDirectories(repoCacheDir)
         val url = "$artifactBaseUrl/$version/$TEMPLATES_ARTIFACT_ID-$version.jar"
         val response = http.send(
@@ -116,7 +119,7 @@ class TemplateRepository(
         }
         val tmp = Files.createTempFile(repoCacheDir, "download", ".tmp")
         try {
-            response.body().use { Files.copy(it, tmp, StandardCopyOption.REPLACE_EXISTING) }
+            copyWithProgress(response.body(), tmp, response.contentLength(), onProgress)
             if (!isZip(tmp)) {
                 // Captive portal / proxy error page served as 200 — never cache it.
                 throw IOException("Downloaded templates file is not a valid jar ($url)")

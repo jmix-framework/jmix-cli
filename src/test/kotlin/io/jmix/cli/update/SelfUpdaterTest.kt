@@ -56,6 +56,31 @@ class SelfUpdaterTest {
     }
 
     @Test
+    fun `update names its phases and reports download bytes`() {
+        val releaseDir = tempDir.resolve("release")
+        prepareRelease(releaseDir, "new-launcher")
+        val root = tempDir.resolve("install")
+        val binDir = tempDir.resolve("bin")
+        linkCommand(binDir, installVersion(root, oldChecksum))
+        val installation = installation(root, oldChecksum)
+        val phases = mutableListOf<String>()
+        val progress = mutableListOf<Pair<Long, Long>>()
+
+        SelfUpdater(
+            installation, releaseDir.toString(), binDir, echo = {},
+            onStatus = phases::add, onProgress = { done, total -> progress += done to total },
+        ).update()
+
+        val size = Files.size(releaseDir.resolve(installation.archiveName))
+        assertEquals(size to size, progress.last())
+        assertTrue(phases.first().startsWith("Downloading ${installation.archiveName} from "), phases.toString())
+        assertEquals(
+            listOf("Verifying the checksum of ${installation.archiveName}", "Extracting the new Jmix CLI version"),
+            phases.drop(1),
+        )
+    }
+
+    @Test
     fun `update is a no-op when already on the latest release`() {
         val releaseDir = tempDir.resolve("release")
         val checksum = prepareRelease(releaseDir, "launcher")

@@ -16,9 +16,13 @@ version. Do not report the private bundled runtime as an installed development J
   Offer the detected IDE and application run as separate choices. The file
   manager is the fallback when the IDE is not selected or cannot open the project.
   Non-interactive generation does not offer these actions.
-- Install Jmix Agent Toolkit from the branch matching the Jmix major version.
+- Install Jmix Agent Toolkit from the branch matching the Jmix major version
+  unless the user opts out (`--no-agents-toolkit` or the wizard's setup checklist).
   Guidelines target Claude, Codex, OpenCode, and Junie; project-local skills
   target Claude, Codex, and OpenCode. Junie receives no skills.
+- JDK and toolkit installation report their phases (lookup, download with byte
+  counts, checksum, unpacking; installer download, skills, guidelines) through
+  `onStatus`/`onProgress` callbacks so the CLI can show a progress indicator.
 - Toolkit setup runs its downloaded installer with fixed argument lists. Keep
   setup local to the generated project; global MCP/browser configuration belongs
   to the toolkit's own wizard. Report installer failures as warnings with a retry link.

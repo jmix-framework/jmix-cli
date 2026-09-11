@@ -5,10 +5,12 @@ import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.mordant.terminal.Terminal
 import io.jmix.cli.update.CacheCleaner
 import io.jmix.cli.update.CliInstallation
 import io.jmix.cli.update.SelfUpdater
 import io.jmix.cli.update.UpdateResult
+import io.jmix.cli.wizard.StatusReporter
 
 class UpdateCommand : CliktCommand(name = "update") {
 
@@ -25,9 +27,16 @@ class UpdateCommand : CliktCommand(name = "update") {
                 "This Jmix CLI does not run from an installed release; nothing to update. " +
                     "Use the install command from the README instead.",
             )
-        val updater = SelfUpdater(installation, echo = { echo(it) })
+        val status = StatusReporter(Terminal())
         val result = try {
-            updater.update()
+            status.run("Checking for Jmix CLI updates") { progress ->
+                SelfUpdater(
+                    installation,
+                    echo = { progress.println(it) },
+                    onStatus = progress::relabel,
+                    onProgress = progress::progress,
+                ).update()
+            }
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             throw CliktError("Update was interrupted.")
@@ -44,7 +53,7 @@ class UpdateCommand : CliktCommand(name = "update") {
                     "Re-run the install command from the README to update.",
             )
         }
-        runCatching { updater.cleanupOldVersions() }
+        runCatching { SelfUpdater(installation, echo = { echo(it) }).cleanupOldVersions() }
         runCatching { CacheCleaner.pruneTemplateCache() }
     }
 }

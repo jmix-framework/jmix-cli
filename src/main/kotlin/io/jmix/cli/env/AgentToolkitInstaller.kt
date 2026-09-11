@@ -1,5 +1,6 @@
 package io.jmix.cli.env
 
+import io.jmix.cli.util.hostOf
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
@@ -59,13 +60,20 @@ object AgentToolkitInstaller {
             listOf("bash", scriptFile.toString()) + args
         }
 
-    /** Installs guidelines files and project-local skills into [projectDir]. */
-    fun installGuidelinesAndSkills(projectDir: Path, jmixVersion: String) {
+    /**
+     * Installs guidelines files and project-local skills into [projectDir].
+     * [onStatus] names each phase before it starts, for a progress indicator.
+     */
+    fun installGuidelinesAndSkills(projectDir: Path, jmixVersion: String, onStatus: (String) -> Unit = {}) {
         val suffix = if (isWindows()) ".ps1" else ".sh"
         val script = Files.createTempFile("jmix-agent-toolkit", suffix)
         try {
-            download(installerUrl(jmixVersion), script)
+            val url = installerUrl(jmixVersion)
+            onStatus("Downloading the Agent Toolkit installer from ${hostOf(url)}")
+            download(url, script)
+            onStatus("Installing Agent Toolkit skills for $SKILL_AGENTS_CSV")
             runStep(projectDir, command(script, skillsArgs()), "skills")
+            onStatus("Installing Agent Toolkit guidelines for $AGENTS_CSV")
             runStep(projectDir, command(script, guidelinesArgs()), "guidelines")
         } finally {
             Files.deleteIfExists(script)

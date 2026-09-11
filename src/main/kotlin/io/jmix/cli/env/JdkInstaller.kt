@@ -2,6 +2,8 @@ package io.jmix.cli.env
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import io.jmix.cli.util.copyWithProgress
+import io.jmix.cli.util.hostOf
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
@@ -26,13 +28,15 @@ object JdkInstaller {
     /**
      * Installs the latest GA Temurin JDK for [majorVersion] and returns its
      * home. A JDK already present in [jdksDir] is reused without downloading.
-     * [onProgress] receives (downloadedBytes, totalBytes).
+     * [onStatus] names each phase; [onProgress] receives (downloadedBytes, totalBytes).
      */
     fun install(
         majorVersion: Int,
         jdksDir: Path = defaultJdksDir(),
+        onStatus: (String) -> Unit = {},
         onProgress: (Long, Long) -> Unit = { _, _ -> },
     ): Path {
+        onStatus("Looking up JDK $majorVersion (Temurin) at ${hostOf(ADOPTIUM_API)}")
         val asset = resolveAsset(majorVersion)
         val targetDir = jdksDir.resolve(asset.releaseName)
         validJdkHome(targetDir, majorVersion)?.let { return it }
@@ -43,8 +47,11 @@ object JdkInstaller {
         try {
             archive = Files.createTempFile(jdksDir, "jdk-download", ".tmp")
             unpackDir = Files.createTempDirectory(jdksDir, "jdk-unpack")
+            onStatus("Downloading ${asset.pkg.name} from ${hostOf(asset.pkg.link)}")
             download(asset, archive, onProgress)
+            onStatus("Verifying the checksum of ${asset.pkg.name}")
             verifyChecksum(archive, asset)
+            onStatus("Unpacking ${asset.pkg.name}")
             unpack(archive, unpackDir, asset.pkg.name)
 
             // Archives contain a single root directory such as jdk-25.0.3+9.
@@ -155,20 +162,7 @@ object JdkInstaller {
         if (response.statusCode() != 200) {
             throw IOException("Failed to download JDK (${asset.pkg.link}): HTTP ${response.statusCode()}")
         }
-        val total = asset.pkg.size
-        var done = 0L
-        response.body().use { input ->
-            Files.newOutputStream(target).use { output ->
-                val buffer = ByteArray(DOWNLOAD_BUFFER_SIZE)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    output.write(buffer, 0, read)
-                    done += read
-                    onProgress(done, total)
-                }
-            }
-        }
+        copyWithProgress(response.body(), target, asset.pkg.size, onProgress)
     }
 
     private fun verifyChecksum(archive: Path, asset: AdoptiumAsset) {

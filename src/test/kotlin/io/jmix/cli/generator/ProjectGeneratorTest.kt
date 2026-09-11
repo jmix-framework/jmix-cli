@@ -51,6 +51,7 @@ class ProjectGeneratorTest {
     private fun generate(
         locales: List<JmixLocale> = listOf(JmixLocale("en", "English", true)),
         createGitRepository: Boolean = false,
+        onStatus: (String) -> Unit = {},
     ): Path {
         val target = tempDir.resolve("out")
         val info = ProjectCreationInfo(
@@ -63,8 +64,20 @@ class ProjectGeneratorTest {
             templateMetadata = TemplateMetadata(),
             createGitRepository = createGitRepository,
         )
-        ProjectGenerator(onWarning = {}).generate(buildFixtureTemplate(), info)
+        ProjectGenerator(onWarning = {}, onStatus = onStatus).generate(buildFixtureTemplate(), info)
         return target
+    }
+
+    @Test
+    fun `generation names its phases before each starts`() {
+        val phases = mutableListOf<String>()
+        generate(onStatus = phases::add)
+        assertEquals(listOf("Rendering the project files"), phases)
+
+        Assumptions.assumeTrue(EnvironmentCheck.isGitAvailable())
+        phases.clear()
+        generate(createGitRepository = true, onStatus = phases::add)
+        assertEquals(listOf("Rendering the project files", "Initializing the Git repository"), phases)
     }
 
     @Test

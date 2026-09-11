@@ -1,10 +1,13 @@
 package io.jmix.cli.repo
 
+import com.sun.net.httpserver.HttpServer
 import java.io.IOException
+import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -34,6 +37,37 @@ class TemplateRepositoryTest {
         // Filters: below 1.0 dropped, future (3.5) dropped, RC dropped by default.
         assertEquals(listOf("2.8.3", "3.0.0", "3.0.1"), repo.fetchVersions())
         assertEquals(listOf("2.8.3", "3.0.0-RC1", "3.0.0", "3.0.1"), repo.fetchVersions(includeUnstable = true))
+    }
+
+    @Test
+    fun `template jar download reports byte progress and is cached`() {
+        val body = ByteArray(200_000) { it.toByte() }.also { it[0] = 0x50; it[1] = 0x4B; it[2] = 3; it[3] = 4 }
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var requests = 0
+        server.createContext("/repo") { exchange ->
+            requests++
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val repo = TemplateRepository("http://127.0.0.1:${server.address.port}/repo", cacheDir)
+            val reported = mutableListOf<Pair<Long, Long>>()
+
+            val jar = repo.templatesJar("3.0.1") { done, total -> reported += done to total }
+
+            assertEquals(body.size.toLong(), Files.size(jar))
+            assertEquals(body.size.toLong() to body.size.toLong(), reported.last())
+            assertTrue(reported.all { it.second == body.size.toLong() }, reported.toString())
+            assertTrue(reported.zipWithNext().all { (a, b) -> a.first < b.first }, "progress must grow: $reported")
+
+            reported.clear()
+            assertEquals(jar, repo.templatesJar("3.0.1") { done, total -> reported += done to total })
+            assertEquals(1, requests, "a cached jar is not downloaded again")
+            assertTrue(reported.isEmpty(), "a cache hit reports no progress")
+        } finally {
+            server.stop(0)
+        }
     }
 
     @Test

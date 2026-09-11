@@ -1,16 +1,23 @@
 # Wizard
 
 The wizard collects project name, repository, Jmix version, template, package,
-project ID, theme, locales, add-ons, location, and Git preference. Flags and
+project ID, theme, locales, add-ons, location, and a setup checklist (Git
+repository and Agent Toolkit, both checked by default). Flags and
 template metadata can resolve or hide steps. Back navigation returns to the
 previous prompted step and preserves answers that remain valid.
 
 ## Interaction
 
 - A title, stage count, and progress bar track five phases: General,
-  Localization, Add-ons, Location and Git, and Finishing up. The indicator follows back
+  Localization, Add-ons, Location and setup, and Finishing up. The indicator follows back
   navigation and skips questions resolved by flags or template defaults.
   It tracks wizard phases, not download percentages or elapsed time.
+- Downloads and other slow steps (version list, template jar, add-on catalog,
+  generation, Agent Toolkit, JDK) run behind a one-line `StatusReporter`
+  indicator: a spinner, a label naming the host or phase, and a bar with byte
+  counts when the size is known. Narrow terminals omit the bar and shorten the
+  label to keep actual progress visible. Interactive terminals redraw the line in place
+  and remove it when the step ends; piped output prints one plain line per phase.
 - Raw terminals use one alternate screen with a welcome logo, prior choices,
   the current prompt, and keyboard hints. Layout adapts to terminal size.
 - Short terminals reduce progress to a title or hide it to preserve the prompt,
@@ -26,8 +33,12 @@ previous prompted step and preserves answers that remain valid.
 - Without raw terminal support, use numbered lists and line input. Searchable
   lists accept `/query`, comma-separated toggle numbers, Enter to confirm,
   `<` to go back, and `q` to quit. Preserve locked and hidden selections.
-- Locale choices default to English and allow custom codes. Matching translation
-  add-ons are suggested in the next step and remain optional.
+- Locale choices default to English, list Russian second, and allow custom codes.
+  Matching translation add-ons are suggested in the next step and remain optional.
+- The setup checklist offers Git initialization and the Agent Toolkit together.
+  `--no-git` and `--no-agents-toolkit` remove an entry; when both are decided the
+  step is skipped. Without raw mode each entry becomes a yes/no question;
+  completed answers are preserved when navigating back.
 - Location choices include a project subdirectory, the current directory,
   `~/IdeaProjects/<name>`, and a custom path with completion.
 
@@ -35,6 +46,7 @@ previous prompted step and preserves answers that remain valid.
 
 - [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/NewCommand.kt) — step state and transitions.
 - [Prompts.kt](../../src/main/kotlin/io/jmix/cli/wizard/Prompts.kt) — rendering, input, and fallbacks.
+- [StatusReporter.kt](../../src/main/kotlin/io/jmix/cli/wizard/StatusReporter.kt) — activity indicator for slow steps.
 - [wizard](../../src/main/kotlin/io/jmix/cli/wizard) — banner, validation, and path completion.
 
 ## Verification and demo
@@ -53,6 +65,6 @@ demo represents the wizard's setup steps. Keep pauses long enough to read;
 keep search and keyboard hints in place.
 
 Capture and rendering commands are in the tape header. Rendering requires
-FFmpeg and gifsicle. Validate with
+FFmpeg. Validate with
 `vhs validate docs/demo.tape` and `bash -n docs/render-demo.sh`, then inspect
 the animation at the README's displayed width.
