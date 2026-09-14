@@ -53,10 +53,14 @@ Non-interactive mode creates `./<name>` and installs no additional add-ons unles
 Git initialization, and `--no-agents-toolkit` to skip the Agent Toolkit.
 On Windows, run `gradlew.bat bootRun`.
 
-Commercial selections such as `--addons business-calendars` automatically add the
-premium Jmix repository. Configure `premiumRepoUser` and `premiumRepoPass` in
-`~/.gradle/gradle.properties`, or set `ORG_GRADLE_PROJECT_premiumRepoUser` and
-`ORG_GRADLE_PROJECT_premiumRepoPass` in the environment before generation.
+Commercial add-ons, marked with `[$]` in the wizard, require a
+[Jmix subscription](https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription).
+Selecting one, such as `--addons business-calendars`, automatically adds the premium
+Jmix repository. Before generation, configure `~/.gradle/gradle.properties`: use
+the part of your license key before the dash for `premiumRepoUser`, and the part
+after the dash for `premiumRepoPass`. For scripts and CI, these values can also be
+supplied through the `ORG_GRADLE_PROJECT_premiumRepoUser` and
+`ORG_GRADLE_PROJECT_premiumRepoPass` environment variables.
 See [commercial add-on setup and troubleshooting](docs/features/add-ons.md#commercial-add-ons).
 
 Every run ends by printing the `jmix new ... --non-interactive` command that
