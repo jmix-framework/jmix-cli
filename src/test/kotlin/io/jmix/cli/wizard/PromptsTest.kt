@@ -1,6 +1,7 @@
 package io.jmix.cli.wizard
 
 import io.jmix.cli.addonEntry
+import io.jmix.cli.addonSelectionLegend
 import io.jmix.cli.addonSelectionQuestion
 import io.jmix.cli.addon.AddonCatalog
 import io.jmix.cli.addon.AddonCatalogTest
@@ -461,7 +462,7 @@ class PromptsTest {
     }
 
     @Test
-    fun `commercial entries show prefix dollar badges and a legend in every terminal mode`() {
+    fun `commercial entries show prefix dollar badges and a secondary legend below the title in every terminal mode`() {
         val addons = AddonCatalog.parse(AddonCatalogTest.CATALOG_JSON)
             .select(listOf("sample", "paid"), "3.0.1", AddonProjectProfile("build.gradle", emptySet()))
         val entries = addons.map { addonEntry(it) }
@@ -473,13 +474,21 @@ class PromptsTest {
                 recorder.inputEvents += listOf(KeyboardEvent("ArrowDown"), KeyboardEvent(" "), KeyboardEvent("Enter"))
                 val selected = Prompts(Terminal(ansiLevel = ansiLevel, terminalInterface = recorder),
                     wizardUiState = { WizardUiState(listOf(WizardChoice("Add-ons", entries.last().title))) }).chooseMany(
-                    addonSelectionQuestion(addons), entries, filterTexts = entries.map { it.title }, values = addons.map { it.id },
+                    addonSelectionQuestion(), entries, filterTexts = entries.map { it.title }, values = addons.map { it.id },
+                    legend = addonSelectionLegend(addons),
                 )!!.requireValue()
                 assertEquals(listOf("paid"), selected)
                 val styledOutput = recorder.output()
                 val output = ANSI_SEQUENCE.replace(styledOutput, "")
                 assertTrue(output.contains("[$] Paid"), output)
-                assertTrue(output.contains("Select add-ons ([$] paid add-on)"), output)
+                val lines = output.lines()
+                val titleRow = lines.indexOfFirst { it.startsWith("Select add-ons") }
+                assertTrue(titleRow >= 0, output)
+                assertEquals("[$] - commercial add-on", lines[titleRow + 1].trim())
+                if (!ansiCursor) assertTrue(lines[titleRow].trimEnd().endsWith("0 selected"), output)
+                if (interactive) {
+                    assertTrue(Regex("\u001b\\[90(?:;\\d+)*m - commercial add-on").containsMatchIn(styledOutput), styledOutput)
+                }
                 assertTrue(output.contains("Requires a commercial license. Commercial workflow support."), output)
                 if (interactive && !ansiCursor) {
                     val selectedLine = styledOutput.lineSequence().lastOrNull { it.contains("[x]") }
@@ -672,7 +681,7 @@ class PromptsTest {
 
     @Test
     fun `grouped picker renders descriptions below names and keeps the focused entry on short screens`() {
-        for (height in listOf(1, 4, 8, 12, 30)) {
+        for (height in listOf(1, 4, 7, 8, 12, 30)) {
             val recorder = TerminalRecorder(width = 80, height = height, supportsAnsiCursor = false)
             recorder.inputEvents += List(5) { KeyboardEvent("ArrowDown") } + listOf(KeyboardEvent(" "), KeyboardEvent("Enter"))
             val entries = (1..6).map { SelectList.Entry("Add-on $it", "Description for $it") }
@@ -680,6 +689,7 @@ class PromptsTest {
                 "Select add-ons", entries, allowBack = true, maxVisibleEntries = 10,
                 filterTexts = entries.map { it.title }, lockedIndices = setOf(0),
                 groups = listOf("Included in template", "Add-ons", "Add-ons", "Add-ons", "Translations", "Translations"),
+                legend = "[$] - commercial add-on",
             )!!.requireValue()
 
             assertEquals(listOf("Add-on 1", "Add-on 6"), selected)
@@ -687,7 +697,8 @@ class PromptsTest {
                 .substringBefore(EXIT_ALTERNATE_SCREEN), "")
             assertTrue(frame.contains("❯ [x] Add-on 6"), "Cursor should be visible at height $height: $frame")
             assertTrue(frame.lines().size <= height, "Frame must fit height $height: $frame")
-            if (height >= 8) {
+            assertEquals(height >= 8, frame.contains("[$] - commercial add-on"), frame)
+            if (height >= 7) {
                 assertTrue(frame.contains("Translations"))
                 val lines = frame.lines()
                 val nameRow = lines.indexOfFirst { "Add-on 6" in it }
@@ -695,7 +706,8 @@ class PromptsTest {
                 assertTrue(frame.contains("enter"))
                 assertTrue(lines.first().startsWith("Select add-ons"))
                 assertTrue(lines.first().trimEnd().endsWith("2 selected"), frame)
-                assertEquals("Search: / to search", lines[1].trim())
+                if (height >= 8) assertEquals("[$] - commercial add-on", lines[1].trim())
+                assertEquals("Search: / to search", lines[if (height >= 8) 2 else 1].trim())
             }
         }
     }

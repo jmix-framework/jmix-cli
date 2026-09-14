@@ -118,7 +118,8 @@ class ProjectGeneratorTest {
         assertFalse(Files.exists(target.resolve(".git")))
         assertFalse(phases.contains("Initializing the Git repository"))
         val build = Files.readString(target.resolve("build.gradle"))
-        assertTrue(build.contains("// Commercial Jmix add-ons require a license"))
+        assertTrue(build.contains("// Commercial Jmix add-ons require a subscription, see " +
+            "https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription"))
         assertTrue(build.contains("url = 'https://global.repo.jmix.io/repository/premium'"))
         assertTrue(build.contains("username = rootProject['premiumRepoUser']"))
         assertTrue(build.contains("implementation 'demo:paid-starter'"))

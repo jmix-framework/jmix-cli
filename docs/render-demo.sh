@@ -26,8 +26,8 @@ ffmpeg -y -v error \
         [catalog]format=yuv444p,settb=AVTB[s4];
         [header]crop=1000:64:0:0,split=2[h1][h2];
         [footer]crop=1000:64:0:496,split=2[f1][f2];
-        [4:v]crop=1000:112:0:384,pad=1000:560:0:64:color=0x1e1f29[filtered];
-        [5:v]crop=1000:112:0:384,pad=1000:560:0:64:color=0x1e1f29[selected];
+        [4:v]crop=1000:134:0:362,pad=1000:560:0:64:color=0x1e1f29[filtered];
+        [5:v]crop=1000:134:0:362,pad=1000:560:0:64:color=0x1e1f29[selected];
         [filtered][h1]overlay=0:0:shortest=1[a];
         [a][f1]overlay=0:496:shortest=1,format=yuv444p,settb=AVTB[s5];
         [selected][h2]overlay=0:0:shortest=1[b];

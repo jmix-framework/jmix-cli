@@ -114,6 +114,7 @@ internal data class SelectionUiState(
     val editingFilter: Boolean = false,
     val filterBeforeEdit: String = "",
     val values: List<String> = entries.map { it.title },
+    val legend: String? = null,
 ) {
     init {
         require(entries.isNotEmpty()) { "Selection list must contain at least one entry" }
@@ -408,6 +409,7 @@ class Prompts(
         lockedIndices: Set<Int> = emptySet(),
         groups: List<String>? = null,
         values: List<String> = entries.map { it.title },
+        legend: String? = null,
     ): Answer<List<String>>? = when (val result = runSelect(
         question = question,
         entries = entries,
@@ -418,13 +420,14 @@ class Prompts(
         lockedIndices = lockedIndices,
         groups = groups,
         values = values,
+        legend = legend,
     )) {
         is SelectResult.Picked -> Answer.Value(result.values)
         SelectResult.Back -> Answer.Back
         SelectResult.Unsupported -> if (filterTexts == null) {
             null
         } else {
-            runSearchableChooseManyFallback(question, entries, allowBack, maxVisibleEntries, filterTexts, lockedIndices, groups, values)
+            runSearchableChooseManyFallback(question, entries, allowBack, maxVisibleEntries, filterTexts, lockedIndices, groups, values, legend)
         }
     }
 
@@ -437,6 +440,7 @@ class Prompts(
         lockedIndices: Set<Int>,
         groups: List<String>?,
         values: List<String>,
+        legend: String?,
     ): Answer<List<String>> {
         var state = SelectionUiState(
             question = question,
@@ -448,11 +452,13 @@ class Prompts(
             lockedIndices = lockedIndices,
             groups = groups,
             values = values,
+            legend = legend,
         )
         if (isInputExhausted) return Answer.Value(state.pickedValues())
 
         while (true) {
             terminal.println(questionStyle(question) + selectionCount(state))
+            state.legend?.let(terminal::println)
             terminal.println(filterStatus(state))
             val visible = state.visibleIndices
             printNumberedEntries(state)
@@ -528,6 +534,7 @@ class Prompts(
         lockedIndices: Set<Int> = emptySet(),
         groups: List<String>? = null,
         values: List<String> = entries.map { it.title },
+        legend: String? = null,
     ): SelectResult {
         val rawMode = terminal.enterRawModeOrNull() ?: run {
             printProgress(compact = true)
@@ -543,6 +550,7 @@ class Prompts(
             lockedIndices = lockedIndices,
             groups = groups,
             values = values,
+            legend = legend,
         )
 
         // Mordant detects the IntelliJ Run console as interactive, but its
@@ -683,10 +691,13 @@ class Prompts(
         val navigationRows = navigation?.count { it == '\n' }?.plus(1) ?: 0
         val statusRows = if (state.filterTexts != null && terminalHeight >= 2) 1 else 0
         val showTitle = terminalHeight - navigationRows - statusRows >= 2
-        val fixedSelectionRows = navigationRows + statusRows + if (showTitle) 1 else 0
         // Keep the focused entry usable before spending rows on progress or history.
         val minimumEntryRows = 1 + (if (state.groups != null) 1 else 0) +
             (if (state.entries.any { it.description != null }) 1 else 0)
+        val legend = state.legend?.takeIf {
+            showTitle && terminalHeight - navigationRows - statusRows - 1 > minimumEntryRows
+        }
+        val fixedSelectionRows = navigationRows + statusRows + (if (showTitle) 1 else 0) + (if (legend != null) 1 else 0)
         val progress = progressLines(uiState.stage, terminalWidth, terminalHeight - fixedSelectionRows - minimumEntryRows)
         val entryRowBudget = (terminalHeight - fixedSelectionRows - progress.size).coerceAtLeast(1)
         val showGroups = state.groups != null && entryRowBudget >= 2
@@ -727,6 +738,7 @@ class Prompts(
             choices.forEach { add(renderChoice(it)) }
             if (choices.isNotEmpty()) add("")
             if (showTitle) add(questionStyle(state.question) + position + selectionCount(state))
+            legend?.let(::add)
             if (statusRows > 0) add(filterStatus(positionedState))
             if (window == null) {
                 add(gray("  No matches."))
@@ -808,6 +820,7 @@ class Prompts(
         val clearLine = " ".repeat(lineWidth)
 
         terminal.println(questionStyle(state.question))
+        state.legend?.let(terminal::println)
         val showCatalog = state.groups != null || state.entries.any { it.description != null }
         if (showCatalog) printNumberedEntries(state)
         terminal.println(renderBar(selectBarParts(state)))

@@ -62,11 +62,13 @@ private val PAID_ADDON_BADGE = brightMagenta(bold("[$]"))
 private fun addonTitle(addon: ResolvedAddon): String =
     if (addon.addon.commercial) "$PAID_ADDON_BADGE ${addon.addon.name}" else addon.addon.name
 
-internal fun addonSelectionQuestion(addons: List<ResolvedAddon>, unavailable: Set<String> = emptySet()): String {
+internal fun addonSelectionQuestion(unavailable: Set<String> = emptySet()): String {
     val compatibility = if (unavailable.isEmpty()) "" else " (no longer compatible: ${unavailable.joinToString(", ")})"
-    val legend = if (addons.any { it.addon.commercial }) gray(" (") + PAID_ADDON_BADGE + gray(" paid add-on)") else ""
-    return "Select add-ons$compatibility$legend"
+    return "Select add-ons$compatibility"
 }
+
+internal fun addonSelectionLegend(addons: List<ResolvedAddon>): String? =
+    if (addons.any { it.addon.commercial }) PAID_ADDON_BADGE + gray(" - commercial add-on") else null
 
 internal fun addonEntry(addon: ResolvedAddon, selected: Boolean = false): SelectList.Entry {
     val description = addon.addon.about.ifBlank { addon.addon.description }
@@ -676,7 +678,7 @@ class NewCommand : CliktCommand(name = "new") {
         val automatic = (state.autoSelectedTranslationIds intersect suggestedTranslations) + newSuggestions
         val selected = previous - (state.autoSelectedTranslationIds - suggestedTranslations) + newSuggestions
         val unavailable = previous - compatible.map { it.id }.toSet()
-        val question = addonSelectionQuestion(available, unavailable)
+        val question = addonSelectionQuestion(unavailable)
         val entries = available.map { addonEntry(it, it.id in selected) }
         return when (val answer = prompts.chooseMany(
             question, entries, allowBack = true, maxVisibleEntries = 10,
@@ -685,6 +687,7 @@ class NewCommand : CliktCommand(name = "new") {
             },
             groups = available.map { it.addon.group.title },
             values = available.map { it.id },
+            legend = addonSelectionLegend(available),
         )) {
             is Answer.Back -> Outcome.BACK
             is Answer.Value -> {

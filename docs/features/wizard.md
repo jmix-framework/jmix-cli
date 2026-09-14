@@ -62,8 +62,8 @@ add-on panel, and blends transitions and the loop boundary. This excludes transi
 terminal redraws while retaining the actual choices and generation result.
 Show the filled project info between the welcome and add-on selection so the
 demo represents the wizard's setup steps. Keep pauses long enough to read;
-keep search and keyboard hints in place. Show the purple `[$]` badges and paid
-add-on legend in the catalog checkpoint.
+keep search and keyboard hints in place. Show the purple `[$]` badges and the
+secondary `[$] - commercial add-on` legend below the picker heading in the catalog checkpoint.
 
 Capture and rendering commands are in the tape header. Rendering requires
 FFmpeg. Validate with

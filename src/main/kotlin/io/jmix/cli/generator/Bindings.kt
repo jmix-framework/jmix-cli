@@ -23,7 +23,7 @@ object Bindings {
     /** Marker URL for the local Maven repository (rendered as `mavenLocal()`). */
     const val MAVEN_LOCAL_URL = "mavenLocal"
 
-    internal const val PREMIUM_REPOSITORY_DOCS = "https://docs.jmix.io/jmix/studio/subscription.html"
+    internal const val PREMIUM_REPOSITORY_DOCS = "https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription"
     private val PREMIUM_REPOSITORIES = mapOf(
         ProjectCreationInfo.DEFAULT_REPOSITORY_URL to "https://global.repo.jmix.io/repository/premium",
         "https://nexus.jmix.io/repository/public" to "https://nexus.jmix.io/repository/premium",
@@ -113,10 +113,10 @@ object Bindings {
 
     private fun renderRepository(repo: Repository, indent: String): String {
         if (isPremiumRepository(repo.url)) {
-            return "    // Commercial Jmix add-ons require a license and premium repository credentials.\n" +
-                "${indent}// Set premiumRepoUser/premiumRepoPass in ~/.gradle/gradle.properties, or use\n" +
-                "${indent}// ORG_GRADLE_PROJECT_premiumRepoUser / ORG_GRADLE_PROJECT_premiumRepoPass.\n" +
-                "${indent}// See $PREMIUM_REPOSITORY_DOCS\n" +
+            return "    // Commercial Jmix add-ons require a subscription, see $PREMIUM_REPOSITORY_DOCS\n" +
+                "${indent}// Set the repository credentials in ~/.gradle/gradle.properties:\n" +
+                "${indent}// assign the first part of your license key before dash to premiumRepoUser property,\n" +
+                "${indent}// the part after dash to premiumRepoPass property.\n" +
                 "${indent}maven {\n" +
                 "${indent}    url = '${repo.url}'\n" +
                 "${indent}    credentials {\n" +

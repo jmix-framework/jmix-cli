@@ -26,7 +26,9 @@ and does not fetch the catalog or resolve add-on dependencies.
   without ID suffixes, with descriptions below. Commercial entries show a bold
   purple `[$]` badge before the name and a license-required note; the wizard
   summary uses the same prefix. When commercial entries are available, the
-  picker heading includes the `[$] paid add-on` legend, also in plain consoles.
+  picker shows `[$] - commercial add-on` on a separate line below its heading,
+  with secondary gray text and the purple badge, also in plain consoles.
+  Very short terminals hide the legend to keep the focused entry and controls visible.
   Search matches words across
   IDs, names, descriptions, groups, tags, and vendors;
   filtering does not discard selections.
@@ -96,8 +98,9 @@ known premium repository is reused. Free-only selections add no premium reposito
 Both Java and Kotlin application and add-on templates are supported.
 
 The generated `build.gradle` reads `rootProject['premiumRepoUser']` and
-`rootProject['premiumRepoPass']`. A nearby comment explains credential setup and
-links to [Jmix Account and Subscription](https://docs.jmix.io/jmix/studio/subscription.html).
+`rootProject['premiumRepoPass']`. A nearby comment explains how to split the license
+key between these properties in `~/.gradle/gradle.properties` and links to the
+[enterprise subscription](https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription).
 Access requires a license covering the selected add-ons; the CLI does not check
 subscriptions or activate licenses.
 

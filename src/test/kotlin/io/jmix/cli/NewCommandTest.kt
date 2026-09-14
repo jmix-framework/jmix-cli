@@ -76,10 +76,12 @@ class NewCommandTest {
         assertTrue(addonEntry(paid, selected = true).selected)
         assertEquals("quartz", addonEntry(free).title)
         assertEquals(null, addonEntry(free).description)
-        assertEquals("Select add-ons", addonSelectionQuestion(listOf(free)))
-        val question = addonSelectionQuestion(listOf(free, paid), setOf("old-addon"))
-        assertTrue(question.contains("paid add-on"))
-        assertTrue(question.contains("no longer compatible: old-addon"))
+        assertEquals("Select add-ons", addonSelectionQuestion())
+        assertEquals("Select add-ons (no longer compatible: old-addon)", addonSelectionQuestion(setOf("old-addon")))
+        assertEquals(null, addonSelectionLegend(listOf(free)))
+        val legend = addonSelectionLegend(listOf(free, paid))!!
+        assertTrue(legend.contains("[$]"))
+        assertTrue(legend.contains(" - commercial add-on"))
 
         val command = nonInteractiveCommand(info(tempDir, addons = listOf(free, paid, addon("data-tools", included = true))),
             "application", true, tempDir)

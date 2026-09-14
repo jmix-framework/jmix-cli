@@ -113,9 +113,12 @@ class BindingsTest {
                 assertTrue(premium.contains("${indent}maven {\n${indent}    url = '$premiumUrl'"), premium)
                 assertTrue(premium.contains("username = rootProject['premiumRepoUser']"))
                 assertTrue(premium.contains("password = rootProject['premiumRepoPass']"))
-                assertTrue(premium.contains("// Commercial Jmix add-ons require a license"))
-                assertTrue(premium.contains("// See https://docs.jmix.io/jmix/studio/subscription.html"))
-                assertTrue(premium.contains("ORG_GRADLE_PROJECT_premiumRepoUser / ORG_GRADLE_PROJECT_premiumRepoPass"))
+                assertEquals(listOf(
+                    "// Commercial Jmix add-ons require a subscription, see https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription",
+                    "// Set the repository credentials in ~/.gradle/gradle.properties:",
+                    "// assign the first part of your license key before dash to premiumRepoUser property,",
+                    "// the part after dash to premiumRepoPass property.",
+                ), premium.lineSequence().map(String::trim).filter { it.startsWith("//") }.toList())
             }
         }
     }
