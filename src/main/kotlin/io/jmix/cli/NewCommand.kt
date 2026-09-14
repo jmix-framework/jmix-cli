@@ -8,6 +8,7 @@ import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.mordant.rendering.TextColors.brightGreen
+import com.github.ajalt.mordant.rendering.TextColors.brightMagenta
 import com.github.ajalt.mordant.rendering.TextColors.brightYellow
 import com.github.ajalt.mordant.rendering.TextColors.cyan
 import com.github.ajalt.mordant.rendering.TextColors.gray
@@ -55,6 +56,23 @@ internal fun projectLocationOptions(projectName: String, currentDir: Path, homeD
         "Subdirectory" to currentDir.resolve(projectName).normalize(),
         "IdeaProjects" to homeDir.resolve("IdeaProjects").resolve(projectName).normalize(),
     )
+
+private val PAID_ADDON_BADGE = brightMagenta(bold("[$]"))
+
+private fun addonTitle(addon: ResolvedAddon): String =
+    if (addon.addon.commercial) "$PAID_ADDON_BADGE ${addon.addon.name}" else addon.addon.name
+
+internal fun addonSelectionQuestion(addons: List<ResolvedAddon>, unavailable: Set<String> = emptySet()): String {
+    val compatibility = if (unavailable.isEmpty()) "" else " (no longer compatible: ${unavailable.joinToString(", ")})"
+    val legend = if (addons.any { it.addon.commercial }) gray(" (") + PAID_ADDON_BADGE + gray(" paid add-on)") else ""
+    return "Select add-ons$compatibility$legend"
+}
+
+internal fun addonEntry(addon: ResolvedAddon, selected: Boolean = false): SelectList.Entry {
+    val description = addon.addon.about.ifBlank { addon.addon.description }
+    val license = if (addon.addon.commercial) "Requires a commercial license. " else ""
+    return SelectList.Entry(addonTitle(addon), (license + description).trim().takeIf(String::isNotBlank), selected)
+}
 
 /**
  * The `jmix new` command line that recreates [info] without prompting, run from
@@ -108,7 +126,7 @@ class NewCommand : CliktCommand(name = "new") {
     private val projectIdOpt by option("--project-id", help = "Project id — prefix for entity, table and bean names (max 7 chars)")
     private val themeOpt by option("--theme", help = "UI theme (aura or lumo)")
     private val localesOpt by option("--locales", help = "Comma-separated locale codes (default: en)")
-    private val addonsOpt by option("--addons", help = "Comma-separated free add-on IDs (default: none; e.g. quartz,reports)")
+    private val addonsOpt by option("--addons", help = "Comma-separated add-on IDs (default: none; e.g. quartz,bpm). Commercial add-ons require a license and premium repository credentials.")
     private val pathOpt by option("--path", help = "Target directory (default: ./<name>)")
     private val repositoryOpt by option("--repository", help = "Maven repository URL (default: ${ProjectCreationInfo.DEFAULT_REPOSITORY_URL})")
     private val noGit by option("--no-git", help = "Skip git repository initialization").flag()
@@ -150,7 +168,7 @@ class NewCommand : CliktCommand(name = "new") {
                 projectId?.let { WizardChoice("Project id", it.ifEmpty { "(none)" }) },
                 theme?.takeIf { it.isNotEmpty() }?.let { WizardChoice("Theme", it) },
                 localeCodes?.let { WizardChoice("Locales", it) },
-                addons?.let { selected -> WizardChoice("Add-ons", selected.joinToString(", ") { it.addon.name }.ifEmpty { "(none)" }) },
+                addons?.let { selected -> WizardChoice("Add-ons", selected.joinToString(", ", transform = ::addonTitle).ifEmpty { "(none)" }) },
                 targetDir?.let { WizardChoice("Location", it.toString()) },
                 if (createGit != null && installToolkit != null) {
                     WizardChoice(SETUP_LABEL, setupSummary(createGit, installToolkit))
@@ -295,7 +313,7 @@ class NewCommand : CliktCommand(name = "new") {
         // Inside the wizard's held screen every frame already lists the answers;
         // printing here would land on top of the frame on screen.
         if (prompts.isAlternateScreenHeld) return
-        terminal.println(brightGreen("✓ ") + label + ": " + cyan(value))
+        terminal.println(brightGreen("✓ ") + label + ":" + cyan(" $value"))
     }
 
     private fun catalogFor(version: String): TemplateCatalog {
@@ -648,7 +666,7 @@ class NewCommand : CliktCommand(name = "new") {
         val available = compatible.filterNot { it.included }
         if (available.isEmpty()) {
             state = state.copy(addons = emptyList())
-            summary("Add-ons", "No additional compatible free add-ons")
+            summary("Add-ons", "No additional compatible add-ons")
             return Outcome.AUTO
         }
         val previous = state.addons.orEmpty().map { it.id }.toSet()
@@ -658,15 +676,12 @@ class NewCommand : CliktCommand(name = "new") {
         val automatic = (state.autoSelectedTranslationIds intersect suggestedTranslations) + newSuggestions
         val selected = previous - (state.autoSelectedTranslationIds - suggestedTranslations) + newSuggestions
         val unavailable = previous - compatible.map { it.id }.toSet()
-        val question = "Select add-ons" + if (unavailable.isEmpty()) "" else " (no longer compatible: ${unavailable.joinToString(", ")})"
-        val entries = available.map { addon ->
-            SelectList.Entry(addon.addon.name, addon.addon.about.ifBlank { addon.addon.description }.takeIf(String::isNotBlank),
-                addon.id in selected)
-        }
+        val question = addonSelectionQuestion(available, unavailable)
+        val entries = available.map { addonEntry(it, it.id in selected) }
         return when (val answer = prompts.chooseMany(
             question, entries, allowBack = true, maxVisibleEntries = 10,
             filterTexts = available.map {
-                "${it.id} ${it.addon.name} ${it.addon.about} ${it.addon.description} ${it.addon.tags.joinToString(" ")} ${it.addon.group.title} ${it.addon.vendor}"
+                "${it.id} ${it.addon.name} ${if (it.addon.commercial) "paid commercial $" else ""} ${it.addon.about} ${it.addon.description} ${it.addon.tags.joinToString(" ")} ${it.addon.group.title} ${it.addon.vendor}"
             },
             groups = available.map { it.addon.group.title },
             values = available.map { it.id },
@@ -676,7 +691,7 @@ class NewCommand : CliktCommand(name = "new") {
                 val chosen = available.filter { it.id in answer.value }
                 state = state.copy(addons = chosen, suggestedTranslationIds = suggestedTranslations,
                     autoSelectedTranslationIds = automatic intersect chosen.map { it.id }.toSet())
-                summary("Add-ons", chosen.joinToString(", ") { it.addon.name }.ifEmpty { "(none)" })
+                summary("Add-ons", chosen.joinToString(", ", transform = ::addonTitle).ifEmpty { "(none)" })
                 Outcome.PROMPTED
             }
             null -> error("Searchable selection must support line input")

@@ -41,7 +41,17 @@ object AddonInstaller {
     fun install(info: ProjectCreationInfo, buildFile: Path) {
         val javaHome = requireJavaHome(info.jmixVersion)
         appendDependencies(info, buildFile)
-        val artifacts = resolveArtifacts(info.projectDir, buildFile.parent, javaHome)
+        val artifacts = try {
+            resolveArtifacts(info.projectDir, buildFile.parent, javaHome)
+        } catch (e: IOException) {
+            val credentialsHint = if (info.addons.any { it.addon.commercial }) {
+                "\nCommercial add-ons require premium repository access. Set premiumRepoUser and premiumRepoPass in " +
+                    "~/.gradle/gradle.properties, or use ORG_GRADLE_PROJECT_premiumRepoUser and " +
+                    "ORG_GRADLE_PROJECT_premiumRepoPass. See ${Bindings.PREMIUM_REPOSITORY_DOCS}"
+            } else ""
+            throw IOException("${e.message}$credentialsHint\nProject generation is incomplete; files remain at ${info.projectDir}. " +
+                "Fix the error and regenerate in an empty directory, or use --force to overwrite the generated files.", e)
+        }
         val modules = readModules(artifacts)
         if (Bindings.isAddonTemplate(info)) {
             configureModule(info, buildFile.parent, modules)
@@ -52,21 +62,19 @@ object AddonInstaller {
 
     internal fun appendDependencies(info: ProjectCreationInfo, buildFile: Path) {
         val existing = AddonProjectProfile.dependencyCoordinates(Files.readString(buildFile))
-        val additions = linkedMapOf<String, Pair<String, String>>()
+        // Marketplace dependency versions come from the project's Jmix BOM, as in Studio.
+        val additions = linkedMapOf<String, String>()
         for (addon in info.addons.filterNot { it.included }) {
             for (dependency in addon.dependencies) {
                 if (dependency.coordinates in existing) continue
                 val configuration = if (Bindings.isAddonTemplate(info) && dependency.group.startsWith("io.jmix")) "api"
                     else dependency.configuration
-                val previous = additions.putIfAbsent(dependency.coordinates, configuration to addon.version)
-                if (previous != null && previous.second != addon.version) {
-                    throw IOException("Selected add-ons require conflicting versions of ${dependency.coordinates}.")
-                }
+                additions.putIfAbsent(dependency.coordinates, configuration)
             }
         }
         if (additions.isEmpty()) return
-        val declarations = additions.entries.joinToString("\n", "// Selected Jmix add-ons\n") { (coordinates, value) ->
-            "${value.first} '$coordinates:${value.second}'"
+        val declarations = additions.entries.joinToString("\n", "// Selected Jmix add-ons\n") { (coordinates, configuration) ->
+            "$configuration '$coordinates'"
         }
         prependDependencies(buildFile, declarations)
     }

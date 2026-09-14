@@ -773,23 +773,24 @@ class Prompts(
         }
 
     private fun renderChoice(choice: WizardChoice): String =
-        brightGreen("✓ ") + choice.label + ": " + cyan(choice.value)
+        brightGreen("✓ ") + choice.label + ":" + cyan(" ${choice.value}")
 
     private fun renderEntry(state: SelectionUiState, index: Int): String {
         val atCursor = index == state.cursorIndex
         val selected = index in state.selectedIndices
         val cursor = if (atCursor) cyan("❯") else " "
+        // Include the separator in the highlight to preserve a title's leading ANSI style.
         val title = when {
-            !state.multi && atCursor -> brightGreen(state.entries[index].title)
-            state.multi && selected -> brightGreen(state.entries[index].title)
-            else -> state.entries[index].title
+            !state.multi && atCursor -> brightGreen(" ${state.entries[index].title}")
+            state.multi && selected -> brightGreen(" ${state.entries[index].title}")
+            else -> " ${state.entries[index].title}"
         }
         return if (state.multi) {
             val marker = if (selected) brightGreen("[x]") else gray("[ ]")
-            val included = if (index in state.lockedIndices) gray("(included) ") else ""
-            "$cursor $marker $included$title"
+            val included = if (index in state.lockedIndices) gray(" (included)") else ""
+            "$cursor $marker$included$title"
         } else {
-            "$cursor $title"
+            "$cursor$title"
         }
     }
 

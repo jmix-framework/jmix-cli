@@ -70,7 +70,7 @@ class AddonInstallerTest {
 
     @ParameterizedTest
     @ValueSource(strings = ["\n", "\r\n"])
-    fun `dependencies start the main block and do not duplicate selections`(newline: String) {
+    fun `dependencies use BOM versions, start the main block and do not duplicate selections`(newline: String) {
         val build = tempDir.resolve("build.gradle")
         val buildscript = """
             buildscript {
@@ -83,11 +83,12 @@ class AddonInstallerTest {
         AddonInstaller.appendDependencies(info(), build)
         val text = Files.readString(build)
         assertTrue(text.startsWith(buildscript))
-        assertTrue(text.contains("dependencies {$newline    // Selected Jmix add-ons$newline    implementation 'demo:sample-starter:3.0.1'"))
+        assertTrue(text.contains("dependencies {$newline    // Selected Jmix add-ons$newline    implementation 'demo:sample-starter'"))
         assertEquals(1, Regex("(?m)^dependencies").findAll(text).count())
         assertTrue(text.contains("demo:existing"))
         assertTrue(text.indexOf("demo:sample-starter") < text.indexOf("demo:existing"))
-        assertEquals(1, Regex("demo:sample-starter:3.0.1").findAll(text).count())
+        assertEquals(1, Regex("demo:sample-starter").findAll(text).count())
+        assertFalse(text.contains("demo:sample-starter:"))
         if (newline == "\r\n") assertFalse(text.replace(newline, "").contains('\n'))
     }
 

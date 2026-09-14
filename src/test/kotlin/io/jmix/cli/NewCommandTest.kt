@@ -10,6 +10,8 @@ import io.jmix.cli.template.TemplateParam
 import io.jmix.cli.template.TemplateParams
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -61,6 +63,30 @@ class NewCommandTest {
         Addon(id, id, "", "", commercial = false, dependencies = emptyList(), compatibility = emptyList()),
         version = "3.0.1", dependencies = emptyList(), included = included,
     )
+
+    @Test
+    fun `commercial entry shows its license requirement while the command keeps catalog IDs`() {
+        val free = addon("quartz")
+        val paid = addon("bpm").let { it.copy(addon = it.addon.copy(name = "BPM", commercial = true,
+            about = "Run business processes")) }
+        val entry = addonEntry(paid)
+        assertTrue(entry.title.endsWith(" BPM"))
+        assertTrue(entry.title.contains("[$]"))
+        assertFalse(entry.selected)
+        assertTrue(addonEntry(paid, selected = true).selected)
+        assertEquals("quartz", addonEntry(free).title)
+        assertEquals(null, addonEntry(free).description)
+        assertEquals("Select add-ons", addonSelectionQuestion(listOf(free)))
+        val question = addonSelectionQuestion(listOf(free, paid), setOf("old-addon"))
+        assertTrue(question.contains("paid add-on"))
+        assertTrue(question.contains("no longer compatible: old-addon"))
+
+        val command = nonInteractiveCommand(info(tempDir, addons = listOf(free, paid, addon("data-tools", included = true))),
+            "application", true, tempDir)
+        assertTrue(command.endsWith("--addons quartz,bpm"), command)
+        assertFalse(command.contains("[$]"))
+        assertFalse(command.contains("premiumRepo"))
+    }
 
     @Test
     fun `equivalent command pins the version and omits non-interactive defaults`() {

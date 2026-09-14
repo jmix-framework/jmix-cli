@@ -1,16 +1,23 @@
 package io.jmix.cli.generator
 
 import io.jmix.cli.env.EnvironmentCheck
+import io.jmix.cli.addon.AddonCatalog
+import io.jmix.cli.addon.AddonCatalogTest
+import io.jmix.cli.addon.AddonProjectProfile
 import io.jmix.cli.template.TemplateMetadata
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assumptions
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class ProjectGeneratorTest {
 
@@ -78,6 +85,44 @@ class ProjectGeneratorTest {
         phases.clear()
         generate(createGitRepository = true, onStatus = phases::add)
         assertEquals(listOf("Rendering the project files", "Initializing the Git repository"), phases)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["Unknown property 'premiumRepoUser'", "Received status code 401: Unauthorized",
+        "Received status code 403: Forbidden", "Could not resolve host global.repo.jmix.io"])
+    fun `commercial resolution failures leave rendered configuration and stop before Git staging`(detail: String) {
+        val template = buildFixtureTemplate()
+        writeTemplate(template, "build.gradle", "repositories {\n" +
+            "<% project_additionalRepositories.each { repository -> %>\${repository}\n<% } %>}\n" +
+            "dependencies { implementation 'io.jmix.core:jmix-core-starter' }\n")
+        writeTemplate(template, "gradlew", "#!/bin/sh\nprintf '%s\\n' \"$detail\"\nexit 1\n")
+        writeTemplate(template, "gradlew.bat", "@echo off\r\necho $detail\r\nexit /b 1\r\n")
+        val target = tempDir.resolve("failed-project")
+        val info = ProjectCreationInfo(name = "demo", targetDir = target, rootPackage = "com.example.demo",
+            jmixVersion = "3.0.1", templateMetadata = TemplateMetadata(), createGitRepository = true,
+            addons = AddonCatalog.parse(AddonCatalogTest.CATALOG_JSON)
+                .select(listOf("paid"), "3.0.1", AddonProjectProfile("build.gradle", emptySet())))
+        val phases = mutableListOf<String>()
+
+        val error = assertThrows(IOException::class.java) {
+            ProjectGenerator(onStatus = phases::add).generate(template, info)
+        }
+
+        val message = error.message!!
+        assertTrue(message.contains(detail), message)
+        assertTrue(message.contains("premiumRepoUser and premiumRepoPass"), message)
+        assertTrue(message.contains("ORG_GRADLE_PROJECT_premiumRepoUser"), message)
+        assertTrue(message.contains("https://docs.jmix.io/jmix/studio/subscription.html"), message)
+        assertTrue(message.contains("generation is incomplete"), message)
+        assertTrue(message.contains("--force"), message)
+        assertFalse(Files.exists(target.resolve(".git")))
+        assertFalse(phases.contains("Initializing the Git repository"))
+        val build = Files.readString(target.resolve("build.gradle"))
+        assertTrue(build.contains("// Commercial Jmix add-ons require a license"))
+        assertTrue(build.contains("url = 'https://global.repo.jmix.io/repository/premium'"))
+        assertTrue(build.contains("username = rootProject['premiumRepoUser']"))
+        assertTrue(build.contains("implementation 'demo:paid-starter'"))
+        assertFalse(build.contains("demo:paid-starter:"))
     }
 
     @Test

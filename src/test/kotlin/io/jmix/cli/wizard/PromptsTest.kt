@@ -1,9 +1,15 @@
 package io.jmix.cli.wizard
 
+import io.jmix.cli.addonEntry
+import io.jmix.cli.addonSelectionQuestion
+import io.jmix.cli.addon.AddonCatalog
+import io.jmix.cli.addon.AddonCatalogTest
+import io.jmix.cli.addon.AddonProjectProfile
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.mordant.input.InputEvent
 import com.github.ajalt.mordant.input.KeyboardEvent
 import com.github.ajalt.mordant.input.MouseTracking
+import com.github.ajalt.mordant.rendering.AnsiLevel
 import com.github.ajalt.mordant.rendering.Size
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalInterface
@@ -450,6 +456,39 @@ class PromptsTest {
                 assertEquals(listOf("second-id"), selected)
                 assertFalse(recorder.output().contains("first-id"))
                 assertFalse(recorder.output().contains("second-id"))
+            }
+        }
+    }
+
+    @Test
+    fun `commercial entries show prefix dollar badges and a legend in every terminal mode`() {
+        val addons = AddonCatalog.parse(AddonCatalogTest.CATALOG_JSON)
+            .select(listOf("sample", "paid"), "3.0.1", AddonProjectProfile("build.gradle", emptySet()))
+        val entries = addons.map { addonEntry(it) }
+        for ((interactive, ansiCursor) in listOf(true to false, true to true, false to false)) {
+            withStdin("2\n\n") {
+                val ansiLevel = if (interactive) AnsiLevel.ANSI16 else AnsiLevel.NONE
+                val recorder = TerminalRecorder(ansiLevel = ansiLevel, width = 100, height = 24,
+                    inputInteractive = interactive, supportsAnsiCursor = ansiCursor)
+                recorder.inputEvents += listOf(KeyboardEvent("ArrowDown"), KeyboardEvent(" "), KeyboardEvent("Enter"))
+                val selected = Prompts(Terminal(ansiLevel = ansiLevel, terminalInterface = recorder),
+                    wizardUiState = { WizardUiState(listOf(WizardChoice("Add-ons", entries.last().title))) }).chooseMany(
+                    addonSelectionQuestion(addons), entries, filterTexts = entries.map { it.title }, values = addons.map { it.id },
+                )!!.requireValue()
+                assertEquals(listOf("paid"), selected)
+                val styledOutput = recorder.output()
+                val output = ANSI_SEQUENCE.replace(styledOutput, "")
+                assertTrue(output.contains("[$] Paid"), output)
+                assertTrue(output.contains("Select add-ons ([$] paid add-on)"), output)
+                assertTrue(output.contains("Requires a commercial license. Commercial workflow support."), output)
+                if (interactive && !ansiCursor) {
+                    val selectedLine = styledOutput.lineSequence().lastOrNull { it.contains("[x]") }
+                    val summaryLine = styledOutput.lineSequence().lastOrNull { it.contains("Add-ons:") }
+                    assertTrue(selectedLine != null && summaryLine != null, styledOutput)
+                    for (line in listOf(selectedLine!!, summaryLine!!)) {
+                        assertTrue(line.contains("\u001b[95;1m[$]"), line)
+                    }
+                }
             }
         }
     }

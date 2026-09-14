@@ -23,6 +23,12 @@ object Bindings {
     /** Marker URL for the local Maven repository (rendered as `mavenLocal()`). */
     const val MAVEN_LOCAL_URL = "mavenLocal"
 
+    internal const val PREMIUM_REPOSITORY_DOCS = "https://docs.jmix.io/jmix/studio/subscription.html"
+    private val PREMIUM_REPOSITORIES = mapOf(
+        ProjectCreationInfo.DEFAULT_REPOSITORY_URL to "https://global.repo.jmix.io/repository/premium",
+        "https://nexus.jmix.io/repository/public" to "https://nexus.jmix.io/repository/premium",
+    )
+
     // Studio's CUBA_REPO_SOURCE — a nested Groovy template for one maven { } block.
     private const val REPO_SOURCE =
         "    maven {\n" +
@@ -67,7 +73,13 @@ object Bindings {
 
         val indent = if (isAddon) "        " else "    "
         val additionalRepositories = ArrayList<String>()
-        for (repo in info.repositories) {
+        val repositories = info.repositories.toMutableList()
+        if (info.addons.any { it.addon.commercial } && repositories.none { isPremiumRepository(it.url) }) {
+            val premiumUrl = repositories.firstNotNullOfOrNull { PREMIUM_REPOSITORIES[it.url.removeSuffix("/")] }
+                ?: PREMIUM_REPOSITORIES.getValue(ProjectCreationInfo.DEFAULT_REPOSITORY_URL)
+            repositories.add(Repository(premiumUrl))
+        }
+        for (repo in repositories) {
             if (repo.url == MAVEN_LOCAL_URL) {
                 additionalRepositories.add(0, "    mavenLocal()")
             } else {
@@ -100,6 +112,19 @@ object Bindings {
         }
 
     private fun renderRepository(repo: Repository, indent: String): String {
+        if (isPremiumRepository(repo.url)) {
+            return "    // Commercial Jmix add-ons require a license and premium repository credentials.\n" +
+                "${indent}// Set premiumRepoUser/premiumRepoPass in ~/.gradle/gradle.properties, or use\n" +
+                "${indent}// ORG_GRADLE_PROJECT_premiumRepoUser / ORG_GRADLE_PROJECT_premiumRepoPass.\n" +
+                "${indent}// See $PREMIUM_REPOSITORY_DOCS\n" +
+                "${indent}maven {\n" +
+                "${indent}    url = '${repo.url}'\n" +
+                "${indent}    credentials {\n" +
+                "${indent}        username = rootProject['premiumRepoUser']\n" +
+                "${indent}        password = rootProject['premiumRepoPass']\n" +
+                "${indent}    }\n" +
+                "${indent}}"
+        }
         val hasCredentials = repo.user.isNotBlank() && repo.password.isNotBlank()
         val repoBinding = linkedMapOf<String, Any?>(
             "config_repositoryUrl" to repo.url,
@@ -112,6 +137,8 @@ object Bindings {
         )
         return TemplateEngine.render(REPO_SOURCE, repoBinding)
     }
+
+    private fun isPremiumRepository(url: String): Boolean = url.removeSuffix("/") in PREMIUM_REPOSITORIES.values
 }
 
 /**

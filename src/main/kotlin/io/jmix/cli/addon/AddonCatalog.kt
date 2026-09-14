@@ -65,7 +65,7 @@ data class ResolvedAddon(val addon: Addon, val version: String, val dependencies
 
 /** Match translation artifacts from the compatible catalog, preferring an exact locale over its language. */
 internal fun translationAddonIds(available: List<ResolvedAddon>, localeCodes: List<String>): Set<String> {
-    val translations = available.filter { it.addon.category == "Translation" }.flatMap { addon ->
+    val translations = available.filter { it.addon.category == "Translation" && !it.addon.commercial }.flatMap { addon ->
         addon.dependencies.filter { it.group == "io.jmix.translations" && it.name.startsWith("jmix-translations-") }
             .map { it.name.removePrefix("jmix-translations-").lowercase() to addon.id }
     }.toMap()
@@ -100,7 +100,7 @@ data class AddonProjectProfile(val buildFile: String, val coordinates: Set<Strin
 
 class AddonCatalog(val addons: List<Addon>) {
     fun available(version: String, profile: AddonProjectProfile): List<ResolvedAddon> = addons
-        .filter { !it.commercial && installable(it) }
+        .filter(::installable)
         .mapNotNull { resolve(it, version, profile) }
         .sortedWith(compareBy<ResolvedAddon> { !it.included }
             .thenBy { it.addon.group }
@@ -113,7 +113,6 @@ class AddonCatalog(val addons: List<Addon>) {
         return ids.distinct().map { id ->
             val addon = addons.find { it.id == id }
                 ?: throw IOException("Unknown add-on '$id'. Run 'jmix new' without --addons to choose interactively.")
-            if (addon.commercial) throw IOException("Add-on '$id' is commercial. This CLI currently installs free add-ons only.")
             if (!installable(addon)) throw IOException("Add-on '$id' has no supported runtime dependency metadata in the Studio catalog. " +
                 "Follow the vendor's installation instructions.")
             available[id] ?: throw IOException("Add-on '$id' is not compatible with Jmix $version and this template.")

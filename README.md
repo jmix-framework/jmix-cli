@@ -36,15 +36,6 @@ jmix
 Choose a template, languages, add-ons, and project location. Follow the keyboard
 hints at the bottom of each step. In text input, use **Ctrl+Q** to quit.
 
-The progress bar tracks General, Localization, Add-ons, Location and setup, and Finishing up.
-Downloads and other slow steps show a spinner naming the host being reached and, when the
-size is known, a bar with byte counts.
-
-The add-on picker groups compatible **free add-ons** by purpose. Press **/** to search,
-**Space** to toggle, and **Enter** to confirm. Add-ons supplied by the template
-are omitted; matching translations are preselected and can be unchecked.
-In line-input consoles, use `/query` and comma-separated selection numbers.
-
 For scripts and AI agents, pass `--non-interactive`:
 
 ```shell
@@ -61,6 +52,12 @@ Non-interactive mode creates `./<name>` and installs no additional add-ons unles
 `--addons` is supplied. Use `--path` for another location, `--no-git` to skip
 Git initialization, and `--no-agents-toolkit` to skip the Agent Toolkit.
 On Windows, run `gradlew.bat bootRun`.
+
+Commercial selections such as `--addons business-calendars` automatically add the
+premium Jmix repository. Configure `premiumRepoUser` and `premiumRepoPass` in
+`~/.gradle/gradle.properties`, or set `ORG_GRADLE_PROJECT_premiumRepoUser` and
+`ORG_GRADLE_PROJECT_premiumRepoPass` in the environment before generation.
+See [commercial add-on setup and troubleshooting](docs/features/add-ons.md#commercial-add-ons).
 
 Every run ends by printing the `jmix new ... --non-interactive` command that
 recreates the project with the same settings, ready to paste into a script.
@@ -81,24 +78,24 @@ Project options apply to `jmix new [name]`. The name is required with
 `--non-interactive`; otherwise the wizard asks for it. Defaults below describe
 non-interactive generation; the wizard lets you choose values interactively.
 
-| Option | Description | Default |
-| --- | --- | --- |
-| `--template <id>` | Project template, e.g. `application` or `application-kotlin`. | First template in the selected catalog |
-| `--jmix-version <version>` | Jmix platform version. | Latest stable version |
-| `--package <name>` | Base Java/Kotlin package. | Derived from the template prefix and project name |
-| `--project-id <id>` | Prefix for entity, table and bean names; up to 7 characters. | Template default; required if the template demands it |
-| `--theme <name>` | UI theme: `aura` or `lumo`, where supported by the template and Jmix version. | `aura` for Jmix 3; `lumo` for Jmix 2; omitted for templates without a theme |
-| `--locales <codes>` | Comma-separated locale codes, e.g. `en,ru`. The first is the default locale. | `en` |
-| `--addons <ids>` | Comma-separated compatible free add-on IDs, e.g. `quartz,reports`. | No additional add-ons |
-| `--path <directory>` | Target directory. | `./<name>` |
-| `--repository <url>` | Maven repository for templates and the generated project. | `https://global.repo.jmix.io/repository/public` |
-| `--no-git` | Skip Git initialization and staging of generated files. | Git enabled when available |
-| `--no-agents-toolkit` | Skip Agent Toolkit guidelines and local skills. | Toolkit enabled |
-| `--include-unstable` | Include RC, beta and snapshot versions in version selection. | Stable versions only |
-| `--force` | Allow generation into a non-empty directory without confirmation; existing files may be overwritten. | Confirmation required in the wizard; rejected in non-interactive mode |
-| `--non-interactive` | Use options and defaults without prompting. | Interactive wizard |
-| `--no-update` | Skip the automatic startup update check. Also accepted by `jmix` and `jmix update`; explicit updates still run. | Automatic checks enabled for installed builds outside CI |
-| `-h`, `--help` | Show help and exit. Available for `jmix`, `jmix new` and `jmix update`. | — |
+| Option                     | Description                                                                                                                        | Default                                                                     |
+|----------------------------|------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| `--template <id>`          | Project template, e.g. `application` or `application-kotlin`.                                                                      | First template in the selected catalog                                      |
+| `--jmix-version <version>` | Jmix platform version.                                                                                                             | Latest stable version                                                       |
+| `--package <name>`         | Base Java/Kotlin package.                                                                                                          | Derived from the template prefix and project name                           |
+| `--project-id <id>`        | Prefix for entity, table and bean names; up to 7 characters.                                                                       | Template default; required if the template demands it                       |
+| `--theme <name>`           | UI theme: `aura` or `lumo`, where supported by the template and Jmix version.                                                      | `aura` for Jmix 3; `lumo` for Jmix 2; omitted for templates without a theme |
+| `--locales <codes>`        | Comma-separated locale codes, e.g. `en,ru`. The first is the default locale.                                                       | `en`                                                                        |
+| `--addons <ids>`           | Comma-separated compatible add-on IDs, e.g. `quartz,bpm`. Commercial add-ons require a license and premium repository credentials. | No additional add-ons                                                       |
+| `--path <directory>`       | Target directory.                                                                                                                  | `./<name>`                                                                  |
+| `--repository <url>`       | Maven repository for templates and the generated project.                                                                          | `https://global.repo.jmix.io/repository/public`                             |
+| `--no-git`                 | Skip Git initialization and staging of generated files.                                                                            | Git enabled when available                                                  |
+| `--no-agents-toolkit`      | Skip Agent Toolkit guidelines and local skills.                                                                                    | Toolkit enabled                                                             |
+| `--include-unstable`       | Include RC, beta and snapshot versions in version selection.                                                                       | Stable versions only                                                        |
+| `--force`                  | Allow generation into a non-empty directory without confirmation; existing files may be overwritten.                               | Confirmation required in the wizard; rejected in non-interactive mode       |
+| `--non-interactive`        | Use options and defaults without prompting.                                                                                        | Interactive wizard                                                          |
+| `--no-update`              | Skip the automatic startup update check. Also accepted by `jmix` and `jmix update`; explicit updates still run.                    | Automatic checks enabled for installed builds outside CI                    |
+| `-h`, `--help`             | Show help and exit. Available for `jmix`, `jmix new` and `jmix update`.                                                            | —                                                                           |
 
 Installed builds check for updates automatically. Set `JMIX_CLI_NO_AUTO_UPDATE=1`
 to disable checks; they are also skipped when `CI` is set or running from source.

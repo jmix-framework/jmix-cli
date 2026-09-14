@@ -1,5 +1,8 @@
 package io.jmix.cli.generator
 
+import io.jmix.cli.addon.AddonCatalog
+import io.jmix.cli.addon.AddonCatalogTest
+import io.jmix.cli.addon.AddonProjectProfile
 import io.jmix.cli.template.TemplateMetadata
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -85,6 +88,55 @@ class BindingsTest {
         assertTrue("rootProject.hasProperty('repoUser')" in block)
         assertTrue("'user1'" in block)
         assertTrue("'pass1'" in block)
+    }
+
+    @Test
+    fun `commercial selection adds the matching premium repository with property references and documentation`() {
+        val addons = AddonCatalog.parse(AddonCatalogTest.CATALOG_JSON)
+            .select(listOf("paid"), "3.0.1", AddonProjectProfile("build.gradle", emptySet()))
+        val global = "https://global.repo.jmix.io/repository/premium"
+        for ((publicUrl, premiumUrl) in listOf(
+            ProjectCreationInfo.DEFAULT_REPOSITORY_URL to global,
+            "https://global.repo.jmix.io/repository/public/" to global,
+            "https://nexus.jmix.io/repository/public" to "https://nexus.jmix.io/repository/premium",
+            "https://nexus.jmix.io/repository/public/" to "https://nexus.jmix.io/repository/premium",
+            "https://example.com/repository/public" to global,
+        )) {
+            for (isAddon in listOf(false, true)) {
+                val binding = Bindings.createBinding(info(metadata = TemplateMetadata(addon = isAddon),
+                    repositories = listOf(Repository(publicUrl))).copy(addons = addons))
+                val repos = binding["project_additionalRepositories"] as List<*>
+                assertEquals(2, repos.size)
+                assertTrue(repos.first().toString().contains("url = '$publicUrl'"))
+                val premium = repos.last().toString()
+                val indent = if (isAddon) "        " else "    "
+                assertTrue(premium.contains("${indent}maven {\n${indent}    url = '$premiumUrl'"), premium)
+                assertTrue(premium.contains("username = rootProject['premiumRepoUser']"))
+                assertTrue(premium.contains("password = rootProject['premiumRepoPass']"))
+                assertTrue(premium.contains("// Commercial Jmix add-ons require a license"))
+                assertTrue(premium.contains("// See https://docs.jmix.io/jmix/studio/subscription.html"))
+                assertTrue(premium.contains("ORG_GRADLE_PROJECT_premiumRepoUser / ORG_GRADLE_PROJECT_premiumRepoPass"))
+            }
+        }
+    }
+
+    @Test
+    fun `existing premium repository is reused without embedding credentials and free selections add none`() {
+        val catalog = AddonCatalog.parse(AddonCatalogTest.CATALOG_JSON)
+        val profile = AddonProjectProfile("build.gradle", emptySet())
+        val premiumUrl = "https://nexus.jmix.io/repository/premium/"
+        val creation = info(repositories = listOf(Repository(ProjectCreationInfo.DEFAULT_REPOSITORY_URL),
+            Repository(premiumUrl, "do-not-embed-user", "do-not-embed-password")))
+            .copy(addons = catalog.select(listOf("paid"), "3.0.1", profile))
+        val repos = Bindings.createBinding(creation)["project_additionalRepositories"] as List<*>
+        assertEquals(2, repos.size)
+        assertTrue(repos.last().toString().contains("url = '$premiumUrl'"))
+        assertFalse(repos.toString().contains("do-not-embed"))
+        assertTrue(repos.last().toString().contains("rootProject['premiumRepoUser']"))
+
+        val free = info().copy(addons = catalog.select(listOf("sample"), "3.0.1", profile))
+        assertEquals(Bindings.createBinding(info())["project_additionalRepositories"],
+            Bindings.createBinding(free)["project_additionalRepositories"])
     }
 
     @Test

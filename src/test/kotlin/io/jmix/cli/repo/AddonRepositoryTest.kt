@@ -19,14 +19,15 @@ class AddonRepositoryTest {
 
     @Test
     @EnabledIfEnvironmentVariable(named = "JMIX_CLI_IT", matches = "true")
-    fun `Studio live catalog resolves a free add-on and template-included Data Tools`() {
+    fun `Studio live catalog resolves free and commercial add-ons and template-included Data Tools`() {
         val catalog = AddonRepository(cacheDir = cacheDir).catalog()
         val profile = AddonProjectProfile("build.gradle", setOf("io.jmix.flowui:jmix-flowui-starter",
             "io.jmix.datatools:jmix-datatools-starter", "io.jmix.datatools:jmix-datatools-flowui-starter"))
         val available = catalog.available("3.0.1", profile)
         assertTrue(available.any { it.id == "quartz" })
         assertTrue(available.any { it.id == "data-tools" && it.included })
-        assertTrue(available.none { it.addon.commercial })
+        assertTrue(available.any { it.id == "bpm" && it.addon.commercial })
+        assertTrue(available.none { it.id == "figma-ui-kit" })
     }
 
     @Test

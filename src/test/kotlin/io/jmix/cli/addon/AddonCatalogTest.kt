@@ -24,7 +24,7 @@ class AddonCatalogTest {
         assertEquals(listOf("demo:sample-starter", "demo:sample-flowui-starter"), addon.dependencies.map { it.coordinates })
         assertFalse(addon.included)
         assertTrue(catalog.available("3.0.1", flowUi.copy(coordinates = flowUi.coordinates + addon.dependencies.map { it.coordinates }))
-            .single().included)
+            .single { it.id == "sample" }.included)
         val backend = catalog.select(listOf("sample"), "3.0.1", AddonProjectProfile("build.gradle", emptySet())).single()
         assertEquals(listOf("sample-starter"), backend.dependencies.map { it.name })
     }
@@ -52,9 +52,9 @@ class AddonCatalogTest {
         ))
         val available = catalog.available("3.0.1", AddonProjectProfile("build.gradle", setOf("demo:included")))
         assertEquals(listOf("included", "zulu", "alpha", "beta", "charts", "quartz", "saml", "jmx",
-            "unknown", "untagged", "translation"), available.map { it.id })
+            "paid", "unknown", "untagged", "translation"), available.map { it.id })
         assertEquals(listOf("Features", "Features", "Features", "UI", "Integrations", "Security", "System",
-            "Other", "Other", "Translations"), available.filterNot { it.included }.map { it.addon.group.title })
+            "Other", "Other", "Other", "Translations"), available.filterNot { it.included }.map { it.addon.group.title })
         assertEquals(Int.MAX_VALUE,
             AddonCatalog.parse(CATALOG_JSON.replace("\"weight\":760", "\"weight\":null")).addons.first().weight)
         assertEquals(Int.MAX_VALUE, AddonCatalog.parse(CATALOG_JSON).addons.last().weight)
@@ -82,16 +82,21 @@ class AddonCatalogTest {
     }
 
     @Test
-    fun `commercial unknown and incompatible selections fail explicitly`() {
+    fun `commercial selections resolve while unknown and incompatible selections fail explicitly`() {
         val catalog = AddonCatalog.parse(CATALOG_JSON)
         val profile = AddonProjectProfile("build.gradle", emptySet())
-        assertTrue(assertThrows(IOException::class.java) { catalog.select(listOf("paid"), "3.0.1", profile) }.message!!.contains("commercial"))
+        val paid = catalog.select(listOf("paid", "paid"), "3.0.1", profile).single()
+        assertTrue(paid.addon.commercial)
+        assertEquals("3.0.1", paid.version)
+        assertEquals(listOf("demo:paid-starter"), paid.dependencies.map { it.coordinates })
+        assertTrue(catalog.select(listOf("paid"), "3.0.1", profile.copy(coordinates = setOf("demo:paid-starter"))).single().included)
+        assertThrows(IOException::class.java) { catalog.select(listOf("paid"), "2.8.3", profile) }
         assertThrows(IOException::class.java) { catalog.select(listOf("missing"), "3.0.1", profile) }
         assertThrows(IOException::class.java) { catalog.select(listOf("sample"), "2.8.3", profile) }
         assertEquals(1, catalog.select(listOf("sample", "sample"), "3.0.1", profile).size)
         val broken = AddonCatalog.parse(CATALOG_JSON.replace("\"demo\",\"name\":\"sample-starter\"",
             "\"io.jmix.gradle\",\"name\":\"jmix-gradle-plugin\""))
-        assertTrue(broken.available("3.0.1", profile).isEmpty())
+        assertTrue(broken.available("3.0.1", profile).none { it.id == "sample" })
         assertTrue(assertThrows(IOException::class.java) { broken.select(listOf("sample"), "3.0.1", profile) }
             .message!!.contains("vendor"))
     }
@@ -99,17 +104,18 @@ class AddonCatalogTest {
     @Test
     fun `catalog can contain resources without installable dependencies`() {
         val catalog = AddonCatalog.parse("""{"appComponents":[
-            {"id":"ui-kit","name":"UI Kit","commercial":false,"dependencies":[],"compatibilityList":[]}
+            {"id":"ui-kit","name":"UI Kit","commercial":true,"dependencies":[],"compatibilityList":[]}
         ]}""")
         assertTrue(catalog.available("3.0.1", AddonProjectProfile("build.gradle", emptySet())).isEmpty())
+        assertThrows(IOException::class.java) { catalog.select(listOf("ui-kit"), "3.0.1", AddonProjectProfile("build.gradle", emptySet())) }
     }
 
     @Test
     fun `third party version is selected from compatibility rather than platform version`() {
         val catalog = AddonCatalog.parse(CATALOG_JSON.replace("[\"3.0.0\",\"3.0.1\",\"3.0.999-SNAPSHOT\"]", "[\"0.9.4\",\"0.9.5\",\"0.9.6-SNAPSHOT\"]"))
         val profile = AddonProjectProfile("build.gradle", emptySet())
-        assertEquals("0.9.5", catalog.available("3.0.1", profile).single().version)
-        assertEquals("0.9.6-SNAPSHOT", catalog.available("3.0.999-SNAPSHOT", profile).single().version)
+        assertEquals("0.9.5", catalog.select(listOf("sample"), "3.0.1", profile).single().version)
+        assertEquals("0.9.6-SNAPSHOT", catalog.select(listOf("sample"), "3.0.999-SNAPSHOT", profile).single().version)
     }
 
     @Test
@@ -146,7 +152,7 @@ class AddonCatalogTest {
                  {"group":"demo","name":"sample-flowui-starter","versionRange":"(1.99.999-SNAPSHOT,)"},
                  {"group":"demo","name":"sample-ui-starter"}],
                "compatibilityList":[{"platformRequirement":"3.0","artifactVersions":["3.0.0","3.0.1","3.0.999-SNAPSHOT"]}]},
-              {"id":"paid","name":"Paid","commercial":true,
+              {"id":"paid","name":"Paid","about":"Commercial workflow support.","commercial":true,
                "dependencies":[{"group":"demo","name":"paid-starter"}],
                "compatibilityList":[{"platformRequirement":"3.0","artifactVersions":["3.0.1"]}]}
             ]}

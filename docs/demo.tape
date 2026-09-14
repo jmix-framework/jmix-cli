@@ -30,7 +30,7 @@ Set CursorBlink false
 Set Theme { "name": "Jmix", "background": "#1e1f29", "foreground": "#f8f8f2", "black": "#1e1f29", "red": "#ff5555", "green": "#50fa7b", "yellow": "#f1fa8c", "blue": "#8be9fd", "magenta": "#ff79c6", "cyan": "#8be9fd", "white": "#f8f8f2", "brightBlack": "#a2a7b5", "brightRed": "#ff5555", "brightGreen": "#50fa7b", "brightYellow": "#f1fa8c", "brightBlue": "#8be9fd", "brightMagenta": "#ff79c6", "brightCyan": "#8be9fd", "brightWhite": "#ffffff", "cursor": "#f8f8f2", "selection": "#44475a" }
 
 Hide
-Type@1ms 'cd "$JMIX_DEMO_DIR" && ln -s "$JAVA_HOME" jdk && export JAVA_HOME="$PWD/jdk" && unset NO_COLOR && export FORCE_COLOR=3 && demo_args=(--repository https://global.repo.jmix.io/repository/public --jmix-version 3.0.1 --template application --theme aura --no-git)' Enter
+Type@1ms 'cd "$JMIX_DEMO_DIR" && ln -s "$JAVA_HOME" jdk && export JAVA_HOME="$PWD/jdk" && unset NO_COLOR && export FORCE_COLOR=3 && demo_args=(--repository https://global.repo.jmix.io/repository/public --jmix-version 3.0.2 --template application --theme aura --no-git)' Enter
 Type@1ms 'jmix --no-update new "${demo_args[@]}"' Enter
 Wait+Screen@30s /Enter project name/
 Show
