@@ -70,7 +70,7 @@ class NewCommandTest {
         val paid = addon("bpm").let { it.copy(addon = it.addon.copy(name = "BPM", commercial = true,
             about = "Run business processes")) }
         val entry = addonEntry(paid)
-        assertTrue(entry.title.endsWith(" BPM"))
+        assertTrue(entry.title.startsWith("BPM "))
         assertTrue(entry.title.contains("[$]"))
         assertFalse(entry.selected)
         assertTrue(addonEntry(paid, selected = true).selected)

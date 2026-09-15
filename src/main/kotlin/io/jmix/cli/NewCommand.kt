@@ -60,7 +60,7 @@ internal fun projectLocationOptions(projectName: String, currentDir: Path, homeD
 private val PAID_ADDON_BADGE = brightMagenta(bold("[$]"))
 
 private fun addonTitle(addon: ResolvedAddon): String =
-    if (addon.addon.commercial) "$PAID_ADDON_BADGE ${addon.addon.name}" else addon.addon.name
+    if (addon.addon.commercial) "${addon.addon.name} $PAID_ADDON_BADGE" else addon.addon.name
 
 internal fun addonSelectionQuestion(unavailable: Set<String> = emptySet()): String {
     val compatibility = if (unavailable.isEmpty()) "" else " (no longer compatible: ${unavailable.joinToString(", ")})"

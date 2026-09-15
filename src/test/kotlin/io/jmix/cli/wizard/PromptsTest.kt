@@ -462,7 +462,7 @@ class PromptsTest {
     }
 
     @Test
-    fun `commercial entries show prefix dollar badges and a secondary legend below the title in every terminal mode`() {
+    fun `commercial entries show dollar badges after names and a secondary legend below the title in every terminal mode`() {
         val addons = AddonCatalog.parse(AddonCatalogTest.CATALOG_JSON)
             .select(listOf("sample", "paid"), "3.0.1", AddonProjectProfile("build.gradle", emptySet()))
         val entries = addons.map { addonEntry(it) }
@@ -480,7 +480,7 @@ class PromptsTest {
                 assertEquals(listOf("paid"), selected)
                 val styledOutput = recorder.output()
                 val output = ANSI_SEQUENCE.replace(styledOutput, "")
-                assertTrue(output.contains("[$] Paid"), output)
+                assertTrue(output.contains("Paid [$]"), output)
                 val lines = output.lines()
                 val titleRow = lines.indexOfFirst { it.startsWith("Select add-ons") }
                 assertTrue(titleRow >= 0, output)
@@ -495,6 +495,7 @@ class PromptsTest {
                     val summaryLine = styledOutput.lineSequence().lastOrNull { it.contains("Add-ons:") }
                     assertTrue(selectedLine != null && summaryLine != null, styledOutput)
                     for (line in listOf(selectedLine!!, summaryLine!!)) {
+                        assertTrue(ANSI_SEQUENCE.replace(line, "").contains("Paid [$]"), line)
                         assertTrue(line.contains("\u001b[95;1m[$]"), line)
                     }
                 }

@@ -24,8 +24,8 @@ and does not fetch the catalog or resolve add-on dependencies.
   ordering; name and ID break ties.
 - Add-ons supplied by the template are omitted from the picker. Names appear
   without ID suffixes, with descriptions below. Commercial entries show a bold
-  purple `[$]` badge before the name and a license-required note; the wizard
-  summary uses the same prefix. When commercial entries are available, the
+  purple `[$]` badge after the name and a license-required note; the wizard
+  summary uses the same format. When commercial entries are available, the
   picker shows `[$] - commercial add-on` on a separate line below its heading,
   with secondary gray text and the purple badge, also in plain consoles.
   Very short terminals hide the legend to keep the focused entry and controls visible.
