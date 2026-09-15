@@ -161,7 +161,29 @@ if [[ "$installed" == true ]]; then
 fi
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
-    *) echo "Add $BIN_DIR to PATH to use 'jmix' in future shells." ;;
+    *)
+        path_command="export PATH=\"\$HOME/.local/bin:\$PATH\""
+        shell_profile=""
+        if [[ "$BIN_DIR" == "$HOME/.local/bin" && "${JMIX_CLI_SKIP_PATH_UPDATE:-0}" != "1" ]]; then
+            case "${SHELL:-}" in
+                */bash | bash) shell_profile="$HOME/.bashrc" ;;
+                */zsh | zsh) shell_profile="$HOME/.zshrc" ;;
+                */ash | ash | */dash | dash | */ksh | ksh | */sh | sh | "") shell_profile="$HOME/.profile" ;;
+            esac
+            if [[ -n "$shell_profile" ]]; then
+                if grep -Fqx "$path_command" "$shell_profile" 2>/dev/null; then
+                    echo "$BIN_DIR is already configured in $shell_profile."
+                elif printf '\n%s\n' "$path_command" >> "$shell_profile"; then
+                    echo "Added $BIN_DIR to PATH in $shell_profile."
+                fi
+            fi
+        fi
+        if [[ "$BIN_DIR" == "$HOME/.local/bin" ]]; then
+            echo "Restart your shell or run: $path_command"
+        else
+            echo "Add $BIN_DIR to PATH to use 'jmix' in future shells."
+        fi
+        ;;
 esac
 
 if [[ "${JMIX_CLI_NO_RUN:-0}" == "1" ]]; then

@@ -45,6 +45,27 @@ first_output="$(run_installer "$release_dir")"
 export JMIX_CLI_NO_AUTO_UPDATE=1
 "$temp_dir/bin/jmix" --help | grep -q "Jmix CLI"
 
+# A default Linux install must make the documented command available in a fresh shell.
+if [[ "$platform" == "linux" ]]; then
+    linux_home="$temp_dir/linux-home"
+    linux_path="/usr/local/bin:/usr/bin:/bin"
+    mkdir -p "$linux_home"
+    path_output="$(
+        HOME="$linux_home" \
+        SHELL=/bin/bash \
+        PATH="$linux_path" \
+        JMIX_CLI_RELEASE_BASE_URL="$release_dir" \
+        JMIX_CLI_NO_RUN=1 \
+            "$repo_root/install.sh"
+    )"
+    [[ "$path_output" == *"Added $linux_home/.local/bin to PATH in $linux_home/.bashrc."* ]]
+    HOME="$linux_home" \
+    PATH="$linux_path" \
+    JMIX_CLI_NO_AUTO_UPDATE=1 \
+        bash --noprofile --norc -c 'source "$HOME/.bashrc"; command -v jmix; jmix new --help' |
+        grep -q "Usage: jmix new"
+fi
+
 # Recorded for self-update: a custom bin directory is otherwise undiscoverable.
 [[ "$(cat "$temp_dir/install/bin-dir")" == "$temp_dir/bin" ]]
 # Complete installations are marked; cleanup keeps and prunes versions by it.

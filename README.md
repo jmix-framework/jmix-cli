@@ -26,6 +26,8 @@ irm https://github.com/jmix-framework/jmix-cli/releases/latest/download/install.
 
 The installer starts the wizard. The CLI bundles its own Java runtime;
 building generated projects needs a compatible JDK, which the wizard can help install.
+On macOS and Linux, restart the shell after installation or run
+`export PATH="$HOME/.local/bin:$PATH"` before invoking `jmix` in the current shell.
 
 ## Create a project
 

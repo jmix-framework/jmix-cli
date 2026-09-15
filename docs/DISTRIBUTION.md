@@ -35,6 +35,12 @@ and closes its progress display before starting the wizard and on failure.
 Redirected output and CI use plain status lines; `NO_COLOR` disables colored
 status messages.
 
+On macOS and Linux, the installer adds `~/.local/bin` to the detected Bash,
+Zsh, or POSIX shell profile when the directory is not already in `PATH`. Since
+the bootstrap script runs in a child shell, it also prints the `export` command
+needed to use `jmix` immediately without restarting the current shell. Set
+`JMIX_CLI_SKIP_PATH_UPDATE=1` to keep shell profiles unchanged.
+
 The stable asset names allow installers to use GitHub's
 `releases/latest/download` URL while the release tag records the exact version.
 Installations are stored by archive checksum, so installing the same release is
