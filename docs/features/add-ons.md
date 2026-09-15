@@ -50,10 +50,11 @@ Additional add-ons require a compatible development JDK before generation.
 The installer adds dependencies without duplicating template entries, resolves
 artifacts with the generated Gradle wrapper, and reads module metadata from JARs.
 Selected dependencies go at the start of the module's existing `dependencies`
-block under `// Selected Jmix add-ons`. Test security prerequisites use the same
-block; installation does not append additional `dependencies` blocks. Selected
-marketplace dependencies omit explicit versions and use the project's Jmix BOM,
-matching Studio. This also covers registered community add-ons; see
+block, separated from template dependencies by a blank line. Test security
+prerequisites use the same block; installation does not append additional
+`dependencies` blocks. Selected marketplace dependencies omit explicit versions
+and use the project's Jmix BOM, matching Studio. This also covers registered
+community add-ons; see
 [Jmix BOM registration](https://docs.jmix.io/jmix/publish-add-on.html#update-bom).
 It configures Liquibase includes and, for add-on templates, module dependencies
 and test security. Configuration completes before Git staging.

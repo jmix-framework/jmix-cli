@@ -83,7 +83,10 @@ class AddonInstallerTest {
         AddonInstaller.appendDependencies(info(), build)
         val text = Files.readString(build)
         assertTrue(text.startsWith(buildscript))
-        assertTrue(text.contains("dependencies {$newline    // Selected Jmix add-ons$newline    implementation 'demo:sample-starter'"))
+        assertTrue(text.contains(
+            "dependencies {$newline    implementation 'demo:sample-starter'$newline$newline" +
+                "    implementation 'demo:existing'$newline}"
+        ))
         assertEquals(1, Regex("(?m)^dependencies").findAll(text).count())
         assertTrue(text.contains("demo:existing"))
         assertTrue(text.indexOf("demo:sample-starter") < text.indexOf("demo:existing"))

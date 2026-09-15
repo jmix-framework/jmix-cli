@@ -73,7 +73,7 @@ object AddonInstaller {
             }
         }
         if (additions.isEmpty()) return
-        val declarations = additions.entries.joinToString("\n", "// Selected Jmix add-ons\n") { (coordinates, configuration) ->
+        val declarations = additions.entries.joinToString("\n") { (coordinates, configuration) ->
             "$configuration '$coordinates'"
         }
         prependDependencies(buildFile, declarations)
