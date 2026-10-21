@@ -26,8 +26,8 @@ class AgentToolkitInstallerIntegrationTest {
         AgentToolkitInstaller.installGuidelinesAndSkills(tempDir, "3.0.1")
 
         assertTrue(Files.isRegularFile(tempDir.resolve("CLAUDE.md")), "Claude guidelines must exist")
-        assertTrue(Files.isRegularFile(tempDir.resolve("AGENTS.md")), "Codex/OpenCode guidelines must exist")
-        assertTrue(Files.isRegularFile(tempDir.resolve(".junie/guidelines.md")), "Junie guidelines must exist")
+        assertTrue(Files.isRegularFile(tempDir.resolve("AGENTS.md")), "Codex/OpenCode/Junie guidelines must exist")
+        assertFalse(Files.exists(tempDir.resolve(".junie/guidelines.md"), NOFOLLOW_LINKS), "Junie must read the shared AGENTS.md")
         assertFalse(Files.exists(tempDir.resolve(".junie/skills"), NOFOLLOW_LINKS), "Junie-specific skills must not be installed")
         assertTrue(Files.isDirectory(tempDir.resolve(".skills")), "local skills store must exist")
         val claudeSkills = tempDir.resolve(".claude/skills")

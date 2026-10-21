@@ -21,7 +21,9 @@ version. Do not report the private bundled runtime as an installed development J
 - Install Jmix Agent Toolkit from the branch matching the Jmix major version
   unless the user opts out (`--no-agents-toolkit` or the wizard's setup checklist).
   Guidelines target Claude, Codex, OpenCode, and Junie; project-local skills
-  target Claude, Codex, and OpenCode. Junie receives no skills.
+  target Claude, Codex, and OpenCode. On the v3 toolkit branch Junie shares
+  `AGENTS.md` and `.agents/skills` with Codex and OpenCode; v2 still writes
+  `.junie/guidelines.md`.
 - JDK and toolkit installation report their phases (lookup, download with byte
   counts, checksum, unpacking; installer download, skills, guidelines) through
   `onStatus`/`onProgress` callbacks so the CLI can show a progress indicator.
@@ -44,4 +46,5 @@ Run `./gradlew test --tests 'io.jmix.cli.env.*'`. Network-backed JDK and toolkit
 integration tests require `JMIX_CLI_IT=true`. For detection changes, also run a
 self-contained CLI image so its bundled runtime cannot mask missing JDKs.
 For toolkit changes, inspect generated guideline and skill locations, including
-Junie's guidelines-only behavior, and cover Windows command construction.
+Junie's (shared files on v3, `.junie/guidelines.md` on v2), and cover Windows
+command construction.
