@@ -8,8 +8,6 @@ import org.junit.jupiter.api.Test
 
 class AgentToolkitInstallerTest {
 
-    private val agentsCsv = "claude,codex,opencode,junie"
-
     @Test
     fun `installer branch follows the jmix major version`() {
         assertEquals("v3", AgentToolkitInstaller.branch("3.0.1"))
@@ -31,22 +29,18 @@ class AgentToolkitInstallerTest {
     }
 
     @Test
-    fun `installs local skills without Junie and guidelines for all agents`() {
+    fun `installs local skills and guidelines with default Claude support`() {
         assertEquals(
-            listOf("skills", "--agents", "claude,codex,opencode", "--scope", "local"),
+            listOf("skills", "--scope", "local"),
             AgentToolkitInstaller.skillsArgs(os = "Linux"),
         )
         assertEquals(
-            listOf("skills", "-Agents", "claude,codex,opencode", "-Scope", "local"),
+            listOf("skills", "-Scope", "local"),
             AgentToolkitInstaller.skillsArgs(os = "Windows 11"),
         )
         assertEquals(
-            listOf("agents-md", "--agents", agentsCsv),
-            AgentToolkitInstaller.guidelinesArgs(os = "Mac OS X"),
-        )
-        assertEquals(
-            listOf("agents-md", "-Agents", agentsCsv),
-            AgentToolkitInstaller.guidelinesArgs(os = "Windows 11"),
+            listOf("agents-md"),
+            AgentToolkitInstaller.guidelinesArgs(),
         )
     }
 
@@ -54,8 +48,8 @@ class AgentToolkitInstallerTest {
     fun `runs the downloaded script as a file argument, never through a shell string`() {
         val script = Path.of("tmp", "toolkit.sh")
         assertEquals(
-            listOf("bash", script.toString(), "agents-md", "--agents", agentsCsv),
-            AgentToolkitInstaller.command(script, AgentToolkitInstaller.guidelinesArgs(os = "Linux"), os = "Linux"),
+            listOf("bash", script.toString(), "agents-md"),
+            AgentToolkitInstaller.command(script, AgentToolkitInstaller.guidelinesArgs(), os = "Linux"),
         )
         assertEquals(
             listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString()) +

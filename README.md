@@ -71,6 +71,8 @@ recreates the project with the same settings, ready to paste into a script.
 Generated projects include [Jmix Agent Toolkit](https://github.com/jmix-framework/jmix-agent-toolkit)
 guidelines and skills for supported AI coding assistants. The wizard's setup
 checklist can leave it out, as can `--no-agents-toolkit`.
+Skills live in `.agents/skills`, with links in `.claude/skills` for Claude Code.
+A new `CLAUDE.md` imports `AGENTS.md` so the guidelines are shared.
 
 ## Options and updates
 

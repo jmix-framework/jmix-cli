@@ -958,8 +958,7 @@ class NewCommand : CliktCommand(name = "new") {
             }
             summary(
                 "Agent Toolkit",
-                "guidelines for ${AgentToolkitInstaller.ALL_AGENTS.joinToString(", ")}; " +
-                    "local skills for ${AgentToolkitInstaller.SKILL_AGENTS.joinToString(", ")}",
+                "local skills and shared guidelines, including Claude Code",
             )
         } catch (e: Exception) {
             terminal.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))

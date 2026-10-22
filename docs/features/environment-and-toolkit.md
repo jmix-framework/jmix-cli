@@ -20,9 +20,10 @@ version. Do not report the private bundled runtime as an installed development J
   Non-interactive generation does not offer these actions.
 - Install Jmix Agent Toolkit from the branch matching the Jmix major version
   unless the user opts out (`--no-agents-toolkit` or the wizard's setup checklist).
-  Guidelines target Claude, Codex, OpenCode, and Junie; project-local skills
-  target Claude, Codex, and OpenCode. Junie shares `AGENTS.md` and
-  `.agents/skills` with Codex and OpenCode.
+  Shared guidelines go into `AGENTS.md`, and project-local skills are real folders
+  in `.agents/skills`, read by Codex, OpenCode, Junie and other agents. Claude Code
+  is enabled by default: `.claude/skills` links each skill to the shared store,
+  and a new `CLAUDE.md` imports `@AGENTS.md`.
 - JDK and toolkit installation report their phases (lookup, download with byte
   counts, checksum, unpacking; installer download, skills, guidelines) through
   `onStatus`/`onProgress` callbacks so the CLI can show a progress indicator.
