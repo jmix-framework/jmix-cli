@@ -117,6 +117,34 @@ internal fun shellQuote(arg: String, os: String = System.getProperty("os.name"))
     if (arg.isNotEmpty() && arg.all { it.isLetterOrDigit() || it in "-_./:@%+=," }) arg
     else "'" + arg.replace("'", if (os.startsWith("Windows", ignoreCase = true)) "''" else "'\\''") + "'"
 
+/** A user-typed path as an absolute, normalized one; a leading `~/` means the home directory. */
+internal fun toAbsolutePath(raw: String): Path {
+    val expanded = if (raw.startsWith("~/")) {
+        System.getProperty("user.home") + raw.substring(1)
+    } else raw
+    return Path.of(expanded).toAbsolutePath().normalize()
+}
+
+/** Reports whether a JDK that [jmixVersion] supports is installed and, when none is, how to get one. */
+internal fun reportJdkCheck(terminal: Terminal, status: StatusReporter, jmixVersion: String) {
+    val check = status.run("Detecting installed JDKs") { EnvironmentCheck.checkJdk(jmixVersion) }
+    if (check.compatible.isNotEmpty()) {
+        val jdk = check.compatible.first()
+        terminal.println(gray("Found compatible JDK ${jdk.majorVersion} at ${jdk.home}"))
+        return
+    }
+    val majorMinor = PlatformVersions.majorMinor(jmixVersion)
+    terminal.println(brightYellow(EnvironmentCheck.jdkMismatchMessage(majorMinor, check.supportedVersions)))
+    if (check.all.isEmpty()) {
+        terminal.println(brightYellow("No JDK was found on this machine."))
+    } else {
+        terminal.println(
+            brightYellow("Detected JDKs: ${check.all.joinToString(", ") { it.majorVersion.toString() }}"),
+        )
+    }
+    terminal.println(brightYellow(EnvironmentCheck.installHint(check.supportedVersions)))
+}
+
 class NewCommand : CliktCommand(name = "new") {
 
     override fun help(context: Context) = "Create a new Jmix project"
@@ -235,7 +263,7 @@ class NewCommand : CliktCommand(name = "new") {
         }
 
         val targetDir = state.targetDir!!
-        checkJdkEnvironment(state.jmixVersion!!)
+        reportJdkCheck(terminal, status, state.jmixVersion!!)
         if (state.addons.orEmpty().any { !it.included }) AddonInstaller.requireJavaHome(state.jmixVersion!!)
         checkTargetDir(targetDir)
 
@@ -748,13 +776,6 @@ class NewCommand : CliktCommand(name = "new") {
         return Outcome.PROMPTED
     }
 
-    private fun toAbsolutePath(raw: String): Path {
-        val expanded = if (raw.startsWith("~/")) {
-            System.getProperty("user.home") + raw.substring(1)
-        } else raw
-        return Path.of(expanded).toAbsolutePath().normalize()
-    }
-
     /** Optional setup after generation, offered as one checklist; both are on by default. */
     private enum class SetupOption(val title: String, val description: String) {
         GIT("Initialize Git repository", "git init and stage the generated files"),
@@ -805,25 +826,6 @@ class NewCommand : CliktCommand(name = "new") {
     }
 
     // --- Post-wizard checks and output ----------------------------------------
-
-    private fun checkJdkEnvironment(jmixVersion: String) {
-        val check = status.run("Detecting installed JDKs") { EnvironmentCheck.checkJdk(jmixVersion) }
-        if (check.compatible.isNotEmpty()) {
-            val jdk = check.compatible.first()
-            terminal.println(gray("Found compatible JDK ${jdk.majorVersion} at ${jdk.home}"))
-            return
-        }
-        val majorMinor = PlatformVersions.majorMinor(jmixVersion)
-        terminal.println(brightYellow(EnvironmentCheck.jdkMismatchMessage(majorMinor, check.supportedVersions)))
-        if (check.all.isEmpty()) {
-            terminal.println(brightYellow("No JDK was found on this machine."))
-        } else {
-            terminal.println(
-                brightYellow("Detected JDKs: ${check.all.joinToString(", ") { it.majorVersion.toString() }}"),
-            )
-        }
-        terminal.println(brightYellow(EnvironmentCheck.installHint(check.supportedVersions)))
-    }
 
     private fun checkTargetDir(targetDir: Path) {
         if (Files.exists(targetDir) && !Files.isDirectory(targetDir)) {
