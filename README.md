@@ -74,6 +74,39 @@ checklist can leave it out, as can `--no-agents-toolkit`.
 Skills live in `.agents/skills`, with links in `.claude/skills` for Claude Code.
 A new `CLAUDE.md` imports `AGENTS.md` so the guidelines are shared.
 
+## Jmix account and trial
+
+Sign in to your Jmix account to download the Enterprise+BPM trial project: demo
+applications that use the commercial add-ons and need no license key.
+
+```shell
+jmix login                 # sign in through your browser
+jmix trial                 # download the trial project into the current directory
+jmix trial --path ~/trial  # or into another directory
+jmix logout                # sign out on this computer
+```
+
+`jmix login [--region global|ru]` opens the Jmix sign-in page in your default browser and
+prints its address in case the browser does not open. Finish within 10 minutes. Use
+`--region ru` for an account on jmix.ru. Sign-in needs a browser on the same computer, so it
+does not work over SSH yet. The session is saved in `~/.jmix/account/session.json` (readable
+only by you on macOS and Linux), and the next sign-in replaces it. `jmix logout` deletes the file.
+
+`jmix trial [--path <directory>] [--start-trial]` downloads the trial of your account and
+unpacks it into the directory, the current one by default. At a terminal without a session it
+signs you in first, in the global region; for jmix.ru run `jmix login --region ru` beforehand.
+A trial that is already running, including one you started on the website, is downloaded as it
+is. When there is none, the command asks before it starts one, and `--start-trial` answers yes.
+With `--non-interactive` it never asks and never opens a browser, so scripts need `jmix login`
+and `--start-trial` up front.
+
+The project is a Gradle composite with the demos under `demo/` and the trial add-ons in
+`trial_repository`; leave that layout as it is. The command prints the trial end date and how to
+run a demo: `cd` into `demo/bpm`, then `./gradlew bootRun`. The demos stop starting when the
+trial ends. If one stops earlier, download a fresh copy into another directory with `--path`.
+See [account and trial](docs/features/account-and-trial.md) for the details and limits, and the
+[Jmix guide](https://docs.jmix.io/jmix/account-management.html#enterprise-trial) for the trial itself.
+
 ## Options and updates
 
 ```shell
@@ -102,8 +135,8 @@ non-interactive generation; the wizard lets you choose values interactively.
 | `--include-unstable`       | Include RC, beta and snapshot versions in version selection.                                                                       | Stable versions only                                                        |
 | `--force`                  | Allow generation into a non-empty directory without confirmation; existing files may be overwritten.                               | Confirmation required in the wizard; rejected in non-interactive mode       |
 | `--non-interactive`        | Use options and defaults without prompting.                                                                                        | Interactive wizard                                                          |
-| `--no-update`              | Skip the automatic startup update check. Also accepted by `jmix` and `jmix update`; explicit updates still run.                    | Automatic checks enabled for installed builds outside CI                    |
-| `-h`, `--help`             | Show help and exit. Available for `jmix`, `jmix new` and `jmix update`.                                                            | —                                                                           |
+| `--no-update`              | Skip the automatic startup update check. Accepted by every command; explicit updates still run.                                    | Automatic checks enabled for installed builds outside CI                    |
+| `-h`, `--help`             | Show help and exit. Available for every command.                                                                                   | —                                                                           |
 
 Installed builds check for updates automatically. Set `JMIX_CLI_NO_AUTO_UPDATE=1`
 to disable checks; they are also skipped when `CI` is set or running from source.

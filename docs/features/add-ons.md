@@ -102,8 +102,10 @@ The generated `build.gradle` reads `rootProject['premiumRepoUser']` and
 `rootProject['premiumRepoPass']`. A nearby comment explains how to split the license
 key between these properties in `~/.gradle/gradle.properties` and links to the
 [enterprise subscription](https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription).
-Access requires a license covering the selected add-ons; the CLI does not check
-subscriptions or activate licenses.
+Access requires a license covering the selected add-ons; `jmix new` does not check
+subscriptions or activate licenses. [`jmix trial`](account-and-trial.md) downloads the
+Enterprise+BPM trial project instead; its demos resolve the trial add-ons from the bundled
+`trial_repository` and need no premium credentials.
 
 If Gradle cannot resolve the add-ons, generation fails with the underlying error
 and setup instructions. Rendered files remain, but module/Liquibase configuration

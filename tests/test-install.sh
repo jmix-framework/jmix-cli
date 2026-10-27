@@ -44,6 +44,9 @@ first_output="$(run_installer "$release_dir")"
 # Self-update reads these; never let the tests reach the real release feed.
 export JMIX_CLI_NO_AUTO_UPDATE=1
 "$temp_dir/bin/jmix" --help | grep -q "Jmix CLI"
+# The account commands must be registered in the release image.
+"$temp_dir/bin/jmix" login --help | grep -q "Usage: jmix login"
+"$temp_dir/bin/jmix" trial --help | grep -q "Usage: jmix trial"
 
 # A default Linux install must make the documented command available in a fresh shell.
 if [[ "$platform" == "linux" ]]; then
@@ -71,6 +74,16 @@ fi
 # Complete installations are marked; cleanup keeps and prunes versions by it.
 installed_version_dir="$(find "$temp_dir/install/versions" -mindepth 1 -maxdepth 1 -type d | head -1)"
 [[ -f "$installed_version_dir/.jmix-installed" ]]
+# jmix login receives the sign-in redirect with jdk.httpserver. jlink keeps only the modules it is told to,
+# so a missing one fails in the installed CLI alone, never in tests or source runs.
+case "$platform" in
+    macos) runtime_release="Contents/runtime/Contents/Home/release" ;;
+    linux) runtime_release="lib/runtime/release" ;;
+esac
+grep -q 'jdk\.httpserver' "$installed_version_dir/$runtime_release" || {
+    echo "The release runtime does not include jdk.httpserver" >&2
+    exit 1
+}
 
 # 'jmix update' against a release that matches the installed one is a no-op.
 update_output="$(JMIX_CLI_RELEASE_BASE_URL="$release_dir" "$temp_dir/bin/jmix" update)"
