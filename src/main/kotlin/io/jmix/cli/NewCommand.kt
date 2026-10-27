@@ -35,6 +35,7 @@ import io.jmix.cli.template.TemplateCatalog
 import io.jmix.cli.template.TemplateParams
 import io.jmix.cli.update.SelfUpdater
 import io.jmix.cli.util.PlatformVersions
+import io.jmix.cli.util.cliVersion
 import io.jmix.cli.util.hostOf
 import io.jmix.cli.wizard.Answer
 import io.jmix.cli.wizard.Banner
@@ -868,10 +869,6 @@ class NewCommand : CliktCommand(name = "new") {
             terminal.println("  ${link.emoji} ${link.label.padEnd(labelWidth)}  ${cyan(link.url)}")
         }
     }
-
-    /** Release version from the jar manifest; absent in some dev runs. */
-    private fun cliVersion(): String? =
-        NewCommand::class.java.`package`?.implementationVersion?.takeIf { it.isNotBlank() }
 
     // Composite aggregator projects (marked hideForSubproject) have no runnable
     // Gradle task — their README explains how to attach subprojects.
