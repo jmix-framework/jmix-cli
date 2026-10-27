@@ -54,6 +54,8 @@ tasks.jar {
 
 tasks.test {
     useJUnitPlatform()
+    // Clikt's test() runs Mordant's JNA terminal detection as well; the application's flag stops the JDK 24+ warning.
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
     inputs.property(
         "integrationTestsEnabled",
         providers.environmentVariable("JMIX_CLI_IT")
