@@ -9,7 +9,6 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Path
 import java.time.Duration
-import java.util.Base64
 import kotlin.text.Charsets.UTF_8
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -20,9 +19,6 @@ import org.junit.jupiter.api.io.TempDir
 class BrowserSignInTest {
 
     private val tokenPath = "/auth/realms/jmix-cuba/protocol/openid-connect/token"
-
-    private fun jwt(payload: String) =
-        "e30." + Base64.getUrlEncoder().withoutPadding().encodeToString(payload.toByteArray()) + ".sig"
 
     private fun queryOf(url: String) =
         URI(url).rawQuery.split("&").associate { it.substringBefore("=") to URLDecoder.decode(it.substringAfter("="), UTF_8) }
@@ -38,8 +34,11 @@ class BrowserSignInTest {
         assertEquals(Identity("Ann Lee", "ann@example.com"), Identity.fromAccessToken(jwt("""{"name":"Ann Lee","email":"ann@example.com"}""")))
         assertEquals(Identity(null, "ann@example.com"), Identity.fromAccessToken(jwt("""{"email":"ann@example.com"}""")))
         assertEquals(Identity(null, null), Identity.fromAccessToken("not-a-jwt"))
-        assertEquals("Ann Lee (ann@example.com)", Identity("Ann Lee", "ann@example.com").describe())
-        assertEquals("your Jmix account", Identity(null, null).describe())
+        assertEquals(
+            "Signed in to your Jmix account as Ann Lee (ann@example.com).",
+            Identity("Ann Lee", "ann@example.com").signedInMessage(),
+        )
+        assertEquals("Signed in to your Jmix account.", Identity(null, null).signedInMessage())
     }
 
     @Test
@@ -50,8 +49,8 @@ class BrowserSignInTest {
         assertEquals(Identity(null, null), Identity.fromAccessToken(jwt("""["Ann Lee"]""")))
         assertEquals(Identity(null, null), Identity.fromAccessToken(jwt("this is not json")))
         assertEquals(Identity(null, null), Identity.fromAccessToken("e30.!!.sig"))
-        assertEquals("Ann Lee", Identity("Ann Lee", null).describe())
-        assertEquals("ann@example.com", Identity(null, "ann@example.com").describe())
+        assertEquals("Signed in to your Jmix account as Ann Lee.", Identity("Ann Lee", null).signedInMessage())
+        assertEquals("Signed in to your Jmix account as ann@example.com.", Identity(null, "ann@example.com").signedInMessage())
     }
 
     @Test

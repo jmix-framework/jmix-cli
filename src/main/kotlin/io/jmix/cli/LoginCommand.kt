@@ -14,26 +14,30 @@ import com.github.ajalt.mordant.rendering.TextColors.gray
 import com.github.ajalt.mordant.terminal.Terminal
 import io.jmix.cli.account.AccountRegion
 import io.jmix.cli.account.BrowserSignIn
-import io.jmix.cli.account.Identity
 import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.update.SelfUpdater
 
 /**
  * Prints the sign-in page address, tries to open it in the browser (a failure is only a warning, the user can
- * visit the printed address) and waits for the sign-in to finish. The wait has no spinner: it invites Ctrl+C,
- * which ends the JVM before a spinner could show the cursor again. [openUrl] is how the browser gets opened;
- * tests replace it so that no real browser starts.
+ * visit the printed address), waits for the sign-in to finish and names the account. A browser that still has a
+ * session signs in without showing a page, so that last line is how the user learns the account, also in
+ * `jmix trial` before it asks to start a trial. The wait has no spinner: it invites Ctrl+C, which ends the JVM
+ * before a spinner could show the cursor again. [openUrl] is how the browser gets opened; tests replace it so
+ * that no real browser starts.
  */
 internal fun signInInteractively(
     terminal: Terminal,
     signIn: BrowserSignIn,
     openUrl: (String, (String) -> Unit) -> Unit = ProjectLauncher::openUrl,
-): Identity = signIn.start().use { pending ->
-    terminal.println("Opening the Jmix sign-in page in your browser. If it does not open, visit:")
-    terminal.println(cyan(pending.url))
-    openUrl(pending.url) { terminal.println(brightYellow("Warning: $it")) }
-    terminal.println(gray("Waiting for sign-in in the browser (Ctrl+C to cancel)..."))
-    pending.complete()
+) {
+    val identity = signIn.start().use { pending ->
+        terminal.println("Opening the Jmix sign-in page in your browser. If it does not open, visit:")
+        terminal.println(cyan(pending.url))
+        openUrl(pending.url) { terminal.println(brightYellow("Warning: $it")) }
+        terminal.println(gray("Waiting for sign-in in the browser (Ctrl+C to cancel)..."))
+        pending.complete()
+    }
+    terminal.println(identity.signedInMessage())
 }
 
 class LoginCommand : CliktCommand(name = "login") {
@@ -49,7 +53,7 @@ class LoginCommand : CliktCommand(name = "login") {
     private val noUpdate by option(SelfUpdater.NO_UPDATE_FLAG, help = "Skip the startup update check").flag()
 
     override fun run() {
-        val identity = try {
+        try {
             signInInteractively(terminal, BrowserSignIn(AccountRegion.of(region)))
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -58,6 +62,5 @@ class LoginCommand : CliktCommand(name = "login") {
             // Expected failures (denied, timed out, unreachable) must stay readable; never a stack trace.
             throw CliktError("Sign-in failed: ${SelfUpdater.describe(e, "the Jmix sign-in service")}.")
         }
-        echo("Signed in to your Jmix account as ${identity.describe()}.")
     }
 }

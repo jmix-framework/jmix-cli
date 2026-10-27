@@ -34,8 +34,9 @@ loopback redirect.
   `?error=true`.
 - The CLI trades the code for tokens with the PKCE verifier, saves the session, and
   prints `Signed in to your Jmix account as <name> (<email>).` Name and email come from
-  the claims of the access token. The token is not verified: it came from the token
-  endpoint and only greets you.
+  the claims of the access token; with one of them the line names only that one, and with
+  neither it reads `Signed in to your Jmix account.` The token is not verified: it came
+  from the token endpoint and only greets you.
 - A failure ends with `Sign-in failed: <reason>.`, for example a timeout, a denied login
   or an unreachable service, with no stack trace.
 - `jmix login` does not check for a terminal. Signing in is its purpose, so it also runs
@@ -86,7 +87,9 @@ a message that names the fix.
    else, so a bad path fails before a trial can be started. A file at that path is
    refused. The directory stays, empty, when a later step fails before the download.
 2. **Session.** The saved session is used. With none, an interactive run signs in first
-   as `jmix login` does, in the global region; for a Russian account run
+   as `jmix login` does, in the global region, and prints the same `Signed in ...` line.
+   A browser that still has a Jmix session signs in without showing a page, so that line
+   names the account before any trial question. For a Russian account run
    `jmix login --region ru` beforehand. A non-interactive run fails with
    `Not signed in to a Jmix account. Run 'jmix login' first.`
 3. **Find the trial.** The account's trials are its subscriptions that carry a download
@@ -204,6 +207,8 @@ rejects `&&`.
 - Expected failures end in one concise `CliktError`. Network failures name the service
   (`the Jmix sign-in service`, `the Jmix Store`).
 - Starting a trial needs `--start-trial` or an explicit interactive yes. The default is No.
+  Every browser sign-in, also the one inside `jmix trial`, ends with the `Signed in ...` line,
+  so the account is named before that question.
 - Send `User-Agent: jmix-cli/<version or dev>` through `Http.request`.
 - Keep `jdk.httpserver` in `releaseRuntimeModules`. The release image is built with `jlink`,
   and without the module `jmix login` fails only in the installed CLI.

@@ -7,8 +7,8 @@ import com.github.ajalt.mordant.terminal.TerminalRecorder
 import io.jmix.cli.account.AccountEndpoints
 import io.jmix.cli.account.AccountRegion
 import io.jmix.cli.account.BrowserSignIn
-import io.jmix.cli.account.Identity
 import io.jmix.cli.account.SessionStore
+import io.jmix.cli.account.jwt
 import java.io.IOException
 import java.net.URI
 import java.net.URLDecoder
@@ -50,22 +50,25 @@ class LoginCommandTest {
     )
 
     @Test
-    fun `sign-in prints the page address on one line, opens it and returns who signed in`(@TempDir dir: Path) {
+    fun `sign-in prints the page address on one line, opens it and names the account`(@TempDir dir: Path) {
         FakeServer().use { sso ->
-            sso.on("POST", tokenPath) { FakeServer.json(200, """{"access_token":"a1","refresh_token":"r1"}""") }
+            val accessToken = jwt("""{"name":"Ann Lee","email":"ann@example.com"}""")
+            sso.on("POST", tokenPath) { FakeServer.json(200, """{"access_token":"$accessToken","refresh_token":"r1"}""") }
             val opened = mutableListOf<String>()
 
-            val identity = signInInteractively(terminal, signIn(sso, dir)) { url, _ ->
+            signInInteractively(terminal, signIn(sso, dir)) { url, _ ->
                 opened += url
                 comeBack(url)
             }
 
-            assertEquals(Identity(null, null), identity) // An opaque token names nobody.
+            // `jmix trial` signs in through here too: a browser that still has a session shows no page, so only
+            // the last line tells which account the trial question is about.
             assertEquals(
                 listOf(
                     "Opening the Jmix sign-in page in your browser. If it does not open, visit:",
                     opened.single(),
                     "Waiting for sign-in in the browser (Ctrl+C to cancel)...",
+                    "Signed in to your Jmix account as Ann Lee (ann@example.com).",
                 ),
                 recorder.output().trimEnd().lines(),
             )
@@ -82,10 +85,9 @@ class LoginCommandTest {
                 comeBack(url) // The user pastes the printed address into a browser instead.
             }
 
-            assertTrue(
-                recorder.output().contains("Warning: Failed to open the page in the browser: no launcher\n"),
-                recorder.output(),
-            )
+            val output = recorder.output()
+            assertTrue(output.contains("Warning: Failed to open the page in the browser: no launcher\n"), output)
+            assertTrue(output.endsWith("Signed in to your Jmix account.\n"), output) // An opaque token names nobody.
         }
     }
 

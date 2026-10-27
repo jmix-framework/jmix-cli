@@ -1,8 +1,13 @@
 package io.jmix.cli.account
 
 import io.jmix.cli.FakeServer
+import java.util.Base64
 
 internal const val TOKEN_PATH = "/auth/realms/jmix-cuba/protocol/openid-connect/token"
+
+/** An unsigned JWT whose claims are [payload]; the CLI reads access-token claims without verifying them. */
+internal fun jwt(payload: String) =
+    "e30." + Base64.getUrlEncoder().withoutPadding().encodeToString(payload.toByteArray()) + ".sig"
 
 /** A signed-in client whose SSO and store both live on [server]. */
 internal fun storeClient(server: FakeServer, sessions: SessionStore): StoreClient {

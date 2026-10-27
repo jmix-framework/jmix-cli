@@ -10,10 +10,13 @@ import kotlin.text.Charsets.UTF_8
 /** Who signed in, as far as the access token says. Either part can be missing. */
 internal data class Identity(val name: String?, val email: String?) {
 
-    /** The account as a message names it: "Ann Lee (ann@example.com)", the email alone, or a generic phrase. */
-    fun describe(): String = when {
-        name != null && email != null -> "$name ($email)"
-        else -> name ?: email ?: "your Jmix account"
+    /**
+     * The line that names the account: "Signed in to your Jmix account as Ann Lee (ann@example.com).", as the name
+     * or email alone, or just "Signed in to your Jmix account." when the token names neither.
+     */
+    fun signedInMessage(): String {
+        val account = if (name != null && email != null) "$name ($email)" else name ?: email
+        return if (account == null) "Signed in to your Jmix account." else "Signed in to your Jmix account as $account."
     }
 
     companion object {
