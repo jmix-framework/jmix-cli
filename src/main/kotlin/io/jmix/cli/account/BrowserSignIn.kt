@@ -2,7 +2,7 @@ package io.jmix.cli.account
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.google.gson.JsonPrimitive
+import io.jmix.cli.util.string
 import java.time.Duration
 import java.util.Base64
 import kotlin.text.Charsets.UTF_8
@@ -25,8 +25,7 @@ internal data class Identity(val name: String?, val email: String?) {
         fun fromAccessToken(token: String): Identity = try {
             val payload = Base64.getUrlDecoder().decode(token.split(".")[1])
             val claims = JsonParser.parseString(String(payload, UTF_8)) as? JsonObject
-            fun claim(name: String) =
-                (claims?.get(name) as? JsonPrimitive)?.takeIf { it.isString }?.asString?.takeIf { it.isNotBlank() }
+            fun claim(name: String) = claims?.string(name)?.takeIf { it.isNotBlank() }
             Identity(claim("name"), claim("email"))
         } catch (e: Exception) {
             // Dropped on purpose: Gson's message quotes the payload, and a token we cannot read is no reason to fail.

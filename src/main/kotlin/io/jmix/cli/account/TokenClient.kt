@@ -3,8 +3,8 @@ package io.jmix.cli.account
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
-import com.google.gson.JsonPrimitive
 import io.jmix.cli.util.Http
+import io.jmix.cli.util.string
 import java.io.IOException
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -75,16 +75,16 @@ internal class TokenClient(private val endpoints: AccountEndpoints, private val 
         val json = parseObject(response.body())
         if (status == 200) return tokensOf(json) ?: throw unexpectedResponse(status)
 
-        val error = json?.string("error")
+        val error = json?.nonBlank("error")
         // On a refresh, invalid_grant means the session is gone; on a code exchange it only means a bad code.
         if (isRefresh && (status == 400 || status == 401) && error == "invalid_grant") throw SessionExpiredException()
-        val message = json?.string("error_description") ?: error ?: "the Jmix sign-in service returned HTTP $status"
+        val message = json?.nonBlank("error_description") ?: error ?: "the Jmix sign-in service returned HTTP $status"
         throw IOException(message)
     }
 
     private fun tokensOf(json: JsonObject?): Tokens? {
-        val accessToken = json?.string("access_token") ?: return null
-        val refreshToken = json.string("refresh_token") ?: return null
+        val accessToken = json?.nonBlank("access_token") ?: return null
+        val refreshToken = json.nonBlank("refresh_token") ?: return null
         return Tokens(accessToken, refreshToken)
     }
 
@@ -96,8 +96,7 @@ internal class TokenClient(private val endpoints: AccountEndpoints, private val 
         null
     }
 
-    private fun JsonObject.string(name: String): String? =
-        (get(name) as? JsonPrimitive)?.takeIf { it.isString }?.asString?.takeIf { it.isNotBlank() }
+    private fun JsonObject.nonBlank(name: String): String? = string(name)?.takeIf { it.isNotBlank() }
 
     // Never add the body: it can hold tokens.
     private fun unexpectedResponse(status: Int) =

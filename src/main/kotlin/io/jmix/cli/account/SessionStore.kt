@@ -3,7 +3,7 @@ package io.jmix.cli.account
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.google.gson.JsonPrimitive
+import io.jmix.cli.util.string
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -48,13 +48,12 @@ internal class SessionStore(val file: Path = defaultFile()) {
 
     private fun parse(text: String): Session? {
         val json = JsonParser.parseString(text) as? JsonObject ?: return null
-        fun string(name: String) =
-            (json[name] as? JsonPrimitive)?.takeIf { it.isString }?.asString?.takeIf { it.isNotBlank() }
+        fun nonBlank(name: String) = json.string(name)?.takeIf { it.isNotBlank() }
         val session = Session(
-            region = string("region") ?: return null,
-            ssoUrl = string("ssoUrl") ?: return null,
-            storeUrl = string("storeUrl") ?: return null,
-            refreshToken = string("refreshToken") ?: return null,
+            region = nonBlank("region") ?: return null,
+            ssoUrl = nonBlank("ssoUrl") ?: return null,
+            storeUrl = nonBlank("storeUrl") ?: return null,
+            refreshToken = nonBlank("refreshToken") ?: return null,
         )
         AccountRegion.of(session.region) // An unknown id throws, which load reads as signed out.
         return session
