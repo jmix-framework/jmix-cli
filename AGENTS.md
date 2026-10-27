@@ -62,7 +62,7 @@ Additional checks depend on the change:
 | Generation | Also generate and build a project as described in the feature guide |
 | Wizard                                 | Real terminal and numbered/line-input fallback, including back and quit                           |
 | Distribution/installers                | `./gradlew releaseBundle`, then `tests/test-install.sh` or `tests/test-install.ps1` on Windows    |
-| Account/trial | `./gradlew test --tests 'io.jmix.cli.account.*' --tests 'io.jmix.cli.trial.*'`; manual `jmix login` and `jmix trial` on a test account; release image includes `jdk.httpserver` |
+| Account/trial | `./gradlew test --tests 'io.jmix.cli.account.*' --tests 'io.jmix.cli.trial.*' --tests 'io.jmix.cli.LoginCommandTest' --tests 'io.jmix.cli.LogoutCommandTest' --tests 'io.jmix.cli.TrialCommandTest'`; manual `jmix login` and `jmix trial` on a test account; release image includes `jdk.httpserver` |
 | Documentation/demo                     | Check links and examples; validate and visually inspect the recording                             |
 
 [CI](.github/workflows/ci.yml) runs on Linux, macOS, and Windows and builds a
