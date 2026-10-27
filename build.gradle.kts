@@ -117,6 +117,7 @@ val releaseRuntimeModules = listOf(
     "java.sql",
     "java.xml",
     "jdk.crypto.ec",
+    "jdk.httpserver",
     "jdk.unsupported",
     "jdk.zipfs",
 )
