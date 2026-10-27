@@ -32,6 +32,6 @@ fun main(args: Array<String>) {
     // on the new version, so it never executes on a superseded build.
     SelfUpdater.runStartupMaintenance(args)
     JmixCli()
-        .subcommands(NewCommand(), UpdateCommand())
+        .subcommands(NewCommand(), UpdateCommand(), LoginCommand(), LogoutCommand())
         .main(args)
 }

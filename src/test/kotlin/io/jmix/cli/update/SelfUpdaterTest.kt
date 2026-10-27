@@ -174,6 +174,12 @@ class SelfUpdaterTest {
     }
 
     @Test
+    fun `describe names the server that cannot be reached`() {
+        assertEquals("cannot reach the Jmix Store", SelfUpdater.describe(java.net.ConnectException("refused"), "the Jmix Store"))
+        assertEquals("cannot reach the release server", SelfUpdater.describe(java.net.ConnectException("refused")))
+    }
+
+    @Test
     fun `cleanupOldVersions removes versions that are neither running nor linked`() {
         val root = tempDir.resolve("install")
         val running = "a".repeat(64)

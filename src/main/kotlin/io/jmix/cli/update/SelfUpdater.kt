@@ -637,11 +637,13 @@ class SelfUpdater(
          * Human-readable cause for messages that must not show a stack trace.
          * Network and permission failures are the expected ones, and their
          * exception messages alone (a bare host name, a bare path, or nothing)
-         * do not explain anything.
+         * do not explain anything. [server] names what was being reached when
+         * the network failed, for callers that talk to something other than
+         * the release server.
          */
-        fun describe(e: Throwable): String = when (e) {
+        fun describe(e: Throwable, server: String = "the release server"): String = when (e) {
             is UnknownHostException, is ConnectException, is HttpTimeoutException, is SocketException ->
-                "cannot reach the release server"
+                "cannot reach $server"
             is AccessDeniedException -> "no permission to write ${e.file}"
             is FileSystemException -> "${e.reason ?: "file system error"}: ${e.file}"
             else -> e.message?.takeIf { it.isNotBlank() }?.let {

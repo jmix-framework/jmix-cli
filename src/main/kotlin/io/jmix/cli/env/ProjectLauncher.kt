@@ -131,6 +131,22 @@ object ProjectLauncher {
     }
 
     /**
+     * Opens [url] in the default browser. Never fails: a launcher that cannot
+     * start is reported through [onWarning]. Whether the page then loads is
+     * up to the browser.
+     */
+    fun openUrl(url: String, onWarning: (String) -> Unit) {
+        try {
+            ProcessBuilder(browserCommand(url))
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+        } catch (e: Exception) {
+            onWarning("Failed to open $url in the browser: ${e.message}")
+        }
+    }
+
+    /**
      * Opens [url] in the default browser once [port] starts accepting
      * connections. Polls from a daemon thread so the foreground Gradle run
      * keeps the terminal; gives up silently when the app never starts, and
@@ -141,14 +157,7 @@ object ProjectLauncher {
             val deadline = System.nanoTime() + APP_STARTUP_TIMEOUT.toNanos()
             while (System.nanoTime() < deadline) {
                 if (isPortInUse(port)) {
-                    try {
-                        ProcessBuilder(browserCommand(url))
-                            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                            .redirectError(ProcessBuilder.Redirect.DISCARD)
-                            .start()
-                    } catch (e: Exception) {
-                        onWarning("Failed to open $url in the browser: ${e.message}")
-                    }
+                    openUrl(url, onWarning)
                     return@Thread
                 }
                 try {
