@@ -18,6 +18,7 @@ import java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE
 import java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE
 import java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE
 import java.time.Duration
+import java.util.zip.ZipFile
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.deleteRecursively
 
@@ -29,6 +30,7 @@ import kotlin.io.path.deleteRecursively
 internal object TrialArchive {
 
     const val MAX_ARCHIVE_BYTES: Long = 1L shl 30
+    private const val MAX_UNPACKED_BYTES: Long = 4L shl 30
 
     /**
      * Downloads the archive from [url] into [target]. The link is a capability: whoever holds it can download, so
@@ -36,11 +38,15 @@ internal object TrialArchive {
      * larger than [maxBytes] and a zip; [target] may hold the partial file then.
      */
     fun download(url: String, target: Path, onProgress: (Long, Long) -> Unit, maxBytes: Long = MAX_ARCHIVE_BYTES) {
+        val request = downloadRequest(url)
         val response = try {
-            Http.client.send(downloadRequest(url), HttpResponse.BodyHandlers.ofInputStream())
+            Http.client.send(request, HttpResponse.BodyHandlers.ofInputStream())
         } catch (e: IllegalArgumentException) {
             // The JDK quotes the address of a bad link, or of a bad redirect, in this exception.
             throw unusableLink()
+        } catch (e: IOException) {
+            // HttpClient can wrap an invalid redirect (including the capability link) in an IOException.
+            throw IOException("cannot reach the trial download service")
         }
         response.body().use { body ->
             val status = response.statusCode()
@@ -59,14 +65,16 @@ internal object TrialArchive {
      * the whole archive is good and no project folder exists there yet.
      */
     @OptIn(ExperimentalPathApi::class)
-    fun unpack(archive: Path, parentDir: Path): List<Path> {
+    fun unpack(archive: Path, parentDir: Path, maxBytes: Long = MAX_UNPACKED_BYTES): List<Path> {
         // unpackZip compares normalized entry paths with its destination, so the destination must be normalized too.
         val parent = parentDir.toAbsolutePath().normalize()
         Files.createDirectories(parent)
         // The staging folder lies in the parent, so the final move is a rename on the same file system.
         val staging = Files.createTempDirectory(parent, ".jmix-trial-")
         try {
-            JdkInstaller.unpackZip(archive, staging)
+            // ZipInputStream accepts a missing central directory, which can hide a truncated download.
+            ZipFile(archive.toFile()).use { }
+            JdkInstaller.unpackZip(archive, staging, maxBytes)
             val names = projectNames(staging)
             if (names.isEmpty()) throw IOException("the downloaded archive does not contain a Jmix trial project")
             names.map(parent::resolve).firstOrNull { Files.exists(it) }?.let {

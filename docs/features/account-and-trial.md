@@ -38,7 +38,8 @@ loopback redirect.
   neither it reads `Signed in to your Jmix account.` The token is not verified: it came
   from the token endpoint and only greets you.
 - A failure ends with `Sign-in failed: <reason>.`, for example a timeout, a denied login
-  or an unreachable service, with no stack trace.
+  or an unreachable service, with no stack trace. Provider error descriptions are not
+  echoed: they can contain authorization codes or other private data.
 - `jmix login` does not check for a terminal. Signing in is its purpose, so it also runs
   from scripts, agents and IDE consoles, and always prints the address and tries the browser.
 
@@ -60,15 +61,28 @@ loopback redirect.
 ## Session file
 
 - `~/.jmix/account/session.json` holds the region, the two service URLs and the refresh
-  token. Access tokens stay in memory and never reach the disk.
+  token, plus the name/email for the menu's account block. Access tokens stay in
+  memory and never reach the disk. Profile details come from the access token at
+  sign-in and are updated on refresh; if a later token omits them, the saved details stay.
+- The main menu reads this file without contacting SSO or Store. It displays the
+  cached account and region, or `Not signed in`; this is local session status, not
+  a server validation. Existing files without profile details remain valid and show
+  `Signed in` and the region until a sign-in or refresh supplies the details.
+- Account details sit in a two- or three-row block at the top right of the menu,
+  beside the logo when space permits. Sign-in and
+  sign-out chosen from the menu return there and refresh the displayed account
+  and the `login`/`logout` choice; direct commands still finish after the action.
 - On macOS and Linux the directory is `rwx------` and the file `rw-------`. Windows has no
   POSIX permissions, so the file keeps the access rights it inherits from the user profile.
+- Saving also makes an existing account directory owner-only on macOS and Linux.
 - Saves are atomic: the CLI writes an owner-only temporary file next to the session and
   moves it over the old one. A failed save keeps the previous session and leaves no copy
   of the token.
 - A command that calls the store trades the refresh token for an access token once, reuses
   it for the rest of the process, and after a 401 refreshes and retries once. The provider
   rotates refresh tokens, so every refresh saves the new one.
+- Token and store API requests refuse HTTP redirects, so credentials cannot be forwarded
+  to another endpoint. Archive downloads still follow redirects without credentials.
 - When the provider ends the session (`invalid_grant`), the CLI deletes the file and says
   `Your Jmix account session has expired. Run 'jmix login' to sign in again.`
 - A missing, damaged or unknown-region file reads as signed out.
@@ -142,7 +156,10 @@ and the archive has no `.gitignore`.
 - The zip goes to a temporary file in the system temp directory, so an interrupted or
   failed download leaves nothing in `--path`.
 - Unpacking uses a hidden `.jmix-trial-*` staging folder inside `--path` and the zip-slip
-  guard of `JdkInstaller.unpackZip`. The projects are the top folders that hold a
+  guard of `JdkInstaller.unpackZip`. It requires a ZIP central directory and limits the
+  total extracted file content to 4 GiB, counting actual bytes across all entries.
+  A truncated or oversized archive fails before any project is moved into place.
+  The projects are the top folders that hold a
   `settings.gradle(.kts)` and a `trial_repository`; other entries are ignored, and an
   archive without a project is an error.
 - An existing `<path>/<folder>`, for example from an earlier run, is refused before anything
@@ -169,7 +186,7 @@ Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial
 ```
 
 The `cd` and `./gradlew bootRun` steps are separate lines because Windows PowerShell 5.1
-rejects `&&`.
+rejects `&&`. The `cd` path is quoted for the current platform, including spaces and apostrophes.
 
 ## Expiry
 
@@ -193,7 +210,8 @@ rejects `&&`.
 - There is no `cn` region: it has no store front end, and its sign-in service names another issuer.
 - `jmix logout` revokes nothing on the server.
 - The store endpoints are the website's own. The CLI treats their answers as untrusted:
-  checked casts only, several date shapes, and no response body in any message.
+  checked casts only, several date shapes, and no response body or server-provided error
+  text in any message. Failed calls report their HTTP status.
 
 ## Behavior to preserve
 
@@ -203,7 +221,9 @@ rejects `&&`.
 - Send `Authorization: Bearer` only to the store API. Download the archive without it.
 - Read JSON through checked casts (`as?`, `JsonObject.string`). Gson's exception messages
   quote the whole document, which can hold tokens or the download link, so no response body
-  or Gson message goes into an error.
+  or Gson message goes into an error. Never echo `error`, `error_description` or `message`
+  fields either. Access tokens must have the bearer-token character format before use in
+  a header; malformed values otherwise leak through JDK exception messages.
 - Expected failures end in one concise `CliktError`. Network failures name the service
   (`the Jmix sign-in service`, `the Jmix Store`).
 - Starting a trial needs `--start-trial` or an explicit interactive yes. The default is No.
@@ -215,9 +235,9 @@ rejects `&&`.
 
 ## Code
 
-- [LoginCommand.kt](../../src/main/kotlin/io/jmix/cli/LoginCommand.kt),
-  [LogoutCommand.kt](../../src/main/kotlin/io/jmix/cli/LogoutCommand.kt) and
-  [TrialCommand.kt](../../src/main/kotlin/io/jmix/cli/TrialCommand.kt) — the commands;
+- [LoginCommand.kt](../../src/main/kotlin/io/jmix/cli/command/LoginCommand.kt),
+  [LogoutCommand.kt](../../src/main/kotlin/io/jmix/cli/command/LogoutCommand.kt) and
+  [TrialCommand.kt](../../src/main/kotlin/io/jmix/cli/command/TrialCommand.kt) — the commands;
   [Main.kt](../../src/main/kotlin/io/jmix/cli/Main.kt) registers them.
 - [AccountEndpoints.kt](../../src/main/kotlin/io/jmix/cli/account/AccountEndpoints.kt) — regions, derived URLs, host overrides.
 - [Pkce.kt](../../src/main/kotlin/io/jmix/cli/account/Pkce.kt) — verifier, challenge, state.
@@ -239,8 +259,8 @@ Run the account and trial tests, which talk to the in-process
 
 ```shell
 ./gradlew test --tests 'io.jmix.cli.account.*' --tests 'io.jmix.cli.trial.*' \
-    --tests 'io.jmix.cli.LoginCommandTest' --tests 'io.jmix.cli.LogoutCommandTest' \
-    --tests 'io.jmix.cli.TrialCommandTest'
+    --tests 'io.jmix.cli.command.LoginCommandTest' --tests 'io.jmix.cli.command.LogoutCommandTest' \
+    --tests 'io.jmix.cli.command.TrialCommandTest'
 ```
 
 For the release image, `./gradlew releaseBundle` and `tests/test-install.sh` (on Windows,

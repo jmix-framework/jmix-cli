@@ -20,6 +20,12 @@ internal object Http {
         .followRedirects(HttpClient.Redirect.NORMAL)
         .build()
 
+    // A redirect must never forward a bearer token, refresh token or PKCE verifier to another endpoint.
+    val accountClient: HttpClient = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS))
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .build()
+
     fun request(url: String, timeout: Duration = Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS)): HttpRequest.Builder =
         HttpRequest.newBuilder(URI.create(url))
             .timeout(timeout)

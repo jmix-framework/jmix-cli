@@ -1,4 +1,4 @@
-package io.jmix.cli
+package io.jmix.cli.command
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError

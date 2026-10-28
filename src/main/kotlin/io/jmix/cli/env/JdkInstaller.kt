@@ -191,8 +191,10 @@ object JdkInstaller {
         }
     }
 
-    internal fun unpackZip(archive: Path, destDir: Path) {
+    internal fun unpackZip(archive: Path, destDir: Path, maxBytes: Long = Long.MAX_VALUE) {
         ZipInputStream(Files.newInputStream(archive)).use { zip ->
+            var unpacked = 0L
+            val buffer = ByteArray(64 * 1024)
             while (true) {
                 val entry = zip.nextEntry ?: break
                 val target = destDir.resolve(entry.name).normalize()
@@ -203,7 +205,15 @@ object JdkInstaller {
                     Files.createDirectories(target)
                 } else {
                     Files.createDirectories(target.parent)
-                    Files.copy(zip, target, StandardCopyOption.REPLACE_EXISTING)
+                    Files.newOutputStream(target).use { output ->
+                        while (true) {
+                            val read = zip.read(buffer)
+                            if (read < 0) break
+                            if (read > maxBytes - unpacked) throw IOException("the unpacked archive is too large")
+                            unpacked += read
+                            output.write(buffer, 0, read)
+                        }
+                    }
                 }
             }
         }

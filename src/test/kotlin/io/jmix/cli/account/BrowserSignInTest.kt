@@ -49,6 +49,7 @@ class BrowserSignInTest {
         assertEquals(Identity(null, null), Identity.fromAccessToken(jwt("""["Ann Lee"]""")))
         assertEquals(Identity(null, null), Identity.fromAccessToken(jwt("this is not json")))
         assertEquals(Identity(null, null), Identity.fromAccessToken("e30.!!.sig"))
+        assertEquals(Identity("Ann", "ann@example.com"), Identity.fromAccessToken(jwt("""{"name":" Ann\u001b\n","email":"ann@example.com\r"}""")))
         assertEquals("Signed in to your Jmix account as Ann Lee.", Identity("Ann Lee", null).signedInMessage())
         assertEquals("Signed in to your Jmix account as ann@example.com.", Identity(null, "ann@example.com").signedInMessage())
     }
@@ -74,7 +75,7 @@ class BrowserSignInTest {
                 assertEquals("c1", form["code"])
                 assertEquals(query["code_challenge"], Pkce.challengeOf(form.getValue("code_verifier")))
             }
-            assertEquals(Session("global", sso.url, "https://store.example", "r1"), sessions.load())
+            assertEquals(Session("global", sso.url, "https://store.example", "r1", Identity("Ann Lee", "ann@example.com")), sessions.load())
         }
     }
 
@@ -88,7 +89,7 @@ class BrowserSignInTest {
                 val query = queryOf(pending.url)
                 get("${query["redirect_uri"]}/?state=${query["state"]}&code=c1")
                 val error = assertThrows<IOException> { pending.complete(Duration.ofSeconds(5)) }
-                assertEquals("Code not valid", error.message)
+                assertEquals("the sign-in code is no longer valid; run 'jmix login' again", error.message)
             }
             assertEquals(earlier, sessions.load())
         }

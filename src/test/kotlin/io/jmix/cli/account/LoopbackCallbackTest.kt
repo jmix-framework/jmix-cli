@@ -15,6 +15,15 @@ import org.junit.jupiter.api.assertThrows
 
 class LoopbackCallbackTest {
 
+    @Test
+    fun `callback errors do not echo arbitrary provider text`() {
+        LoopbackCallback("s1", "https://sso.example/delegated").use { callback ->
+            get("${callback.redirectUri}/?state=s1&error=PRIVATE&error_description=PRIVATE%1B%5B2J")
+            val error = assertThrows<IOException> { callback.await(Duration.ofSeconds(5)) }
+            assertTrue(!error.message!!.contains("PRIVATE") && !error.message!!.contains('\u001b'), error.message)
+        }
+    }
+
     private val noRedirects = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build()
     private fun get(url: String) = noRedirects.send(HttpRequest.newBuilder(URI(url)).build(), HttpResponse.BodyHandlers.discarding())
 
@@ -30,11 +39,11 @@ class LoopbackCallbackTest {
     }
 
     @Test
-    fun `reports the provider error and shows the failure page`() {
+    fun `reports a denied sign-in and shows the failure page`() {
         LoopbackCallback("s1", "https://sso.example/delegated").use { callback ->
             val response = get("${callback.redirectUri}/?error=access_denied&error_description=User%20cancelled&state=s1")
             assertEquals("https://sso.example/delegated?error=true", response.headers().firstValue("Location").orElseThrow())
-            assertEquals("User cancelled", assertThrows<IOException> { callback.await(Duration.ofSeconds(5)) }.message)
+            assertEquals("sign-in was denied in the browser", assertThrows<IOException> { callback.await(Duration.ofSeconds(5)) }.message)
         }
     }
 
@@ -100,7 +109,7 @@ class LoopbackCallbackTest {
         LoopbackCallback("s1", "https://sso.example/delegated").use { callback ->
             assertEquals(404, get("${callback.redirectUri}/?state=s1&code=").statusCode())
             get("${callback.redirectUri}/?state=s1&error=access_denied&error_description=")
-            assertEquals("access_denied", assertThrows<IOException> { callback.await(Duration.ofSeconds(5)) }.message)
+            assertEquals("sign-in was denied in the browser", assertThrows<IOException> { callback.await(Duration.ofSeconds(5)) }.message)
         }
     }
 }

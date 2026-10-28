@@ -58,7 +58,7 @@ internal class LoopbackCallback(
             outcome.isDone || (code.isEmpty() && error == null) -> exchange.sendResponseHeaders(NOT_FOUND, NO_BODY)
             // Before the error: only the provider's redirect carries our state, so others cannot choose the message.
             query["state"] != expectedState -> fail(exchange, "the browser response does not match this sign-in")
-            error != null -> fail(exchange, query["error_description"] ?: error)
+            error != null -> fail(exchange, "sign-in was denied in the browser")
             else -> succeed(exchange, code)
         }
     }

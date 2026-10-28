@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the CLI and run it: ./run.sh [args...]
-# No args starts the wizard, e.g.: ./run.sh   or   ./run.sh new jmix-project --no-git
+# No args opens the command menu, e.g.: ./run.sh   or   ./run.sh new jmix-project --no-git
 set -euo pipefail
 cd "$(dirname "$0")"
 

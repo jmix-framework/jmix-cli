@@ -1,4 +1,6 @@
-package io.jmix.cli
+package io.jmix.cli.command
+
+import io.jmix.cli.FakeServer
 
 import com.github.ajalt.clikt.testing.test
 import io.jmix.cli.account.Session

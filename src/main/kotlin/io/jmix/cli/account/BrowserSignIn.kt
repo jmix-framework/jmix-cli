@@ -10,29 +10,36 @@ import kotlin.text.Charsets.UTF_8
 /** Who signed in, as far as the access token says. Either part can be missing. */
 internal data class Identity(val name: String?, val email: String?) {
 
+    val displayName: String?
+        get() = if (name != null && email != null) "$name ($email)" else name ?: email
+
     /**
      * The line that names the account: "Signed in to your Jmix account as Ann Lee (ann@example.com).", as the name
      * or email alone, or just "Signed in to your Jmix account." when the token names neither.
      */
     fun signedInMessage(): String {
-        val account = if (name != null && email != null) "$name ($email)" else name ?: email
+        val account = displayName
         return if (account == null) "Signed in to your Jmix account." else "Signed in to your Jmix account as $account."
     }
 
     companion object {
         /**
          * Reads the `name` and `email` claims from the payload of the JWT [token]. The token is not verified:
-         * it came straight from the token endpoint and the claims only greet the user. Anything unexpected
+         * it came straight from the token endpoint and the claims only label the account. Anything unexpected
          * gives an empty identity.
          */
         fun fromAccessToken(token: String): Identity = try {
             val payload = Base64.getUrlDecoder().decode(token.split(".")[1])
             val claims = JsonParser.parseString(String(payload, UTF_8)) as? JsonObject
-            fun claim(name: String) = claims?.string(name)?.takeIf { it.isNotBlank() }
-            Identity(claim("name"), claim("email"))
+            fromClaims(claims)
         } catch (e: Exception) {
             // Dropped on purpose: Gson's message quotes the payload, and a token we cannot read is no reason to fail.
             Identity(null, null)
+        }
+
+        fun fromClaims(claims: JsonObject?): Identity {
+            fun claim(name: String) = claims?.string(name)?.filterNot(Char::isISOControl)?.trim()?.takeIf { it.isNotEmpty() }
+            return Identity(claim("name"), claim("email"))
         }
     }
 }
@@ -74,8 +81,9 @@ internal class BrowserSignIn(
         fun complete(timeout: Duration = SIGN_IN_TIMEOUT): Identity {
             val code = callback.await(timeout)
             val tokens = tokenClient.exchangeCode(code, pkce, callback.redirectUri)
-            sessions.save(Session(region.id, endpoints.ssoUrl, endpoints.storeUrl, tokens.refreshToken))
-            return Identity.fromAccessToken(tokens.accessToken)
+            val identity = Identity.fromAccessToken(tokens.accessToken)
+            sessions.save(Session(region.id, endpoints.ssoUrl, endpoints.storeUrl, tokens.refreshToken, identity))
+            return identity
         }
 
         override fun close() = callback.close()

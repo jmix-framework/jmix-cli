@@ -3,6 +3,7 @@ package io.jmix.cli.trial
 import io.jmix.cli.account.AccountRegion
 import io.jmix.cli.account.StoreClient
 import io.jmix.cli.env.ProjectLauncher
+import io.jmix.cli.command.shellQuote
 import java.nio.file.Path
 import java.time.LocalDate
 
@@ -76,7 +77,7 @@ internal fun trialSummary(projects: List<Path>, endDate: LocalDate?, currentDir:
         add("Next steps:")
         add("  1. Open ${displayPath(project, currentDir)} in IntelliJ IDEA with Jmix Studio")
         // Separate lines, as in `jmix new`: Windows PowerShell 5.1 rejects `&&`.
-        add("  2. cd ${displayPath(app, currentDir)}")
+        add("  2. cd ${shellQuote(displayPath(app, currentDir))}")
         add("  3. ./gradlew bootRun   (http://localhost:${ProjectLauncher.serverPort(app)})")
         if (apps.size > 1) {
             add("Demo applications: " + apps.joinToString(", ") { "${it.fileName} :${ProjectLauncher.serverPort(it)}" })

@@ -176,5 +176,5 @@ if ($NoRun -or $env:JMIX_CLI_NO_RUN -eq "1") {
     return
 }
 
-Write-InstallStatus "Starting the Jmix project wizard..."
+Write-InstallStatus "Starting Jmix CLI..."
 & $launcher @CliArguments

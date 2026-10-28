@@ -5,6 +5,7 @@ import io.jmix.cli.account.AccountRegion
 import io.jmix.cli.account.SessionStore
 import io.jmix.cli.account.issuesTokens
 import io.jmix.cli.account.storeClient
+import io.jmix.cli.command.shellQuote
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDate
@@ -17,6 +18,15 @@ import org.junit.jupiter.api.io.TempDir
 
 /** FakeServer plays SSO and store; storeClient()/issuesTokens() come from AccountFixtures.kt. */
 class TrialFinderTest {
+
+    @Test
+    fun `summary quotes a demo path containing spaces and apostrophes`(@TempDir dir: Path) {
+        val project = Files.createDirectories(dir.resolve("Ann's trials/$TRIAL_ROOT"))
+        val app = Files.createDirectories(project.resolve("demo/bpm"))
+        Files.writeString(app.resolve("gradlew"), "#!/bin/sh")
+        val lines = trialSummary(listOf(project), null, dir)
+        assertTrue("  2. cd ${shellQuote(dir.relativize(app).toString())}" in lines, lines.toString())
+    }
 
     private val today = LocalDate.of(2026, 10, 27)
     private val account = "https://store.jmix.io/account"

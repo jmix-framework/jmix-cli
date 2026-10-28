@@ -1,4 +1,4 @@
-package io.jmix.cli
+package io.jmix.cli.command
 
 import io.jmix.cli.addon.Addon
 import io.jmix.cli.addon.ResolvedAddon

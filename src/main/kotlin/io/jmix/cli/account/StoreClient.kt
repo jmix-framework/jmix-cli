@@ -37,7 +37,7 @@ internal data class StartedTrial(val link: String?, val expiryDate: LocalDate?) 
 internal class StoreClient(
     private val storeApiUrl: String,
     private val tokens: AccessTokens,
-    private val http: HttpClient = Http.client,
+    private val http: HttpClient = Http.accountClient,
 ) {
 
     /** All subscriptions of the account. Entries that are not JSON objects are skipped. */
@@ -109,13 +109,10 @@ private fun subscriptionOf(item: JsonObject) =
 
 /** The failure a response describes, or null when it describes none. */
 private fun failureOf(status: Int, fields: JsonObject?): IOException? {
-    val error = fields?.nonBlank("error")
-    val reason = fields?.nonBlank("error_description") ?: error
     return when {
-        // Failures come in two shapes: OAuth-style error fields, and the store's own {errorCode, errorFields, message}.
-        status !in 200..299 ->
-            IOException(reason ?: fields?.nonBlank("message") ?: "the Jmix Store returned HTTP $status")
-        error != null -> IOException(reason)
+        // Server messages can include capability links or credentials; never echo response fields.
+        status !in 200..299 -> IOException("the Jmix Store returned HTTP $status")
+        fields?.nonBlank("error") != null || fields?.nonBlank("errorCode") != null -> unexpectedResponse(status)
         else -> null
     }
 }
@@ -134,4 +131,5 @@ private fun unexpectedResponse(status: Int) =
 
 private fun JsonObject.nonBlank(name: String): String? = string(name)?.takeIf { it.isNotBlank() }
 
-private fun JsonObject.int(name: String): Int? = (get(name) as? JsonPrimitive)?.takeIf { it.isNumber }?.asInt
+private fun JsonObject.int(name: String): Int? =
+    (get(name) as? JsonPrimitive)?.takeIf { it.isNumber }?.asString?.toIntOrNull()

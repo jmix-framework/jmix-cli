@@ -10,8 +10,14 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.FileAttribute
 import java.nio.file.attribute.PosixFilePermissions
 
-/** A signed-in Jmix account. Only the refresh token is kept; access tokens are requested when needed. */
-internal data class Session(val region: String, val ssoUrl: String, val storeUrl: String, val refreshToken: String) {
+/** A saved session and its display identity. Access tokens are requested when needed and never persisted. */
+internal data class Session(
+    val region: String,
+    val ssoUrl: String,
+    val storeUrl: String,
+    val refreshToken: String,
+    val identity: Identity = Identity(null, null),
+) {
 
     /** Hides the refresh token, so a session that reaches a message or a log does not leak it. */
     override fun toString(): String =
@@ -33,6 +39,9 @@ internal class SessionStore(val file: Path = defaultFile()) {
     fun save(session: Session) {
         val dir = file.toAbsolutePath().parent
         Files.createDirectories(dir, *ownerOnly("rwx------"))
+        if ("posix" in file.fileSystem.supportedFileAttributeViews()) {
+            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwx------"))
+        }
         val tmp = Files.createTempFile(dir, "session", ".tmp", *ownerOnly("rw-------"))
         try {
             Files.writeString(tmp, Gson().toJson(session))
@@ -54,6 +63,7 @@ internal class SessionStore(val file: Path = defaultFile()) {
             ssoUrl = nonBlank("ssoUrl") ?: return null,
             storeUrl = nonBlank("storeUrl") ?: return null,
             refreshToken = nonBlank("refreshToken") ?: return null,
+            identity = Identity.fromClaims(json["identity"] as? JsonObject),
         )
         AccountRegion.of(session.region) // An unknown id throws, which load reads as signed out.
         return session

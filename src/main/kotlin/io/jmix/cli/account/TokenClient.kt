@@ -24,7 +24,7 @@ internal class SessionExpiredException :
     IOException("Your Jmix account session has expired. Run 'jmix login' to sign in again.")
 
 /** Talks to the identity provider as a public client: PKCE proves the caller, and there is no client secret. */
-internal class TokenClient(private val endpoints: AccountEndpoints, private val http: HttpClient = Http.client) {
+internal class TokenClient(private val endpoints: AccountEndpoints, private val http: HttpClient = Http.accountClient) {
 
     /** The page where the user signs in; the provider then redirects to [redirectUri] with a code and [state]. */
     fun authorizationUrl(pkce: Pkce, state: String, redirectUri: String): String =
@@ -78,12 +78,19 @@ internal class TokenClient(private val endpoints: AccountEndpoints, private val 
         val error = json?.nonBlank("error")
         // On a refresh, invalid_grant means the session is gone; on a code exchange it only means a bad code.
         if (isRefresh && (status == 400 || status == 401) && error == "invalid_grant") throw SessionExpiredException()
-        val message = json?.nonBlank("error_description") ?: error ?: "the Jmix sign-in service returned HTTP $status"
+        // Provider descriptions can echo authorization codes; only locally defined messages are safe to print.
+        val message = if (error == "invalid_grant") {
+            "the sign-in code is no longer valid; run 'jmix login' again"
+        } else {
+            "the Jmix sign-in service returned HTTP $status"
+        }
         throw IOException(message)
     }
 
     private fun tokensOf(json: JsonObject?): Tokens? {
         val accessToken = json?.nonBlank("access_token") ?: return null
+        // HttpRequest's invalid-header exception quotes its value, so reject malformed bearer tokens here.
+        if (!BEARER_TOKEN.matches(accessToken)) return null
         val refreshToken = json.nonBlank("refresh_token") ?: return null
         return Tokens(accessToken, refreshToken)
     }
@@ -107,3 +114,5 @@ internal class TokenClient(private val endpoints: AccountEndpoints, private val 
 
     private fun encode(text: String): String = URLEncoder.encode(text, UTF_8)
 }
+
+private val BEARER_TOKEN = Regex("[A-Za-z0-9._~+/-]+=*")

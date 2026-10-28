@@ -24,7 +24,7 @@ curl -fsSL https://github.com/jmix-framework/jmix-cli/releases/latest/download/i
 irm https://github.com/jmix-framework/jmix-cli/releases/latest/download/install.ps1 | iex
 ```
 
-The installer starts the wizard. The CLI bundles its own Java runtime;
+The installer opens the command menu. The CLI bundles its own Java runtime;
 building generated projects needs a compatible JDK, which the wizard can help install.
 On macOS and Linux, restart the shell after installation or run
 `export PATH="$HOME/.local/bin:$PATH"` before invoking `jmix` in the current shell.
@@ -34,6 +34,21 @@ On macOS and Linux, restart the shell after installation or run
 ```shell
 jmix
 ```
+
+Select a command from the menu: **new** (create a project), **trial** (download the
+Enterprise+BPM trial project), **login** or **logout** (depending on the saved
+session), and **update**. Use arrow keys and Enter, or enter a number in a text
+console. Press `q` to quit. To open the project wizard directly, run `jmix new`.
+The welcome screen groups the saved account at the top right: region in the header,
+name below it, and email on a third line when available. Signed-out and incomplete
+profiles use two lines. After signing in or out from the menu, you return
+to the menu with the updated account. Account details are cached locally, so it
+works offline. The logo has a short, one-time reveal in interactive color terminals;
+`NO_COLOR` also disables this animation.
+The account name is bold green, email is muted, and region is cyan; signed-out
+status is yellow. In the project wizard, Esc on the first editable step returns to
+the command menu (`<` in text consoles). Returning to the menu discards the draft;
+starting the wizard again begins a new one.
 
 Choose a template, languages, add-ons, and project location. Follow the keyboard
 hints at the bottom of each step. In text input, use **Ctrl+Q** to quit.

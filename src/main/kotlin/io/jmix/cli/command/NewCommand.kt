@@ -1,8 +1,9 @@
-package io.jmix.cli
+package io.jmix.cli.command
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.options.flag
@@ -35,10 +36,8 @@ import io.jmix.cli.template.TemplateCatalog
 import io.jmix.cli.template.TemplateParams
 import io.jmix.cli.update.SelfUpdater
 import io.jmix.cli.util.PlatformVersions
-import io.jmix.cli.util.cliVersion
 import io.jmix.cli.util.hostOf
 import io.jmix.cli.wizard.Answer
-import io.jmix.cli.wizard.Banner
 import io.jmix.cli.wizard.PathCompleter
 import io.jmix.cli.wizard.Prompts
 import io.jmix.cli.wizard.StatusReporter
@@ -209,18 +208,11 @@ class NewCommand : CliktCommand(name = "new") {
         }
     }
 
-    private val terminal = Terminal()
-    private val status = StatusReporter(terminal)
+    private lateinit var status: StatusReporter
     private var state = WizardState()
     private var activeStepIndex = 0
     private var wizardStage: WizardStage? = null
-    private val prompts = Prompts(
-        terminal,
-        wizardUiState = { state.toUiState(activeStepIndex, wizardStage) },
-        // The banner stays on screen as the wizard's header instead of being
-        // wiped by the first frame.
-        header = { width -> Banner.lines(width, cliVersion()) },
-    )
+    private lateinit var prompts: Prompts
 
     // Prompt unless told not to; EOF on a non-terminal stdin aborts cleanly,
     // so scripts and pipes never hang.
@@ -236,6 +228,12 @@ class NewCommand : CliktCommand(name = "new") {
     private var addonCatalog: AddonCatalog? = null
 
     override fun run() {
+        state = WizardState()
+        activeStepIndex = 0
+        wizardStage = null
+        addonCatalog = null
+        status = StatusReporter(terminal)
+        prompts = Prompts(terminal, wizardUiState = { state.toUiState(activeStepIndex, wizardStage) })
         try {
             createProject()
         } catch (e: java.io.IOException) {
@@ -243,15 +241,12 @@ class NewCommand : CliktCommand(name = "new") {
             throw CliktError(e.message ?: e.toString())
         } finally {
             catalog?.close()
+            catalog = null
+            catalogVersion = null
         }
     }
 
     private fun createProject() {
-        // Consoles that render prompts line by line get the banner once, up
-        // front; full-screen terminals get it as the header of every frame.
-        if (interactive && terminal.terminalInfo.outputInteractive && !prompts.usesAlternateScreen) {
-            Banner.print(terminal, cliVersion())
-        }
         // One alternate screen for the whole wizard, with the banner as its
         // header: switching per step made the banner and the answers so far
         // flash between every question.
@@ -332,7 +327,8 @@ class NewCommand : CliktCommand(name = "new") {
             if (outcome == Outcome.BACK) {
                 var j = i - 1
                 while (j >= 0 && !prompted[j]) j--
-                i = if (j >= 0) j else i
+                if (j < 0) throw ReturnToMainMenu()
+                i = j
             } else {
                 i++
             }
@@ -368,7 +364,7 @@ class NewCommand : CliktCommand(name = "new") {
         }
         if (!interactive) throw CliktError("Project name is required. Usage: jmix new <name>")
         val default = state.name ?: defaultProjectName()
-        return when (val answer = prompts.ask("Enter project name", default, validate = Validation::validateProjectName)) {
+        return when (val answer = prompts.ask("Enter project name", default, allowBack = true, validate = Validation::validateProjectName)) {
             is Answer.Back -> Outcome.BACK
             is Answer.Value -> {
                 state = state.copy(name = answer.value)

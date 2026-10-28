@@ -29,7 +29,11 @@ internal class AccessTokens(
             throw e
         }
         // Refresh tokens rotate, so the old one may be spent: keep the new one in memory even if saving it fails.
-        session = session.copy(refreshToken = tokens.refreshToken)
+        val identity = Identity.fromAccessToken(tokens.accessToken)
+        session = session.copy(
+            refreshToken = tokens.refreshToken,
+            identity = identity.takeIf { it.displayName != null } ?: session.identity,
+        )
         sessions.save(session)
         accessToken = tokens.accessToken
         return tokens.accessToken

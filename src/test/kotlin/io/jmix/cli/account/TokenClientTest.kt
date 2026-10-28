@@ -16,6 +16,42 @@ import org.junit.jupiter.api.assertThrows
 
 class TokenClientTest {
 
+    @Test
+    fun `token posts never follow redirects to another service`() {
+        FakeServer().use { sso ->
+            FakeServer().use { other ->
+                other.on("POST", "/tokens") { FakeServer.json(200, """{"access_token":"a","refresh_token":"r"}""") }
+                sso.on("POST", TOKEN_PATH) { FakeServer.Response(307, headers = mapOf("Location" to "${other.url}/tokens")) }
+                assertThrows<IOException> { TokenClient(AccountEndpoints(sso.url, sso.url)).refresh("PRIVATE-REFRESH") }
+                assertTrue(other.requests.isEmpty(), "The refresh token must not leave the sign-in service")
+            }
+        }
+    }
+
+    @Test
+    fun `provider error fields cannot expose credentials`() {
+        FakeServer().use { server ->
+            server.on("POST", TOKEN_PATH) {
+                FakeServer.json(400, """{"error":"invalid_grant","error_description":"Code PRIVATE-CODE not valid"}""")
+            }
+            val error = assertThrows<IOException> {
+                TokenClient(AccountEndpoints(server.url, server.url)).exchangeCode("PRIVATE-CODE", Pkce.create(), "http://localhost:1")
+            }
+            assertFalse(error.message!!.contains("PRIVATE-CODE"), error.message)
+        }
+    }
+
+    @Test
+    fun `a token with invalid header characters is rejected without quoting it`() {
+        FakeServer().use { server ->
+            server.on("POST", TOKEN_PATH) {
+                FakeServer.json(200, """{"access_token":"PRIVATE\r\nvalue","refresh_token":"r1"}""")
+            }
+            val error = assertThrows<IOException> { TokenClient(AccountEndpoints(server.url, server.url)).refresh("r0") }
+            assertFalse(error.message!!.contains("PRIVATE"), error.message)
+        }
+    }
+
     private fun endpoints(server: FakeServer) = AccountEndpoints(server.url, server.url)
     private val authPath = "/auth/realms/jmix-cuba/protocol/openid-connect/auth"
     private val tokenPath = "/auth/realms/jmix-cuba/protocol/openid-connect/token"
@@ -114,17 +150,17 @@ class TokenClientTest {
     }
 
     @Test
-    fun `a rejected code is reported with the service's description, not as an expired session`() {
+    fun `a rejected code asks for a new sign-in without echoing the service description`() {
         FakeServer().use { server ->
             server.on("POST", tokenPath) { FakeServer.json(400, """{"error":"invalid_grant","error_description":"Code not valid"}""") }
             val error = assertThrows<IOException> { TokenClient(endpoints(server)).exchangeCode("c1", Pkce.create(), "http://localhost:1") }
             assertFalse(error is SessionExpiredException)
-            assertEquals("Code not valid", error.message)
+            assertEquals("the sign-in code is no longer valid; run 'jmix login' again", error.message)
         }
         FakeServer().use { server ->
             server.on("POST", tokenPath) { FakeServer.json(400, """{"error":"invalid_client"}""") }
             val error = assertThrows<IOException> { TokenClient(endpoints(server)).refresh("r1") }
-            assertEquals("invalid_client", error.message)
+            assertEquals("the Jmix sign-in service returned HTTP 400", error.message)
         }
     }
 

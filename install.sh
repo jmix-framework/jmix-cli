@@ -190,7 +190,7 @@ if [[ "${JMIX_CLI_NO_RUN:-0}" == "1" ]]; then
     exit 0
 fi
 
-status 36 "Starting the Jmix project wizard..."
+status 36 "Starting Jmix CLI..."
 cleanup
 trap - EXIT HUP INT TERM
 if { exec 3</dev/tty; } 2>/dev/null; then

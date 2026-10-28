@@ -9,8 +9,8 @@
 #          (a short directory keeps the "created at" line on one row)
 # Render: bash docs/render-demo.sh
 #
-# Stable checkpoints from one complete wizard, including its real progress bar.
-# render-demo.sh aligns panels and blends scene transitions.
+# Stable checkpoints from the command menu and a complete project wizard.
+# render-demo.sh blends the full-screen checkpoints and the loop boundary.
 # Capture inside each pause: a screenshot at its end can select the next frame.
 # Creates JMIX_DEMO_DIR/demo and quits the post-generation actions menu.
 
@@ -31,16 +31,31 @@ Set Theme { "name": "Jmix", "background": "#1e1f29", "foreground": "#f8f8f2", "b
 
 Hide
 Type@1ms 'cd "$JMIX_DEMO_DIR" && ln -s "$JAVA_HOME" jdk && export JAVA_HOME="$PWD/jdk" && unset NO_COLOR && export FORCE_COLOR=3 && demo_args=(--repository https://global.repo.jmix.io/repository/public --jmix-version 3.0.2 --template application --theme aura --no-git)' Enter
+Type@1ms 'jmix --no-update' Enter
+Wait+Screen@30s /What would you like to do/
+Show
+Sleep 200ms
+Screenshot build/demo/intro.png
+Sleep 1s
+Screenshot build/demo/welcome.png
+Sleep 1s
+Enter
+Wait+Screen /Enter project name/
+Sleep 300ms
+Escape
+Wait+Screen /What would you like to do/
+Sleep 300ms
+Screenshot build/demo/returned-home.png
+Sleep 1s
+Hide
+Type "q"
+Sleep 300ms
 Type@1ms 'jmix --no-update new "${demo_args[@]}"' Enter
 Wait+Screen@30s /Enter project name/
 Show
 
-# Let the welcome logo establish the beginning.
-Sleep 2s
 Type "demo"
 Sleep 300ms
-Screenshot build/demo/welcome.png
-Sleep 500ms
 Enter
 
 # Show the real wizard history with the main project fields filled in.

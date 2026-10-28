@@ -102,7 +102,7 @@ try {
         -BinDir $binDir `
         -SkipPathUpdate `
         -CliArguments "--help" *>&1 | Out-String
-    if ($startOutput -notmatch "Starting the Jmix project wizard" -or $startOutput -notmatch "Jmix CLI") {
+    if ($startOutput -notmatch "Starting Jmix CLI" -or $startOutput -notmatch "Jmix CLI") {
         throw "Installer did not start the CLI."
     }
 

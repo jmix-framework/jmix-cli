@@ -25,7 +25,7 @@ Source builds do not self-update. `jmix update` requests an immediate update.
 ## Code and verification
 
 - [Main.kt](../../src/main/kotlin/io/jmix/cli/Main.kt) and
-  [UpdateCommand.kt](../../src/main/kotlin/io/jmix/cli/UpdateCommand.kt) — startup and explicit updates.
+  [UpdateCommand.kt](../../src/main/kotlin/io/jmix/cli/command/UpdateCommand.kt) — startup and explicit updates.
 - [update](../../src/main/kotlin/io/jmix/cli/update) — installation discovery, updates, and cleanup.
 
 Run `./gradlew test --tests 'io.jmix.cli.update.*'`. For image or installer changes,

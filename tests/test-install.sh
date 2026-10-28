@@ -110,7 +110,7 @@ start_output="$(
     JMIX_CLI_BIN_DIR="$temp_dir/bin" \
         "$repo_root/install.sh" --help
 )"
-[[ "$start_output" == *"Starting the Jmix project wizard"* ]]
+[[ "$start_output" == *"Starting Jmix CLI"* ]]
 [[ "$start_output" == *"Jmix CLI"* ]]
 
 # URL downloads use curl too; redirected output must stay plain and quiet.

@@ -1,4 +1,6 @@
-package io.jmix.cli
+package io.jmix.cli.command
+
+import io.jmix.cli.FakeServer
 
 import com.github.ajalt.clikt.testing.test
 import com.github.ajalt.mordant.rendering.AnsiLevel
@@ -104,7 +106,7 @@ class LoginCommandTest {
                 }
             }
 
-            assertEquals("Code not valid", error.message)
+            assertEquals("the sign-in code is no longer valid; run 'jmix login' again", error.message)
             // Its thread is not a daemon, so a listener left open would keep the CLI from exiting.
             assertThrows<IOException> { get(redirectUri) }
         }

@@ -120,7 +120,7 @@ complete the CLI's add-on configuration.
 - [AddonRepository.kt](../../src/main/kotlin/io/jmix/cli/repo/AddonRepository.kt) — API and validated cache.
 - [AddonInstaller.kt](../../src/main/kotlin/io/jmix/cli/generator/AddonInstaller.kt) and
   [addon-metadata.gradle](../../src/main/resources/io/jmix/cli/addon-metadata.gradle) — project integration.
-- [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/NewCommand.kt) and
+- [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/command/NewCommand.kt) and
   [Prompts.kt](../../src/main/kotlin/io/jmix/cli/wizard/Prompts.kt) — selection state and UI.
 
 Run catalog, repository, installer, and prompt tests. Exercise both terminal

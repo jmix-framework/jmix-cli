@@ -1,4 +1,4 @@
-package io.jmix.cli
+package io.jmix.cli.command
 
 import com.github.ajalt.clikt.testing.test
 import io.jmix.cli.account.Session

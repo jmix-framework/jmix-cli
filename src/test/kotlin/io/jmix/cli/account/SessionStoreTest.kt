@@ -16,6 +16,15 @@ import org.junit.jupiter.api.io.TempDir
 
 class SessionStoreTest {
 
+    @Test
+    fun `save makes an existing account directory private`() {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        val account = Files.createDirectory(dir.resolve("account"))
+        Files.setPosixFilePermissions(account, PosixFilePermissions.fromString("rwxr-xr-x"))
+        SessionStore(account.resolve("session.json")).save(session)
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(account)))
+    }
+
     @TempDir lateinit var dir: Path
     private val session = Session("global", "https://sso.jmix.io", "https://store-admin.jmix.io", "r1")
 
@@ -24,6 +33,23 @@ class SessionStoreTest {
         val store = SessionStore(dir.resolve("account/session.json"))
         store.save(session)
         assertEquals(session, store.load())
+    }
+
+    @Test
+    fun `saved identity loads back and old sessions need no identity`() {
+        val store = SessionStore(dir.resolve("session.json"))
+        val named = session.copy(identity = Identity("Ann Lee", "ann@example.com"))
+        store.save(named)
+        assertEquals(named, store.load())
+        Files.writeString(store.file, """{"region":"global","ssoUrl":"sso","storeUrl":"store","refreshToken":"r1"}""")
+        assertEquals(Identity(null, null), store.load()?.identity)
+    }
+
+    @Test
+    fun `saved identity fields are checked and cannot inject terminal controls`() {
+        val store = SessionStore(dir.resolve("session.json"))
+        Files.writeString(store.file, """{"region":"global","ssoUrl":"sso","storeUrl":"store","refreshToken":"r1","identity":{"name":"Ann\u001b\n","email":5}}""")
+        assertEquals(Identity("Ann", null), store.load()?.identity)
     }
 
     @Test

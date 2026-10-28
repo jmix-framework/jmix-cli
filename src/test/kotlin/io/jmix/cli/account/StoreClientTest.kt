@@ -15,6 +15,63 @@ import org.junit.jupiter.api.io.TempDir
 
 class StoreClientTest {
 
+    @Test
+    fun `refresh caches account details and keeps them when later tokens omit them`(@TempDir dir: Path) {
+        FakeServer().use { server ->
+            val token = jwt("""{"name":"Ann Lee","email":"ann@example.com"}""")
+            var accessToken = token
+            server.on("POST", TOKEN_PATH) { FakeServer.json(200, """{"access_token":"$accessToken","refresh_token":"r1"}""") }
+            val sessions = SessionStore(dir.resolve("s.json"))
+            val session = Session("global", server.url, server.url, "r0")
+            val tokens = AccessTokens(sessions, session)
+            assertEquals(token, tokens.current())
+            assertEquals(Identity("Ann Lee", "ann@example.com"), sessions.load()?.identity)
+            accessToken = "opaque-access-token"
+            tokens.refresh()
+            assertEquals(Identity("Ann Lee", "ann@example.com"), sessions.load()?.identity)
+        }
+    }
+
+    @Test
+    fun `store requests never forward the bearer token on redirects`(@TempDir dir: Path) {
+        FakeServer().use { store ->
+            FakeServer().use { other ->
+                store.issuesTokens()
+                store.on("GET", "/app/rest/v3/subscriptions") {
+                    FakeServer.Response(302, headers = mapOf("Location" to "${other.url}/subscriptions"))
+                }
+                other.on("GET", "/subscriptions") { FakeServer.json(200, "[]") }
+                assertThrows<IOException> { client(store, SessionStore(dir.resolve("s.json"))).subscriptions() }
+                assertTrue(other.requests.isEmpty(), "The bearer token must not leave the store")
+            }
+        }
+    }
+
+    @Test
+    fun `store error fields cannot expose download links or terminal controls`(@TempDir dir: Path) {
+        for (status in listOf(200, 400)) {
+            FakeServer().use { server ->
+                server.issuesTokens()
+                server.on("GET", "/app/rest/v3/subscriptions") {
+                    FakeServer.json(status, """{"error":"https://dl.example/PRIVATE","error_description":"https://dl.example/PRIVATE\u001b[2J","message":"https://dl.example/PRIVATE"}""")
+                }
+                val error = assertThrows<IOException> { client(server, SessionStore(dir.resolve("s.json"))).subscriptions() }
+                assertFalse(error.message!!.contains("PRIVATE") || error.message!!.contains('\u001b'), error.message)
+            }
+        }
+    }
+
+    @Test
+    fun `date numbers cannot wrap or lose their fractional part`() {
+        for (fields in listOf(
+            """"year":4294969322,"monthValue":11,"dayOfMonth":24""",
+            """"year":2026,"monthValue":11.9,"dayOfMonth":24""",
+            """"year":2026,"monthValue":11,"dayOfMonth":4294967320""",
+        )) {
+            assertNull(parseStoreDate(JsonParser.parseString("{$fields}")), fields)
+        }
+    }
+
     private val tokenPath = TOKEN_PATH
     private fun client(server: FakeServer, sessions: SessionStore) = storeClient(server, sessions)
 
@@ -103,7 +160,19 @@ class StoreClientTest {
             server.issuesTokens()
             server.on("GET", "/app/rest/v3/trial/addons/check") { FakeServer.json(200, """{"error":"not_eligible","error_description":"Trial already used"}""") }
             val error = assertThrows<IOException> { client(server, SessionStore(dir.resolve("s.json"))).trialAvailable() }
-            assertTrue(error.message!!.contains("Trial already used"), error.message)
+            assertEquals("the Jmix Store returned an unexpected response (HTTP 200)", error.message)
+        }
+    }
+
+    @Test
+    fun `a store error code in a successful start response is not a started trial`(@TempDir dir: Path) {
+        FakeServer().use { server ->
+            server.issuesTokens()
+            server.on("POST", "/app/rest/v3/trial/addons/generate") {
+                FakeServer.json(200, """{"errorCode":"TRIAL_USED","message":"PRIVATE"}""")
+            }
+            val error = assertThrows<IOException> { client(server, SessionStore(dir.resolve("s.json"))).startTrial() }
+            assertEquals("the Jmix Store returned an unexpected response (HTTP 200)", error.message)
         }
     }
 
@@ -130,14 +199,14 @@ class StoreClientTest {
     }
 
     @Test
-    fun `store error messages reach the user`(@TempDir dir: Path) {
+    fun `store failures report the status without echoing server messages`(@TempDir dir: Path) {
         FakeServer().use { server ->
             server.issuesTokens()
             server.on("POST", "/app/rest/v3/trial/addons/generate") {
                 FakeServer.json(409, """{"errorCode":"TRIAL_USED","message":"Trial already used"}""")
             }
             val error = assertThrows<IOException> { client(server, SessionStore(dir.resolve("s.json"))).startTrial() }
-            assertTrue(error.message!!.contains("Trial already used"), error.message)
+            assertEquals("the Jmix Store returned HTTP 409", error.message)
         }
     }
 
@@ -211,11 +280,11 @@ class StoreClientTest {
     }
 
     @Test
-    fun `a failed call reports the store's own message, else the status`(@TempDir dir: Path) {
+    fun `a failed call reports only the status`(@TempDir dir: Path) {
         val cases = listOf(
-            Triple(400, """{"error":"invalid_request","error_description":"Bad input","message":"ignored"}""", "Bad input"),
-            Triple(400, """{"error":"invalid_request","message":"ignored"}""", "invalid_request"),
-            Triple(409, """{"errorCode":"TRIAL_USED","message":"Trial already used"}""", "Trial already used"),
+            Triple(400, """{"error":"invalid_request","error_description":"Bad input","message":"ignored"}""", "the Jmix Store returned HTTP 400"),
+            Triple(400, """{"error":"invalid_request","message":"ignored"}""", "the Jmix Store returned HTTP 400"),
+            Triple(409, """{"errorCode":"TRIAL_USED","message":"Trial already used"}""", "the Jmix Store returned HTTP 409"),
             Triple(500, """{"message":" "}""", "the Jmix Store returned HTTP 500"),
             Triple(403, """["Trial already used"]""", "the Jmix Store returned HTTP 403"),
             Triple(502, "<html>bad gateway</html>", "the Jmix Store returned HTTP 502"),

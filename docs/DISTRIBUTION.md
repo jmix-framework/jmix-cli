@@ -7,7 +7,7 @@ downloadable platform archives for an unauthenticated bootstrap command.
 
 Each application image contains the CLI, its libraries, and a reduced JDK 25
 runtime produced with `jlink` and `jpackage`. Users do not need Java to launch
-the wizard. JDK detection inside the wizard concerns the generated Jmix project,
+the CLI. JDK detection inside the wizard concerns the generated Jmix project,
 not the CLI runtime.
 
 The runtime holds only the modules listed in `releaseRuntimeModules` in
@@ -34,10 +34,10 @@ installer from the same release as the application archives, keeping the
 bootstrap script and archive layout in sync.
 
 In a terminal, the bootstrap installer highlights download, verification,
-extraction, and wizard startup messages. On macOS/Linux, curl shows its native
+extraction, and CLI startup messages. On macOS/Linux, curl shows its native
 download progress bar (or activity indicator when the size is unknown).
 PowerShell shows native progress for installation phases and web downloads,
-and closes its progress display before starting the wizard and on failure.
+and closes its progress display before starting the CLI and on failure.
 Redirected output and CI use plain status lines; `NO_COLOR` disables colored
 status messages.
 

@@ -19,6 +19,28 @@ import java.util.zip.ZipOutputStream
 
 class TrialArchiveTest {
 
+    @Test
+    fun `unpacking limits the total bytes across entries and cleans staging on failure`() {
+        val out = dir.resolve("work")
+        val archive = trialZip("$TRIAL_ROOT/part1" to "x".repeat(600), "$TRIAL_ROOT/part2" to "x".repeat(600))
+        val error = assertThrows<IOException> { TrialArchive.unpack(archive, out, maxBytes = 1024) }
+        assertEquals("the unpacked archive is too large", error.message)
+        assertTrue(Files.list(out).use { it.findAny().isEmpty })
+        assertEquals(listOf(out.resolve(root)), TrialArchive.unpack(archive, out, maxBytes = 8192))
+    }
+
+    @Test
+    fun `a zip without its directory is rejected before publishing projects`() {
+        val archive = trialZip()
+        val bytes = Files.readAllBytes(archive)
+        val directory = bytes.indices.first { i -> i + 3 < bytes.size && bytes[i] == 0x50.toByte() &&
+            bytes[i + 1] == 0x4b.toByte() && bytes[i + 2] == 1.toByte() && bytes[i + 3] == 2.toByte() }
+        Files.write(archive, bytes.copyOf(directory))
+        val out = dir.resolve("work")
+        assertThrows<IOException> { TrialArchive.unpack(archive, out) }
+        assertTrue(!Files.exists(out) || Files.list(out).use { it.findAny().isEmpty })
+    }
+
     @TempDir
     lateinit var dir: Path
 
@@ -34,6 +56,29 @@ class TrialArchiveTest {
             TrialArchive.download("${server.url}/t.zip", target, { _, _ -> })
             assertArrayEquals(bytes, Files.readAllBytes(target))
             assertNull(server.requests.single().headers.getFirst("Authorization"))
+        }
+    }
+
+    @Test
+    fun `downloads follow archive redirects without credentials`() {
+        val bytes = Files.readAllBytes(trialZip())
+        FakeServer().use { server ->
+            server.on("GET", "/redirect") { FakeServer.Response(302, headers = mapOf("Location" to "${server.url}/t.zip")) }
+            server.on("GET", "/t.zip") { FakeServer.Response(200, bytes) }
+            val target = dir.resolve("download.zip")
+            TrialArchive.download("${server.url}/redirect", target, { _, _ -> })
+            assertArrayEquals(bytes, Files.readAllBytes(target))
+            assertEquals(2, server.requests.size)
+            assertTrue(server.requests.all { it.headers.getFirst("Authorization") == null })
+        }
+    }
+
+    @Test
+    fun `malformed redirects do not expose the capability link`() {
+        FakeServer().use { server ->
+            server.on("GET", "/t.zip") { FakeServer.Response(302, headers = mapOf("Location" to "https://dl.example/PRIVATE file.zip")) }
+            val error = assertThrows<IOException> { TrialArchive.download("${server.url}/t.zip", dir.resolve("x.zip"), { _, _ -> }) }
+            assertFalse(error.message!!.contains("PRIVATE"), error.message)
         }
     }
 
