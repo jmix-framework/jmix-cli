@@ -80,6 +80,10 @@ draft; templates opened during a cancelled run are closed before returning home.
   completed answers are preserved when navigating back.
 - Location choices include a project subdirectory, the current directory,
   `~/IdeaProjects/<name>`, and a custom path with completion.
+- Commercial add-on credential conflicts offer keeping the existing settings,
+  replacing them, or saving the account credentials separately. Keeping is the
+  default, including on EOF; `--non-interactive` keeps the file unchanged without
+  prompting. Every successful save explicitly reports the properties file.
 - `jmix trial` shares the location picker and post-creation open/run checklist. Its
   location is the parent for the archive's project folder. The run action also asks
   which demo module to start; Back returns to the checklist. `--path` skips location

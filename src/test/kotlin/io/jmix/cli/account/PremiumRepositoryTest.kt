@@ -24,13 +24,18 @@ class PremiumRepositoryTest {
 
     private fun properties() = Properties().apply { Files.newInputStream(file).use(::load) }
 
-    private fun prepare(server: FakeServer, sid: String = "repo-secret"): Pair<String, String> {
+    private fun prepare(
+        server: FakeServer,
+        sid: String = "repo-secret",
+        action: PremiumConflictAction = PremiumConflictAction.KEEP,
+        onSaved: (Path) -> Unit = {},
+    ): Pair<String, String> {
         server.issuesTokens()
         server.on("GET", "/app/rest/v3/studio/license/check") {
             FakeServer.json(200, com.google.gson.Gson().toJson(mapOf("activeLicense" to true, "sid" to sid)))
         }
         sessions.save(Session("global", server.url, server.url, "r0"))
-        return PremiumRepository(sessions, file, { null }).prepare()
+        return PremiumRepository(sessions, file, { null }).prepare(onConflict = { _, _ -> action }, onSaved = onSaved)
     }
 
     @Test
@@ -43,10 +48,8 @@ class PremiumRepositoryTest {
                 assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(file))
             }
             val before = Files.readAllBytes(file)
-            val requests = server.requests.size
-            PremiumRepository(sessions, file, { null }).prepare()
+            PremiumRepository(sessions, file, { null }).prepare(onSaved = { fail("Nothing was saved") })
             assertArrayEquals(before, Files.readAllBytes(file))
-            assertEquals(requests, server.requests.size)
         }
     }
 
@@ -68,12 +71,12 @@ class PremiumRepositoryTest {
             "premiumRepoUser.0=repo\r\npremiumRepoPass.0=other\r\npremiumRepoPass.1=secret"
         write(original)
         FakeServer().use { server ->
-            assertEquals("premiumRepoUser.0" to "premiumRepoPass.1", prepare(server))
+            assertEquals("premiumRepoUser.0" to "premiumRepoPass.1", prepare(server, action = PremiumConflictAction.SEPARATE))
             assertEquals(original, Files.readString(file))
         }
         write("# Keep these\r\npremiumRepoUser=old\r\n")
         FakeServer().use { server ->
-            assertEquals("premiumRepoUser.0" to "premiumRepoPass", prepare(server))
+            assertEquals("premiumRepoUser.0" to "premiumRepoPass", prepare(server, action = PremiumConflictAction.SEPARATE))
             assertTrue(Files.readString(file).startsWith("# Keep these\r\npremiumRepoUser=old\r\n"))
             assertEquals("old", properties().getProperty("premiumRepoUser"))
             assertEquals("repo", properties().getProperty("premiumRepoUser.0"))
@@ -98,9 +101,83 @@ class PremiumRepositoryTest {
         FakeServer().use { server ->
             prepare(server)
             Files.delete(file)
-            assertEquals("premiumRepoUser.1" to "premiumRepoPass", PremiumRepository(sessions, file, env::get).prepare())
+            assertEquals("premiumRepoUser.1" to "premiumRepoPass", PremiumRepository(sessions, file, env::get)
+                .prepare(onConflict = { _, canReplace -> assertFalse(canReplace); PremiumConflictAction.SEPARATE }))
             write("premiumRepoUser=repo\npremiumRepoUser.1=conflict\n")
-            assertEquals("premiumRepoUser.2" to "premiumRepoPass", PremiumRepository(sessions, file, env::get).prepare())
+            assertEquals("premiumRepoUser.2" to "premiumRepoPass", PremiumRepository(sessions, file, env::get)
+                .prepare(onConflict = { _, _ -> PremiumConflictAction.SEPARATE }))
+        }
+    }
+
+    @Test
+    fun `complete conflicting credentials require a decision and keep is the default`() {
+        val original = "# Existing account\npremiumRepoUser=old\npremiumRepoPass=oldpass\n"
+        write(original)
+        FakeServer().use { server ->
+            assertEquals("premiumRepoUser" to "premiumRepoPass", prepare(server, onSaved = { fail("Nothing was saved") }))
+            assertEquals(original, Files.readString(file))
+            var conflicts = 0
+            assertEquals("premiumRepoUser.0" to "premiumRepoPass.0", PremiumRepository(sessions, file, { null }).prepare(
+                onConflict = { path, canReplace ->
+                    assertEquals(file, path)
+                    assertTrue(canReplace)
+                    conflicts++
+                    PremiumConflictAction.SEPARATE
+                },
+            ))
+            assertEquals(1, conflicts)
+            assertTrue(Files.readString(file).startsWith(original))
+        }
+    }
+
+    @Test
+    fun `configured credentials remain usable when the account key is unavailable`() {
+        val original = "premiumRepoUser=old\npremiumRepoPass=oldpass\n"
+        write(original)
+        FakeServer().use { server ->
+            prepare(server)
+            for (status in listOf(200, 503)) {
+                server.on("GET", "/app/rest/v3/studio/license/check") {
+                    FakeServer.json(status, """{"activeLicense":false}""")
+                }
+                assertEquals("premiumRepoUser" to "premiumRepoPass", PremiumRepository(sessions, file, { null })
+                    .prepare(onSaved = { fail("Nothing was saved") }))
+                assertEquals(original, Files.readString(file))
+            }
+        }
+    }
+
+    @Test
+    fun `overwrite changes only credential records and reports the saved file`() {
+        write("# Keep this comment with a trailing slash \\\r\n" +
+            "org.gradle.jvmargs=-Xmx2g\r\npremiumRepoUser:old\r\npremiumRepoUser=duplicate\r\n" +
+            "premiumRepoP\\ass=old\\\r\n    password\r\n" +
+            "systemProp.org.gradle.project.premiumRepoUser=also-old\r\n! Footer\r\n")
+        val notifications = mutableListOf<Path>()
+        FakeServer().use { server ->
+            assertEquals("premiumRepoUser" to "premiumRepoPass", prepare(server,
+                action = PremiumConflictAction.REPLACE, onSaved = notifications::add))
+        }
+        assertEquals(listOf(file), notifications)
+        assertEquals("repo", properties().getProperty("premiumRepoUser"))
+        assertEquals("secret", properties().getProperty("premiumRepoPass"))
+        assertEquals("-Xmx2g", properties().getProperty("org.gradle.jvmargs"))
+        val text = Files.readString(file)
+        assertTrue(text.startsWith("# Keep this comment with a trailing slash \\\r\norg.gradle.jvmargs=-Xmx2g\r\n! Footer\r\n"))
+        assertFalse(text.contains("old") || text.contains("duplicate") || text.contains("password"))
+        assertEquals(1, text.lineSequence().count { it.startsWith("premiumRepoUser=") })
+    }
+
+    @Test
+    fun `partial conflicts remain untouched when no conflict handler is supplied`() {
+        val original = "premiumRepoUser=old\n"
+        write(original)
+        FakeServer().use { server ->
+            prepare(server)
+            assertEquals("premiumRepoUser" to "premiumRepoPass", PremiumRepository(sessions, file, { null }).prepare(
+                onSaved = { fail("Nothing was saved") },
+            ))
+            assertEquals(original, Files.readString(file))
         }
     }
 

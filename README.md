@@ -75,7 +75,9 @@ Commercial add-ons, marked with `[$]` in the wizard, require a
 Selecting one, such as `--addons business-calendars`, automatically adds the premium
 Jmix repository. If credentials are not configured, run `jmix login`: the CLI uses
 your account's commercial license key and saves premium credentials in your Gradle
-user home, as Studio does. Existing credentials are preserved. You can also configure
+user home, as Studio does. Conflicts offer a choice of keeping, replacing or saving
+credentials separately; `--non-interactive` leaves conflicting settings untouched.
+Successful saves explicitly name the properties file. You can also configure
 `~/.gradle/gradle.properties` manually: use the part of your license key before the
 dash for `premiumRepoUser`, and the part after the dash for `premiumRepoPass`.
 For scripts and CI, these values can also be

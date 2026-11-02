@@ -21,6 +21,7 @@ import io.jmix.cli.addon.AddonProjectProfile
 import io.jmix.cli.addon.ResolvedAddon
 import io.jmix.cli.addon.translationAddonIds
 import io.jmix.cli.account.PremiumRepository
+import io.jmix.cli.account.PremiumConflictAction
 import io.jmix.cli.env.AgentToolkitInstaller
 import io.jmix.cli.env.EnvironmentCheck
 import io.jmix.cli.generator.JmixLocale
@@ -65,6 +66,36 @@ internal fun addonEntry(addon: ResolvedAddon, selected: Boolean = false): Select
     val description = addon.addon.about.ifBlank { addon.addon.description }
     val license = if (addon.addon.commercial) "Requires a commercial license. " else ""
     return SelectList.Entry(addonTitle(addon), (license + description).trim().takeIf(String::isNotBlank), selected)
+}
+
+internal fun configurePremiumRepository(
+    terminal: Terminal,
+    prompts: Prompts,
+    interactive: Boolean,
+    repository: PremiumRepository = PremiumRepository(),
+): Pair<String, String> {
+    // No spinner: its redraws would overwrite the conflict prompt.
+    terminal.println(gray("Checking premium repository access..."))
+    return repository.prepare(
+        onConflict = { file, canReplace ->
+            if (!interactive) PremiumConflictAction.KEEP else {
+                terminal.println(brightYellow("Configured premium repository credentials differ from your account license ($file)."))
+                val actions = buildList {
+                    add(PremiumConflictAction.KEEP)
+                    if (canReplace) add(PremiumConflictAction.REPLACE)
+                    add(PremiumConflictAction.SEPARATE)
+                }
+                prompts.choose("How should premium credentials be handled?", actions, {
+                    when (it) {
+                        PremiumConflictAction.KEEP -> "Keep existing credentials"
+                        PremiumConflictAction.REPLACE -> "Replace existing credentials"
+                        PremiumConflictAction.SEPARATE -> "Save account credentials separately"
+                    }
+                }).requireValue()
+            }
+        },
+        onSaved = { file -> terminal.println(brightGreen("✓ Premium repository credentials saved to $file.")) },
+    )
 }
 
 /**
@@ -254,7 +285,7 @@ class NewCommand : CliktCommand(name = "new") {
         checkTargetDir(targetDir)
 
         val (premiumUser, premiumPass) = if (state.addons.orEmpty().any { !it.included && it.addon.commercial }) {
-            status.run("Configuring premium repository access") { PremiumRepository().prepare() }
+            configurePremiumRepository(terminal, prompts, interactive)
         } else PremiumRepository.USER to PremiumRepository.PASS
 
         val info = ProjectCreationInfo(

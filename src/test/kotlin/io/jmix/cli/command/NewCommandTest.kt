@@ -1,5 +1,14 @@
 package io.jmix.cli.command
 
+import com.github.ajalt.clikt.core.ProgramResult
+import com.github.ajalt.mordant.input.KeyboardEvent
+import com.github.ajalt.mordant.terminal.Terminal
+import com.github.ajalt.mordant.terminal.TerminalRecorder
+import io.jmix.cli.FakeServer
+import io.jmix.cli.account.PremiumRepository
+import io.jmix.cli.account.Session
+import io.jmix.cli.account.SessionStore
+import io.jmix.cli.account.issuesTokens
 import io.jmix.cli.addon.Addon
 import io.jmix.cli.addon.ResolvedAddon
 import io.jmix.cli.generator.JmixLocale
@@ -8,17 +17,116 @@ import io.jmix.cli.generator.Repository
 import io.jmix.cli.template.TemplateMetadata
 import io.jmix.cli.template.TemplateParam
 import io.jmix.cli.template.TemplateParams
+import io.jmix.cli.wizard.Prompts
+import java.io.ByteArrayInputStream
+import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 
 class NewCommandTest {
 
     @TempDir
     lateinit var tempDir: Path
+
+    private fun premiumRepository(server: FakeServer): Pair<PremiumRepository, Path> {
+        server.issuesTokens()
+        server.on("GET", "/app/rest/v3/studio/license/check") {
+            FakeServer.json(200, """{"activeLicense":true,"sid":"account-PRIVATE"}""")
+        }
+        val sessions = SessionStore(tempDir.resolve("account/session.json"))
+        sessions.save(Session("global", server.url, server.url, "r0"))
+        val file = tempDir.resolve("gradle.properties")
+        return PremiumRepository(sessions, file, { null }) to file
+    }
+
+    @Test
+    fun `premium conflict offers keep replace and separate and reports every write`() {
+        for (choice in 0..2) FakeServer().use { server ->
+            val (repository, file) = premiumRepository(server)
+            val original = "# Keep\npremiumRepoUser=old\npremiumRepoPass=oldpass\n"
+            Files.writeString(file, original)
+            val recorder = TerminalRecorder(width = 160, height = 40)
+            recorder.inputEvents += List(choice) { KeyboardEvent("ArrowDown") } + KeyboardEvent("Enter")
+            val terminal = Terminal(terminalInterface = recorder)
+            val names = configurePremiumRepository(terminal, Prompts(terminal), true, repository)
+            assertFalse(recorder.output().contains("PRIVATE"))
+            if (choice == 0) {
+                assertEquals(original, Files.readString(file))
+                assertFalse(recorder.output().contains("credentials saved to"))
+            } else {
+                assertTrue(recorder.output().contains("Premium repository credentials saved to $file."))
+                assertTrue(Files.readString(file).contains("PRIVATE"))
+                assertEquals(if (choice == 1) "premiumRepoUser" else "premiumRepoUser.0", names.first)
+            }
+        }
+    }
+
+    @Test
+    fun `non-interactive premium conflict leaves even partial settings untouched`() {
+        FakeServer().use { server ->
+            val (repository, file) = premiumRepository(server)
+            val original = "premiumRepoUser=old\n"
+            Files.writeString(file, original)
+            val recorder = TerminalRecorder(inputInteractive = false, outputInteractive = false)
+            val terminal = Terminal(terminalInterface = recorder)
+            configurePremiumRepository(terminal, Prompts(terminal), false, repository)
+            assertEquals(original, Files.readString(file))
+            assertFalse(recorder.output().contains("How should") || recorder.output().contains("credentials saved to"))
+        }
+    }
+
+    @Test
+    fun `premium credentials saved without a conflict are explicitly reported`() {
+        FakeServer().use { server ->
+            val (repository, file) = premiumRepository(server)
+            val recorder = TerminalRecorder(inputInteractive = false, outputInteractive = false)
+            val terminal = Terminal(terminalInterface = recorder)
+            configurePremiumRepository(terminal, Prompts(terminal), false, repository)
+            assertTrue(recorder.output().contains("Premium repository credentials saved to $file."))
+            assertFalse(recorder.output().contains("PRIVATE"))
+        }
+    }
+
+    @Test
+    fun `numbered premium conflict accepts a choice and EOF keeps the original`() {
+        val stdin = System.`in`
+        try {
+            for (answer in listOf("2\n", "")) FakeServer().use { server ->
+                val (repository, file) = premiumRepository(server)
+                val original = "premiumRepoUser=old\npremiumRepoPass=oldpass\n"
+                Files.writeString(file, original)
+                System.setIn(ByteArrayInputStream(answer.toByteArray()))
+                val recorder = TerminalRecorder(inputInteractive = false, outputInteractive = false)
+                val terminal = Terminal(terminalInterface = recorder)
+                configurePremiumRepository(terminal, Prompts(terminal), true, repository)
+                assertTrue(recorder.output().contains("Keep existing credentials"))
+                assertTrue(recorder.output().contains("Replace existing credentials"))
+                assertTrue(recorder.output().contains("Save account credentials separately"))
+                if (answer.isEmpty()) assertEquals(original, Files.readString(file))
+                else assertTrue(recorder.output().contains("credentials saved to"))
+            }
+        } finally { System.setIn(stdin) }
+    }
+
+    @Test
+    fun `quitting a premium conflict does not change credentials`() {
+        FakeServer().use { server ->
+            val (repository, file) = premiumRepository(server)
+            val original = "premiumRepoUser=old\npremiumRepoPass=oldpass\n"
+            Files.writeString(file, original)
+            val recorder = TerminalRecorder(width = 160, height = 40)
+            recorder.inputEvents += KeyboardEvent("q")
+            val terminal = Terminal(terminalInterface = recorder)
+            assertThrows<ProgramResult> { configurePremiumRepository(terminal, Prompts(terminal), true, repository) }
+            assertEquals(original, Files.readString(file))
+            assertFalse(recorder.output().contains("credentials saved to"))
+        }
+    }
 
     @Test
     fun `project locations include current directory and named subdirectory`() {

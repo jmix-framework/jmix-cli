@@ -67,18 +67,26 @@ cache is reused, so later builds can reuse the downloaded artifacts.
 
 ## Commercial add-ons
 
-When commercial add-ons are selected, the CLI first checks for configured premium
-credentials. If either value is missing, it uses the signed-in account's commercial
-license: `jmix login`, then generate the project normally. This also works with
+When commercial add-ons are selected, the CLI checks configured premium credentials
+and, when signed in, the account's commercial license: `jmix login`, then generate
+the project normally. This also works with
 `--non-interactive`; generation never starts a browser sign-in or activates a license.
-Without a usable account license, the error explains how to sign in or configure
-credentials manually, before project files are written. Free-only selections do
+Without configured credentials or a usable account license, the error explains
+how to sign in or configure credentials manually, before project files are written. Free-only selections do
 not read the account or Gradle properties.
 
 As in Studio, the license key is split at the dash and the two parts are saved in
 the Gradle user home, outside the project. Existing settings and comments are
-preserved. Matching property values are reused; conflicts get names such as
-`premiumRepoUser.0`, and the generated repository block references those names.
+preserved. Matching property values are reused. When existing credentials differ
+from the account license, the interactive CLI offers **Keep existing credentials**
+(the default), **Replace existing credentials**, or **Save account credentials
+separately**. The last option uses names such as `premiumRepoUser.0`, referenced
+by the generated repository block. Replacement is unavailable when conflicting
+credentials come from environment variables. Quitting writes nothing; EOF keeps
+existing settings. With `--non-interactive`, conflicts leave the file untouched
+and generation continues with the existing settings, even if they are incomplete.
+After each successful addition or replacement, the CLI explicitly reports
+`Premium repository credentials saved to <file>.` without printing the values.
 Files are replaced atomically, with owner-only permissions on POSIX systems.
 Neither the license key nor credential values appear in CLI output, the generated
 project, or the reproduction command. `jmix logout` removes the account session;
@@ -102,8 +110,10 @@ jmix new demo --non-interactive --addons business-calendars
 
 On PowerShell, set `$env:ORG_GRADLE_PROJECT_premiumRepoUser` and
 `$env:ORG_GRADLE_PROJECT_premiumRepoPass` before running the same CLI command.
-Gradle's normal project property resolution applies. A configured pair is used
-without contacting the account service or changing the properties file.
+Gradle's normal project property resolution applies. A complete pair supplied
+through environment variables is used without contacting the account service or
+changing the properties file. Configured credentials also remain usable when
+signed out, when the account has no commercial key, or when Store is unavailable.
 See [Gradle project properties](https://docs.gradle.org/current/userguide/build_environment.html#sec:project_properties).
 
 A commercial selection adds the premium repository through the same Studio
