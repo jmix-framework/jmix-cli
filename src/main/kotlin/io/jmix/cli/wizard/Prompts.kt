@@ -1125,7 +1125,7 @@ class Prompts(
         if (e.message?.contains(WINDOWS_POLL_TIMEOUT_MESSAGE) == true) null else abort()
     }
 
-    // ponytail: terminals expose characters, so other layouts need explicit aliases.
+    // terminals expose characters, so other layouts need explicit aliases.
     private fun isQuitInput(input: String): Boolean =
         input.equals(QUIT_INPUT, ignoreCase = true) || input.equals("й", ignoreCase = true)
 

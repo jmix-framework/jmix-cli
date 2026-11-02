@@ -152,7 +152,7 @@ class SelfUpdater(
      * own version, so a second command using this install root keeps its version.
      */
     fun cleanupOldVersions(now: Instant = Instant.now()) {
-        // ponytail: cleanup only runs when the managed command is visible; an
+        // cleanup only runs when the managed command is visible; an
         // unmanaged custom link could otherwise be left dangling.
         val linked = managedTargetChecksum() ?: return
         val keep = setOf(installation.currentChecksum, linked)

@@ -84,7 +84,7 @@ internal object TrialArchive {
             return names.map { Files.move(staging.resolve(it), parent.resolve(it)) }
         } finally {
             // A failed cleanup must not replace the real error: on Windows, antivirus can hold fresh files.
-            // ponytail: Ctrl+C during the short unpack can leave the hidden staging folder; add a shutdown hook if users report it.
+            // Ctrl+C during the short unpack can leave the hidden staging folder; add a shutdown hook if users report it.
             runCatching { staging.deleteRecursively() }
         }
     }
