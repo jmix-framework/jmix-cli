@@ -11,8 +11,8 @@ jmix logout
 jmix trial [--path <dir>] [--start-trial] [--non-interactive]
 ```
 
-Every command also accepts `--no-update`. `jmix new` does not read the session, and
-commercial add-ons in generated projects still need a license
+Every command also accepts `--no-update`. For commercial add-ons, `jmix new` can
+use the signed-in account's license to configure premium repository access
 ([Add-ons](add-ons.md#commercial-add-ons)). The trial project is a separate download.
 
 ## Sign-in

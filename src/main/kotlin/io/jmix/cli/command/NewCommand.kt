@@ -20,6 +20,7 @@ import io.jmix.cli.addon.AddonCatalog
 import io.jmix.cli.addon.AddonProjectProfile
 import io.jmix.cli.addon.ResolvedAddon
 import io.jmix.cli.addon.translationAddonIds
+import io.jmix.cli.account.PremiumRepository
 import io.jmix.cli.env.AgentToolkitInstaller
 import io.jmix.cli.env.EnvironmentCheck
 import io.jmix.cli.generator.JmixLocale
@@ -146,7 +147,7 @@ class NewCommand : CliktCommand(name = "new") {
     private val projectIdOpt by option("--project-id", help = "Project id — prefix for entity, table and bean names (max 7 chars)")
     private val themeOpt by option("--theme", help = "UI theme (aura or lumo)")
     private val localesOpt by option("--locales", help = "Comma-separated locale codes (default: en)")
-    private val addonsOpt by option("--addons", help = "Comma-separated add-on IDs (default: none; e.g. quartz,bpm). Commercial add-ons require a license and premium repository credentials.")
+    private val addonsOpt by option("--addons", help = "Comma-separated add-on IDs (default: none; e.g. quartz,bpm). Commercial add-ons use configured premium credentials or the signed-in account's license.")
     private val pathOpt by option("--path", help = "Target directory (default: ./<name>)")
     private val repositoryOpt by option("--repository", help = "Maven repository URL (default: ${ProjectCreationInfo.DEFAULT_REPOSITORY_URL})")
     private val noGit by option("--no-git", help = "Skip git repository initialization").flag()
@@ -252,6 +253,10 @@ class NewCommand : CliktCommand(name = "new") {
         if (state.addons.orEmpty().any { !it.included }) AddonInstaller.requireJavaHome(state.jmixVersion!!)
         checkTargetDir(targetDir)
 
+        val (premiumUser, premiumPass) = if (state.addons.orEmpty().any { !it.included && it.addon.commercial }) {
+            status.run("Configuring premium repository access") { PremiumRepository().prepare() }
+        } else PremiumRepository.USER to PremiumRepository.PASS
+
         val info = ProjectCreationInfo(
             name = state.name!!,
             targetDir = targetDir,
@@ -264,6 +269,8 @@ class NewCommand : CliktCommand(name = "new") {
             templateMetadata = state.template!!.metadata,
             createGitRepository = state.createGit!!,
             addons = state.addons.orEmpty(),
+            premiumRepoUserProperty = premiumUser,
+            premiumRepoPassProperty = premiumPass,
         )
 
         wizardStage = WizardStage.GENERATION.takeIf { interactive }

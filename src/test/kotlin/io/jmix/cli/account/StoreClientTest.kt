@@ -16,6 +16,39 @@ import org.junit.jupiter.api.io.TempDir
 class StoreClientTest {
 
     @Test
+    fun `premium key is returned only for an active commercial license`(@TempDir dir: Path) {
+        FakeServer().use { server ->
+            server.issuesTokens()
+            val client = client(server, SessionStore(dir.resolve("s.json")))
+            for ((body, expected) in listOf(
+                """{"activeLicense":true,"sid":"repo-secret"}""" to "repo-secret",
+                """{"activeLicense":false,"sid":"repo-secret"}""" to null,
+                """{"activeLicense":true,"sid":null}""" to null,
+            )) {
+                server.on("GET", "/app/rest/v3/studio/license/check") { FakeServer.json(200, body) }
+                assertEquals(expected, client.premiumLicenseKey())
+            }
+            assertTrue(server.requests.filter { it.method == "GET" }.all {
+                it.headers.getFirst("Authorization") == "Bearer a1"
+            })
+        }
+    }
+
+    @Test
+    fun `invalid license responses do not expose the key`(@TempDir dir: Path) {
+        FakeServer().use { server ->
+            server.issuesTokens()
+            val client = client(server, SessionStore(dir.resolve("s.json")))
+            for (body in listOf("[]", """{"activeLicense":"true","sid":"PRIVATE"}""",
+                """{"error":"PRIVATE"}""")) {
+                server.on("GET", "/app/rest/v3/studio/license/check") { FakeServer.json(200, body) }
+                val error = assertThrows<IOException> { client.premiumLicenseKey() }
+                assertFalse(error.message!!.contains("PRIVATE"))
+            }
+        }
+    }
+
+    @Test
     fun `refresh caches account details and keeps them when later tokens omit them`(@TempDir dir: Path) {
         FakeServer().use { server ->
             val token = jwt("""{"name":"Ann Lee","email":"ann@example.com"}""")

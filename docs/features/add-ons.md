@@ -67,8 +67,24 @@ cache is reused, so later builds can reuse the downloaded artifacts.
 
 ## Commercial add-ons
 
-Configure repository access before generating a project with commercial add-ons.
-Use the existing Jmix credential names in your Gradle user home
+When commercial add-ons are selected, the CLI first checks for configured premium
+credentials. If either value is missing, it uses the signed-in account's commercial
+license: `jmix login`, then generate the project normally. This also works with
+`--non-interactive`; generation never starts a browser sign-in or activates a license.
+Without a usable account license, the error explains how to sign in or configure
+credentials manually, before project files are written. Free-only selections do
+not read the account or Gradle properties.
+
+As in Studio, the license key is split at the dash and the two parts are saved in
+the Gradle user home, outside the project. Existing settings and comments are
+preserved. Matching property values are reused; conflicts get names such as
+`premiumRepoUser.0`, and the generated repository block references those names.
+Files are replaced atomically, with owner-only permissions on POSIX systems.
+Neither the license key nor credential values appear in CLI output, the generated
+project, or the reproduction command. `jmix logout` removes the account session;
+it leaves saved Gradle credentials in place, as they are also used by other projects.
+
+You can instead use the existing Jmix credential names in your Gradle user home
 (`~/.gradle/gradle.properties`, or under `GRADLE_USER_HOME` if set):
 
 ```properties
@@ -86,8 +102,8 @@ jmix new demo --non-interactive --addons business-calendars
 
 On PowerShell, set `$env:ORG_GRADLE_PROJECT_premiumRepoUser` and
 `$env:ORG_GRADLE_PROJECT_premiumRepoPass` before running the same CLI command.
-Gradle's normal project property resolution applies. The CLI does not prompt for, store,
-or insert credential values into the generated project or its reproduction command.
+Gradle's normal project property resolution applies. A configured pair is used
+without contacting the account service or changing the properties file.
 See [Gradle project properties](https://docs.gradle.org/current/userguide/build_environment.html#sec:project_properties).
 
 A commercial selection adds the premium repository through the same Studio
@@ -102,8 +118,12 @@ The generated `build.gradle` reads `rootProject['premiumRepoUser']` and
 `rootProject['premiumRepoPass']`. A nearby comment explains how to split the license
 key between these properties in `~/.gradle/gradle.properties` and links to the
 [enterprise subscription](https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription).
-Access requires a license covering the selected add-ons; `jmix new` does not check
-subscriptions or activate licenses. [`jmix trial`](account-and-trial.md) downloads the
+Access requires a license covering the selected add-ons; Gradle resolution checks
+access to their artifacts. To retrieve a missing key, the CLI calls Studio's
+`GET <store>/app/rest/v3/studio/license/check` with the account access token, using
+the same no-redirect client and refresh retry as trial requests. The key is accepted
+only for an active commercial license and is never added to the session file.
+[`jmix trial`](account-and-trial.md) downloads the
 Enterprise+BPM trial project instead; its demos resolve the trial add-ons from the bundled
 `trial_repository` and need no premium credentials.
 
@@ -122,6 +142,7 @@ complete the CLI's add-on configuration.
   [addon-metadata.gradle](../../src/main/resources/io/jmix/cli/addon-metadata.gradle) — project integration.
 - [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/command/NewCommand.kt) and
   [Prompts.kt](../../src/main/kotlin/io/jmix/cli/wizard/Prompts.kt) — selection state and UI.
+- [PremiumRepository.kt](../../src/main/kotlin/io/jmix/cli/account/PremiumRepository.kt) — account license and user-level Gradle credentials.
 
 Run catalog, repository, installer, and prompt tests. Exercise both terminal
 modes with group headings, search across groups, template-included entries

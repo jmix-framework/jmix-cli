@@ -124,6 +124,15 @@ class BindingsTest {
     }
 
     @Test
+    fun `premium repository references selected property names without embedding values`() {
+        val creation = info(repositories = listOf(Repository("https://global.repo.jmix.io/repository/premium")))
+            .copy(premiumRepoUserProperty = "premiumRepoUser.0", premiumRepoPassProperty = "premiumRepoPass.1")
+        val repo = (Bindings.createBinding(creation)["project_additionalRepositories"] as List<*>).single().toString()
+        assertTrue(repo.contains("username = rootProject['premiumRepoUser.0']"))
+        assertTrue(repo.contains("password = rootProject['premiumRepoPass.1']"))
+    }
+
+    @Test
     fun `existing premium repository is reused without embedding credentials and free selections add none`() {
         val catalog = AddonCatalog.parse(AddonCatalogTest.CATALOG_JSON)
         val profile = AddonProjectProfile("build.gradle", emptySet())

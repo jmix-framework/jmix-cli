@@ -73,9 +73,12 @@ On Windows, run `gradlew.bat bootRun`.
 Commercial add-ons, marked with `[$]` in the wizard, require a
 [Jmix subscription](https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription).
 Selecting one, such as `--addons business-calendars`, automatically adds the premium
-Jmix repository. Before generation, configure `~/.gradle/gradle.properties`: use
-the part of your license key before the dash for `premiumRepoUser`, and the part
-after the dash for `premiumRepoPass`. For scripts and CI, these values can also be
+Jmix repository. If credentials are not configured, run `jmix login`: the CLI uses
+your account's commercial license key and saves premium credentials in your Gradle
+user home, as Studio does. Existing credentials are preserved. You can also configure
+`~/.gradle/gradle.properties` manually: use the part of your license key before the
+dash for `premiumRepoUser`, and the part after the dash for `premiumRepoPass`.
+For scripts and CI, these values can also be
 supplied through the `ORG_GRADLE_PROJECT_premiumRepoUser` and
 `ORG_GRADLE_PROJECT_premiumRepoPass` environment variables.
 See [commercial add-on setup and troubleshooting](docs/features/add-ons.md#commercial-add-ons).
@@ -149,7 +152,7 @@ non-interactive generation; the wizard lets you choose values interactively.
 | `--project-id <id>`        | Prefix for entity, table and bean names; up to 7 characters.                                                                       | Template default; required if the template demands it                       |
 | `--theme <name>`           | UI theme: `aura` or `lumo`, where supported by the template and Jmix version.                                                      | `aura` for Jmix 3; `lumo` for Jmix 2; omitted for templates without a theme |
 | `--locales <codes>`        | Comma-separated locale codes, e.g. `en,ru`. The first is the default locale.                                                       | `en`                                                                        |
-| `--addons <ids>`           | Comma-separated compatible add-on IDs, e.g. `quartz,bpm`. Commercial add-ons require a license and premium repository credentials. | No additional add-ons                                                       |
+| `--addons <ids>`           | Comma-separated compatible add-on IDs, e.g. `quartz,bpm`. Commercial add-ons use configured credentials or the signed-in account's license. | No additional add-ons                                                       |
 | `--path <directory>`       | Target directory.                                                                                                                  | `./<name>`                                                                  |
 | `--repository <url>`       | Maven repository for templates and the generated project.                                                                          | `https://global.repo.jmix.io/repository/public`                             |
 | `--no-git`                 | Skip Git initialization and staging of generated files.                                                                            | Git enabled when available                                                  |

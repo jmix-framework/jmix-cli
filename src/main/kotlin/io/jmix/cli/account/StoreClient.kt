@@ -31,7 +31,7 @@ internal data class StartedTrial(val link: String?, val expiryDate: LocalDate?) 
 }
 
 /**
- * The trial endpoints of the Jmix Store, called as the signed-in user. The bearer token goes to [storeApiUrl] only.
+ * Account endpoints of the Jmix Store, called as the signed-in user. The bearer token goes to [storeApiUrl] only.
  * The store can answer with anything, so bodies are read through checked casts and never quoted in a message.
  */
 internal class StoreClient(
@@ -39,6 +39,17 @@ internal class StoreClient(
     private val tokens: AccessTokens,
     private val http: HttpClient = Http.accountClient,
 ) {
+
+    /** The commercial license key, as in Studio; never print or log the returned value. */
+    fun premiumLicenseKey(): String? = send("GET", "/studio/license/check") { body ->
+        val license = body as? JsonObject
+        val active = (license?.get("activeLicense") as? JsonPrimitive)?.takeIf { it.isBoolean }
+        when (active?.asBoolean) {
+            true -> license.nonBlank("sid").orEmpty()
+            false -> ""
+            null -> null
+        }
+    }.takeIf { it.isNotBlank() }
 
     /** All subscriptions of the account. Entries that are not JSON objects are skipped. */
     fun subscriptions(): List<Subscription> = send("GET", "/subscriptions") { body ->
