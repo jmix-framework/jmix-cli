@@ -25,7 +25,7 @@ class TrialFinderTest {
         val app = Files.createDirectories(project.resolve("demo/bpm"))
         Files.writeString(app.resolve("gradlew"), "#!/bin/sh")
         val lines = trialSummary(listOf(project), null, dir)
-        assertTrue("  2. cd ${shellQuote(dir.relativize(app).toString())}" in lines, lines.toString())
+        assertTrue("  1. cd ${shellQuote(dir.relativize(project).toString())}" in lines, lines.toString())
     }
 
     private val today = LocalDate.of(2026, 10, 27)
@@ -135,8 +135,27 @@ class TrialFinderTest {
         Files.writeString(bpm.resolve("application.properties"), "server.port=8101")
         Files.writeString(project.resolve("demo/bpm/gradlew"), "#!/bin/sh")
         val lines = trialSummary(listOf(project), null, dir)
-        val relative = Path.of("jmix-commercial-addons-demo-3.1.0", "demo", "bpm") // OS separators: CI runs Windows too
+        val relative = Path.of("jmix-commercial-addons-demo-3.1.0")
         assertTrue(lines.any { it.trimEnd().endsWith("cd $relative") }, lines.toString())
-        assertTrue(lines.any { it.contains("./gradlew bootRun") && it.contains("http://localhost:8101") }, lines.toString())
+        assertTrue(lines.any { it.contains("gradlew") && it.contains("bootRun") }, lines.toString())
+        assertTrue(lines.any { it.contains("http://localhost:8101") }, lines.toString())
+    }
+
+    @Test
+    fun `summary prints one module command template and one real example`(@TempDir dir: Path) {
+        val project = Files.createDirectories(dir.resolve("My trial"))
+        for ((module, port) in listOf("bpm" to 8101, "webdav" to 8180)) {
+            val resources = Files.createDirectories(project.resolve("demo/$module/src/main/resources"))
+            Files.writeString(resources.resolve("application.properties"), "server.port=$port")
+            Files.writeString(project.resolve("demo/$module/gradlew"), "#!/bin/sh")
+        }
+
+        val lines = trialSummary(listOf(project), null, dir)
+        val commands = lines.filter { it.contains("bootRun") }
+        assertEquals(2, commands.size, lines.toString())
+        assertTrue(commands.any { it.contains("MODULE") && it.contains("-p") }, lines.toString())
+        assertTrue(commands.any { it.contains("Example (bpm):") && it.contains("-p") }, lines.toString())
+        assertTrue(lines.none { it.contains("webdav") }, lines.toString())
+        assertTrue(lines.any { it.contains("cd 'My trial'") }, lines.toString())
     }
 }

@@ -80,11 +80,16 @@ draft; templates opened during a cancelled run are closed before returning home.
   completed answers are preserved when navigating back.
 - Location choices include a project subdirectory, the current directory,
   `~/IdeaProjects/<name>`, and a custom path with completion.
+- `jmix trial` shares the location picker and post-creation open/run checklist. Its
+  location is the parent for the archive's project folder. The run action also asks
+  which demo module to start; Back returns to the checklist. `--path` skips location
+  selection, and non-interactive trial runs skip both interactive steps.
 
 ## Code
 
 - [JmixCli.kt](../../src/main/kotlin/io/jmix/cli/command/JmixCli.kt) — root command and command menu.
 - [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/command/NewCommand.kt) — step state and transitions.
+- [ProjectInteraction.kt](../../src/main/kotlin/io/jmix/cli/command/ProjectInteraction.kt) — shared location, next steps, opening, and running.
 - [Prompts.kt](../../src/main/kotlin/io/jmix/cli/wizard/Prompts.kt) — rendering, input, and fallbacks.
 - [StatusReporter.kt](../../src/main/kotlin/io/jmix/cli/wizard/StatusReporter.kt) — activity indicator for slow steps.
 - [wizard](../../src/main/kotlin/io/jmix/cli/wizard) — banner, validation, and path completion.

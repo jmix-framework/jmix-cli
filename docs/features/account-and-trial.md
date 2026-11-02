@@ -92,14 +92,19 @@ loopback redirect.
 
 ## Trial flow
 
-A run is interactive when the terminal reads input and `--non-interactive` is absent. A
-console that reports no interactive input, such as an IDE run window, counts as
-non-interactive. Non-interactive runs never prompt and never open a browser; they fail with
-a message that names the fix.
+`--non-interactive` disables all prompts and automatic opening/running. Without it,
+the location and follow-up steps also support numbered/line-input consoles. EOF chooses
+the default location and skips follow-up actions. Automatic sign-in and trial-start
+consent require an interactive input terminal; scripts must sign in beforehand and
+use `--start-trial` when activation is needed.
 
-1. **Directory.** `--path` (default: the current directory) is created before anything
-   else, so a bad path fails before a trial can be started. A file at that path is
-   refused. The directory stays, empty, when a later step fails before the download.
+1. **Directory.** Without `--path`, an interactive run uses the same location picker as
+   `jmix new`: current directory, `./jmix-trial`, `~/IdeaProjects/jmix-trial`, or a custom
+   path with completion. Esc (`<` in a text console) returns to the main menu before
+   any account request. `--path` skips the picker; non-interactive runs default to the
+   current directory. The selected parent directory is created before anything else,
+   so a bad path fails before a trial can be started. A file at that path is refused.
+   The directory stays, empty, when a later step fails before the download.
 2. **Session.** The saved session is used. With none, an interactive run signs in first
    as `jmix login` does, in the global region, and prints the same `Signed in ...` line.
    A browser that still has a Jmix session signs in without showing a page, so that line
@@ -123,6 +128,14 @@ a message that names the fix.
      the link and date from the start call are the fallback. With no link either:
      `The trial was started, but its download link is not ready yet. Run 'jmix trial' again in a minute or download it from <account page>.`
 5. **Download, unpack and report**, as described below.
+6. **Open and run.** Interactive runs reuse the `jmix new` follow-up checklist: open
+   the whole trial project in the detected IDE and/or run an application. Choosing
+   run opens a demo-module picker with each module's URL; one module is selected
+   automatically when it is the only one. Back from this picker returns to the checklist.
+   The selected module runs its own Gradle wrapper with a compatible JDK, offering the
+   same JDK installation and browser opening as project creation. The file manager is
+   the fallback when IDE opening is declined or fails. Non-interactive runs offer no
+   open/run actions. An archive with multiple trial projects first asks which to open.
 
 **Consent.** Starting a trial changes the account, so it takes an explicit yes. An
 interactive run asks `Start the 28-day Enterprise+BPM trial for your Jmix account now?`
@@ -139,7 +152,8 @@ same name. It holds:
 - a Gradle composite build: `settings.gradle` includes every `demo/<name>` build, and the
   root has no `bootRun`;
 - ten demo applications at the time of writing, each a standalone build under
-  `demo/<name>` with its own `gradlew`; the next steps use the first by name, `bpm`;
+  `demo/<name>` with its own `gradlew`; the primary next step uses the first by name,
+  `bpm`, as the example for the general module run command;
 - `trial_repository`, a Maven-layout folder with the commercial add-ons, rebuilt with a
   time limit.
 
@@ -170,7 +184,8 @@ and the archive has no `.gitignore`.
 The report reads `bomVersion` from the root or `demo/*` build files (a `.trial` suffix is
 dropped; only the shape is checked, because trials run on the newest Jmix) and runs the same
 JDK check as `jmix new`, which reports and never fails the command. Then it prints the
-location, the end date, the demo list with ports, the run steps and the guide link:
+location, the end date, a general module run command with one real example and its URL,
+and the guide link:
 
 ```
 ✓ Enterprise+BPM trial project unpacked to /home/user/jmix-commercial-addons-demo-3.1.0
@@ -178,15 +193,18 @@ Trial ends on 2026-11-24. When it ends, the demo applications stop starting.
 If a demo stops starting earlier, download a fresh copy into another directory: jmix trial --path <directory>
 
 Next steps:
-  1. Open jmix-commercial-addons-demo-3.1.0 in IntelliJ IDEA with Jmix Studio
-  2. cd jmix-commercial-addons-demo-3.1.0/demo/bpm
-  3. ./gradlew bootRun   (http://localhost:8101)
-Demo applications: bpm :8101, business-calendars :8102, ...
+  1. cd jmix-commercial-addons-demo-3.1.0
+  2. ./demo/MODULE/gradlew -p demo/MODULE bootRun
+  Example (bpm): ./demo/bpm/gradlew -p demo/bpm bootRun
+Application: http://localhost:8101
 Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial
 ```
 
-The `cd` and `./gradlew bootRun` steps are separate lines because Windows PowerShell 5.1
-rejects `&&`. The `cd` path is quoted for the current platform, including spaces and apostrophes.
+The `cd` and wrapper invocation are separate lines because Windows PowerShell 5.1 rejects
+`&&`. Replace `MODULE` with a demo module name. Each command runs from the trial root
+and uses the module's wrapper with `-p` to
+select its standalone Gradle build. Windows instructions use `gradlew.bat`; paths are
+quoted for the current platform, including spaces and apostrophes.
 
 ## Expiry
 

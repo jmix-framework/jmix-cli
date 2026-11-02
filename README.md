@@ -96,7 +96,7 @@ applications that use the commercial add-ons and need no license key.
 
 ```shell
 jmix login                 # sign in through your browser
-jmix trial                 # download the trial project into the current directory
+jmix trial                 # choose where to download the trial project
 jmix trial --path ~/trial  # or into another directory
 jmix logout                # sign out on this computer
 ```
@@ -107,8 +107,11 @@ prints its address in case the browser does not open. Finish within 10 minutes. 
 does not work over SSH yet. The session is saved in `~/.jmix/account/session.json` (readable
 only by you on macOS and Linux), and the next sign-in replaces it. `jmix logout` deletes the file.
 
-`jmix trial [--path <directory>] [--start-trial]` downloads the trial of your account and
-unpacks it into the directory, the current one by default. At a terminal without a session it
+`jmix trial [--path <directory>] [--start-trial]` downloads the trial of your account.
+The wizard offers the same location picker as project creation, including a custom path
+with completion. `--path` skips that step; non-interactive runs use the current directory
+by default. The archive's own project folder is preserved inside the selected directory.
+At a terminal without a session it
 signs you in first, in the global region; for jmix.ru run `jmix login --region ru` beforehand.
 A trial that is already running, including one you started on the website, is downloaded as it
 is. When there is none, the command asks before it starts one, and `--start-trial` answers yes.
@@ -116,8 +119,12 @@ With `--non-interactive` it never asks and never opens a browser, so scripts nee
 and `--start-trial` up front.
 
 The project is a Gradle composite with the demos under `demo/` and the trial add-ons in
-`trial_repository`; leave that layout as it is. The command prints the trial end date and how to
-run a demo: `cd` into `demo/bpm`, then `./gradlew bootRun`. The demos stop starting when the
+`trial_repository`; leave that layout as it is. The command prints the trial end date and
+next steps with a general module run command, one real example and its URL.
+Its `What's next?` checklist
+can open the whole project in the detected IDE and run a selected demo module, using the
+same JDK setup as project creation. These actions are skipped in non-interactive mode.
+The demos stop starting when the
 trial ends. If one stops earlier, download a fresh copy into another directory with `--path`.
 See [account and trial](docs/features/account-and-trial.md) for the details and limits, and the
 [Jmix guide](https://docs.jmix.io/jmix/account-management.html#enterprise-trial) for the trial itself.

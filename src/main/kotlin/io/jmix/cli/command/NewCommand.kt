@@ -22,8 +22,6 @@ import io.jmix.cli.addon.ResolvedAddon
 import io.jmix.cli.addon.translationAddonIds
 import io.jmix.cli.env.AgentToolkitInstaller
 import io.jmix.cli.env.EnvironmentCheck
-import io.jmix.cli.env.JdkInstaller
-import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.generator.JmixLocale
 import io.jmix.cli.generator.ProjectCreationInfo
 import io.jmix.cli.generator.ProjectGenerator
@@ -38,7 +36,6 @@ import io.jmix.cli.update.SelfUpdater
 import io.jmix.cli.util.PlatformVersions
 import io.jmix.cli.util.hostOf
 import io.jmix.cli.wizard.Answer
-import io.jmix.cli.wizard.PathCompleter
 import io.jmix.cli.wizard.Prompts
 import io.jmix.cli.wizard.StatusReporter
 import io.jmix.cli.wizard.Validation
@@ -49,13 +46,6 @@ import io.jmix.cli.wizard.requireValue
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
-
-internal fun projectLocationOptions(projectName: String, currentDir: Path, homeDir: Path): List<Pair<String, Path>> =
-    listOf(
-        "Current directory" to currentDir,
-        "Subdirectory" to currentDir.resolve(projectName).normalize(),
-        "IdeaProjects" to homeDir.resolve("IdeaProjects").resolve(projectName).normalize(),
-    )
 
 private val PAID_ADDON_BADGE = brightMagenta(bold("[$]"))
 
@@ -295,7 +285,9 @@ class NewCommand : CliktCommand(name = "new") {
         if (state.installToolkit == true) installAgentToolkit(info)
         printSuccess(info)
         wizardStage = null
-        offerOpenAndRun(info)
+        if (interactive && terminal.terminalInfo.inputInteractive) {
+            ProjectActions(info.projectDir, info.jmixVersion, terminal, prompts, status).offer(runTaskFor(info))
+        }
     }
 
     /**
@@ -743,29 +735,9 @@ class NewCommand : CliktCommand(name = "new") {
             state = state.copy(targetDir = state.targetDir ?: subdirectory)
             return Outcome.AUTO
         }
-        val builtInOptions = projectLocationOptions(
-            state.name!!,
-            currentDir,
-            Path.of(System.getProperty("user.home")),
-        )
-        val options: List<Pair<String, Path?>> = builtInOptions + (OTHER_CHOICE to null)
-        val targetDir = when (val picked = prompts.choose(
-            "Select project location", options, { it.first },
-            { it.second?.toString() }, allowBack = true,
-        )) {
+        val targetDir = when (val picked = chooseProjectLocation(prompts, state.name!!, state.targetDir)) {
             is Answer.Back -> return Outcome.BACK
-            is Answer.Value -> picked.value.second ?: run {
-                val builtInPaths = builtInOptions.map { it.second }
-                val previousCustom = state.targetDir?.takeIf { it !in builtInPaths }
-                when (val typed = prompts.ask(
-                    "Enter project location", previousCustom?.toString(), allowBack = true,
-                    complete = { PathCompleter.complete(it) },
-                    validate = { if (it.isBlank()) "Path cannot be empty." else null },
-                )) {
-                    is Answer.Back -> return Outcome.BACK
-                    is Answer.Value -> toAbsolutePath(typed.value)
-                }
-            }
+            is Answer.Value -> picked.value
         }
         state = state.copy(targetDir = targetDir)
         summary("Location", targetDir.toString())
@@ -841,24 +813,15 @@ class NewCommand : CliktCommand(name = "new") {
 
     private fun printSuccess(info: ProjectCreationInfo) {
         val dir = info.projectDir
-        val relative = runCatching { Path.of("").toAbsolutePath().relativize(dir) }
-            .map { if (it.startsWith("..")) dir else it }
-            .getOrDefault(dir).toString().ifEmpty { "." }
-        val runTask = runTaskFor(info)
-
+        val currentDir = Path.of("").toAbsolutePath().normalize()
         terminal.println()
         terminal.println(brightGreen("✓ Project '${info.name}' created at $dir"))
         terminal.println()
-        terminal.println(bold("Next steps:"))
-        terminal.println("  1. ${cyan("cd $relative")}")
-        if (runTask != null) {
-            terminal.println("  2. ${cyan("./gradlew $runTask")}")
-        } else {
-            terminal.println("  2. Read README.md for instructions on adding subprojects.")
+        projectNextSteps(dir, currentDir, runTaskFor(info)).forEach { line ->
+            terminal.println(if (line == "Next steps:") bold(line) else cyan(line))
         }
         terminal.println()
         terminal.println(bold("CLI command:"))
-        val currentDir = Path.of("").toAbsolutePath().normalize()
         terminal.println("  " + cyan(nonInteractiveCommand(info, state.template!!.id, state.installToolkit!!, currentDir)))
         terminal.println()
         terminal.println(bold("Useful links:"))
@@ -874,71 +837,6 @@ class NewCommand : CliktCommand(name = "new") {
         info.templateMetadata.hideForSubproject -> null
         info.templateMetadata.addon -> "build"
         else -> "bootRun"
-    }
-
-    private fun offerOpenAndRun(info: ProjectCreationInfo) {
-        // Only when a human can answer. Piped stdin would hit EOF here and
-        // abort with a non-zero exit after the project was already created.
-        if (!interactive || !terminal.terminalInfo.inputInteractive) return
-        val runTask = runTaskFor(info)
-        // Offered only when an IDE is actually installed; the file manager is
-        // never a question — it is the fallback below.
-        val ideaOpen = ProjectLauncher.ideaOpenCommand(info.projectDir)
-        val openChoice = ideaOpen?.let { "Open the project in ${it.opener.displayName}" }
-        // Composite aggregator projects have no runnable task — offer only the open.
-        val runChoice = runTask?.let { "Run the application (./gradlew $it)" }
-
-        val entries = listOfNotNull(openChoice, runChoice).map { SelectList.Entry(it) }
-        val picked = when {
-            entries.isEmpty() -> emptyList()
-            else -> when (val answer = prompts.chooseMany("What's next?", entries)) {
-                // No arrow-key widget: one yes/no question per option instead.
-                null -> listOfNotNull(
-                    openChoice?.takeIf { prompts.askYesNo("$it?", default = false).requireValue() },
-                    runChoice?.takeIf { prompts.askYesNo("$it?", default = false).requireValue() },
-                )
-                is Answer.Back -> emptyList()
-                is Answer.Value -> answer.value
-            }
-        }
-
-        openProject(info, ideaOpen.takeIf { openChoice != null && openChoice in picked })
-        if (runChoice != null && runChoice in picked) {
-            runApplication(info, runTask)
-        } else if (runTask != null) {
-            offerJdkInstall(info)
-        }
-    }
-
-    /**
-     * Opens the generated project: in the IDE when the user asked for it, and
-     * in the file manager otherwise — including when the IDE failed to start,
-     * so a finished project is always shown somewhere.
-     */
-    private fun openProject(info: ProjectCreationInfo, ideaOpen: ProjectLauncher.OpenCommand?) {
-        val warn: (String) -> Unit = { terminal.println(brightYellow("Warning: $it")) }
-        if (ideaOpen != null) {
-            terminal.println(gray("Opening the project in ${ideaOpen.opener.displayName}..."))
-            if (ProjectLauncher.open(ideaOpen, warn)) return
-        }
-        terminal.println(gray("Opening the project folder..."))
-        ProjectLauncher.open(ProjectLauncher.fileManagerOpenCommand(info.projectDir), warn)
-    }
-
-    private fun runApplication(info: ProjectCreationInfo, runTask: String) {
-        val javaHome = compatibleJdkHome(info) ?: installJdk(info) ?: run {
-            terminal.println(brightYellow("Skipping the run — no compatible JDK is available."))
-            return
-        }
-
-        terminal.println(gray("Running ./gradlew $runTask (Ctrl+C to stop)..."))
-        if (runTask == "bootRun") {
-            openAppInBrowserWhenReady(info)
-        }
-        val exitCode = ProjectLauncher.runGradle(info.projectDir, runTask, javaHome)
-        if (exitCode != 0) {
-            terminal.println(brightYellow("Gradle finished with exit code $exitCode."))
-        }
     }
 
     /**
@@ -959,52 +857,6 @@ class NewCommand : CliktCommand(name = "new") {
             terminal.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
             terminal.println(brightYellow("Install it later: https://github.com/jmix-framework/jmix-agent-toolkit"))
         }
-    }
-
-    /** Offered when the user declines the run: install what a later run needs. */
-    private fun offerJdkInstall(info: ProjectCreationInfo) {
-        if (compatibleJdkHome(info) != null) return
-        val major = jdkVersionToInstall(info)
-        val question = "No compatible JDK was found. Install JDK $major (Temurin) now so the project can run later?"
-        if (prompts.askYesNo(question, default = true).requireValue()) {
-            installJdk(info)
-        }
-    }
-
-    private fun compatibleJdkHome(info: ProjectCreationInfo): Path? =
-        EnvironmentCheck.checkJdk(info.jmixVersion).compatible.firstOrNull()?.home
-
-    private fun jdkVersionToInstall(info: ProjectCreationInfo): Int =
-        EnvironmentCheck.checkJdk(info.jmixVersion).supportedVersions.max()
-
-    private fun installJdk(info: ProjectCreationInfo): Path? {
-        val major = jdkVersionToInstall(info)
-        return try {
-            val home = status.run("Installing JDK $major (Temurin)") { progress ->
-                JdkInstaller.install(major, onStatus = progress::relabel, onProgress = progress::progress)
-            }
-            terminal.println(brightGreen("✓ ") + "Installed JDK $major at " + cyan(home.toString()))
-            home
-        } catch (e: Exception) {
-            // Also covers JSON parse errors from an unexpected API response —
-            // never a stack trace after the project was already generated.
-            terminal.println(brightYellow("Warning: JDK installation failed: ${e.message}"))
-            terminal.println(brightYellow(EnvironmentCheck.installHint(setOf(major))))
-            null
-        }
-    }
-
-    private fun openAppInBrowserWhenReady(info: ProjectCreationInfo) {
-        val port = ProjectLauncher.serverPort(info.projectDir)
-        val url = "http://localhost:$port"
-        // A port that is busy before the app starts belongs to something else;
-        // opening it would show a foreign app (and bootRun will fail anyway).
-        if (ProjectLauncher.isPortInUse(port)) {
-            terminal.println(brightYellow("Warning: port $port is already in use — not opening the browser."))
-            return
-        }
-        terminal.println(gray("The app will open at $url in your browser once it starts."))
-        ProjectLauncher.openBrowserWhenReady(port, url) { terminal.println(brightYellow("Warning: $it")) }
     }
 
     private data class UsefulLink(val emoji: String, val label: String, val url: String)

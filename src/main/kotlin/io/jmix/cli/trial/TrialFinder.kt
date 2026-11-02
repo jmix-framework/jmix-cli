@@ -3,7 +3,8 @@ package io.jmix.cli.trial
 import io.jmix.cli.account.AccountRegion
 import io.jmix.cli.account.StoreClient
 import io.jmix.cli.env.ProjectLauncher
-import io.jmix.cli.command.shellQuote
+import io.jmix.cli.command.projectNextSteps
+import io.jmix.cli.command.projectRunCommand
 import java.nio.file.Path
 import java.time.LocalDate
 
@@ -74,14 +75,12 @@ internal fun trialSummary(projects: List<Path>, endDate: LocalDate?, currentDir:
     projects.firstOrNull()?.let { project ->
         val apps = TrialArchive.runnableApps(project)
         val app = apps.first()
-        add("Next steps:")
-        add("  1. Open ${displayPath(project, currentDir)} in IntelliJ IDEA with Jmix Studio")
-        // Separate lines, as in `jmix new`: Windows PowerShell 5.1 rejects `&&`.
-        add("  2. cd ${shellQuote(displayPath(app, currentDir))}")
-        add("  3. ./gradlew bootRun   (http://localhost:${ProjectLauncher.serverPort(app)})")
+        val runDir = if (apps.size > 1) project.resolve("demo/MODULE") else app
+        addAll(projectNextSteps(project, currentDir, "bootRun", runDir))
         if (apps.size > 1) {
-            add("Demo applications: " + apps.joinToString(", ") { "${it.fileName} :${ProjectLauncher.serverPort(it)}" })
+            add("  Example (${app.fileName}): ${projectRunCommand(project, app, "bootRun")}")
         }
+        add("Application: http://localhost:${ProjectLauncher.serverPort(app)}")
     }
     add("Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial")
 }
@@ -95,9 +94,3 @@ private fun trialsOf(store: StoreClient): List<TrialDownload> =
 /** The trial still running on [today] that ends last; no end date counts as last, and the end date itself is over. */
 private fun latestActive(trials: List<TrialDownload>, today: LocalDate): TrialDownload? =
     trials.filter { it.endDate == null || today.isBefore(it.endDate) }.maxByOrNull { it.endDate ?: LocalDate.MAX }
-
-/** [path] relative to [currentDir], or absolute when it lies outside it or on another drive. */
-private fun displayPath(path: Path, currentDir: Path): String =
-    runCatching { currentDir.relativize(path) }
-        .map { if (it.startsWith("..")) path else it }
-        .getOrDefault(path).toString().ifEmpty { "." }

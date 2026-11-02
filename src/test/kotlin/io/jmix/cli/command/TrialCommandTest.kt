@@ -3,6 +3,10 @@ package io.jmix.cli.command
 import io.jmix.cli.FakeServer
 
 import com.github.ajalt.clikt.testing.test
+import com.github.ajalt.clikt.core.subcommands
+import com.github.ajalt.mordant.input.KeyboardEvent
+import com.github.ajalt.mordant.rendering.AnsiLevel
+import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.account.Session
 import io.jmix.cli.account.SessionStore
 import io.jmix.cli.account.issuesTokens
@@ -12,6 +16,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -78,6 +83,91 @@ class TrialCommandTest {
             assertEquals(0, result.statusCode, result.stderr)
             assertTrue(Files.isDirectory(out.resolve("$TRIAL_ROOT/demo/bpm")))
             assertTrue("Trial ends on 2026-11-24." in result.stdout, result.stdout)
+            assertTrue(result.stdout.contains("MODULE") && result.stdout.contains("Example (bpm):"), result.stdout)
+            assertFalse(result.stdout.contains("What's next?"), result.stdout)
+        }
+    }
+
+    @Test
+    fun `interactive trial chooses a custom folder before downloading and offers follow-up actions`(@TempDir dir: Path) {
+        val zip = writeTrialZip(dir.resolve("t.zip"))
+        val out = dir.resolve("My trial")
+        FakeServer().use { server ->
+            server.issuesTokens()
+            server.on("GET", "/app/rest/v3/subscriptions") {
+                FakeServer.json(200, """[{"endDate":"2026-11-24","trialDownloadUrl":"${server.url}/t.zip"}]""")
+            }
+            server.on("GET", "/t.zip") { FakeServer.Response(200, Files.readAllBytes(zip)) }
+            val events = List(3) { KeyboardEvent("ArrowDown") } + KeyboardEvent("Enter") +
+                out.toString().map { KeyboardEvent(it.toString()) } + KeyboardEvent("Enter") + KeyboardEvent("q")
+            val result = TrialCommand(signedIn(server, dir), { today }).test(
+                "", ansiLevel = AnsiLevel.TRUECOLOR, width = 160, height = 40, inputEvents = events,
+            )
+            assertEquals(0, result.statusCode, result.stderr)
+            assertTrue(Files.isDirectory(out.resolve("$TRIAL_ROOT/demo/bpm")))
+            assertTrue(result.stdout.indexOf("Select project location") < result.stdout.indexOf("Checking your Enterprise+BPM trial"))
+            assertTrue(result.stdout.contains("What's next?"), result.stdout)
+        }
+    }
+
+    @Test
+    fun `run selection offers demo modules and back returns to follow-up without launching`(@TempDir dir: Path) {
+        val zip = writeTrialZip(dir.resolve("t.zip"))
+        val out = dir.resolve("out")
+        FakeServer().use { server ->
+            server.issuesTokens()
+            server.on("GET", "/app/rest/v3/subscriptions") {
+                FakeServer.json(200, """[{"endDate":"2026-11-24","trialDownloadUrl":"${server.url}/t.zip"}]""")
+            }
+            server.on("GET", "/t.zip") { FakeServer.Response(200, Files.readAllBytes(zip)) }
+            val events = buildList {
+                if (ProjectLauncher.ideaOpenCommand(out.resolve(TRIAL_ROOT)) != null) add(KeyboardEvent("ArrowDown"))
+                add(KeyboardEvent(" ")); add(KeyboardEvent("Enter"))
+                add(KeyboardEvent("Escape")); add(KeyboardEvent("q"))
+            }
+            val result = TrialCommand(signedIn(server, dir), { today }).test(
+                listOf("--path", out.toString()), ansiLevel = AnsiLevel.TRUECOLOR, width = 160, height = 40, inputEvents = events,
+            )
+            assertEquals(0, result.statusCode, result.stderr)
+            assertTrue(result.stdout.contains("Select a demo module to run"), result.stdout)
+            assertTrue(result.stdout.contains("Run a demo module"), result.stdout)
+            assertFalse(result.stdout.contains("Run the application (./gradlew bootRun)"), result.stdout)
+            assertTrue(result.stdout.contains("demo${java.io.File.separator}bpm"), result.stdout)
+            assertTrue(result.stdout.contains("demo${java.io.File.separator}webdav"), result.stdout)
+            assertTrue(result.stdout.lastIndexOf("What's next?") > result.stdout.indexOf("Select a demo module to run"))
+            assertFalse(result.stdout.contains("Opening the project"), result.stdout)
+        }
+    }
+
+    @Test
+    fun `back from the trial location returns to the main menu before any account request`(@TempDir dir: Path) {
+        FakeServer().use { server ->
+            val sessions = signedIn(server, dir)
+            val cli = JmixCli(sessions).subcommands(NewCommand(), TrialCommand(sessions, { today }))
+            val result = cli.test("", ansiLevel = AnsiLevel.TRUECOLOR, width = 160, inputEvents = listOf(
+                KeyboardEvent("ArrowDown"), KeyboardEvent("Enter"), KeyboardEvent("Escape"), KeyboardEvent("q"),
+            ))
+            assertEquals(0, result.statusCode, result.stderr)
+            assertTrue(result.stdout.contains("Select project location"), result.stdout)
+            assertTrue(result.stdout.lastIndexOf("What would you like to do?") > result.stdout.indexOf("Select project location"))
+            assertTrue(server.requests.isEmpty())
+        }
+    }
+
+    @Test
+    fun `EOF after an explicit-path download skips opening and running`(@TempDir dir: Path) {
+        val zip = writeTrialZip(dir.resolve("t.zip"))
+        FakeServer().use { server ->
+            server.issuesTokens()
+            server.on("GET", "/app/rest/v3/subscriptions") {
+                FakeServer.json(200, """[{"endDate":"2026-11-24","trialDownloadUrl":"${server.url}/t.zip"}]""")
+            }
+            server.on("GET", "/t.zip") { FakeServer.Response(200, Files.readAllBytes(zip)) }
+            val result = TrialCommand(signedIn(server, dir), { today })
+                .test(listOf("--path", dir.resolve("out").toString()))
+            assertEquals(0, result.statusCode, result.stderr)
+            assertFalse(result.stdout.contains("Opening the project"), result.stdout)
+            assertFalse(result.stdout.contains("Running ./"), result.stdout)
         }
     }
 
