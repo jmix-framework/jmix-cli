@@ -29,19 +29,6 @@ class TokenClientTest {
     }
 
     @Test
-    fun `provider error fields cannot expose credentials`() {
-        FakeServer().use { server ->
-            server.on("POST", TOKEN_PATH) {
-                FakeServer.json(400, """{"error":"invalid_grant","error_description":"Code PRIVATE-CODE not valid"}""")
-            }
-            val error = assertThrows<IOException> {
-                TokenClient(AccountEndpoints(server.url, server.url)).exchangeCode("PRIVATE-CODE", Pkce.create(), "http://localhost:1")
-            }
-            assertFalse(error.message!!.contains("PRIVATE-CODE"), error.message)
-        }
-    }
-
-    @Test
     fun `a token with invalid header characters is rejected without quoting it`() {
         FakeServer().use { server ->
             server.on("POST", TOKEN_PATH) {
@@ -152,10 +139,11 @@ class TokenClientTest {
     @Test
     fun `a rejected code asks for a new sign-in without echoing the service description`() {
         FakeServer().use { server ->
-            server.on("POST", tokenPath) { FakeServer.json(400, """{"error":"invalid_grant","error_description":"Code not valid"}""") }
-            val error = assertThrows<IOException> { TokenClient(endpoints(server)).exchangeCode("c1", Pkce.create(), "http://localhost:1") }
+            server.on("POST", tokenPath) { FakeServer.json(400, """{"error":"invalid_grant","error_description":"Code PRIVATE-CODE not valid"}""") }
+            val error = assertThrows<IOException> { TokenClient(endpoints(server)).exchangeCode("PRIVATE-CODE", Pkce.create(), "http://localhost:1") }
             assertFalse(error is SessionExpiredException)
             assertEquals("the sign-in code is no longer valid; run 'jmix login' again", error.message)
+            assertFalse(error.message!!.contains("PRIVATE-CODE"), error.message)
         }
         FakeServer().use { server ->
             server.on("POST", tokenPath) { FakeServer.json(400, """{"error":"invalid_client"}""") }
@@ -234,13 +222,4 @@ class TokenClientTest {
         assertFalse("access-secret" in text || "refresh-secret" in text, text)
     }
 
-    @Test
-    fun `unrouted requests get a 404 and are still recorded`() {
-        FakeServer().use { server ->
-            server.on("GET", tokenPath) { FakeServer.json(200, """{"access_token":"a1","refresh_token":"r1"}""") }
-            val error = assertThrows<IOException> { TokenClient(endpoints(server)).refresh("r1") }
-            assertTrue(error.message!!.contains("HTTP 404"), error.message)
-            assertEquals(listOf("POST $tokenPath"), server.requests.map { "${it.method} ${it.path}" })
-        }
-    }
 }

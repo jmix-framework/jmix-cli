@@ -109,38 +109,6 @@ class StoreClientTest {
     private fun client(server: FakeServer, sessions: SessionStore) = storeClient(server, sessions)
 
     @Test
-    fun `api calls carry the bearer token and the rotated refresh token is kept`(@TempDir dir: Path) {
-        FakeServer().use { server ->
-            server.issuesTokens()
-            server.on("GET", "/app/rest/v3/subscriptions") { FakeServer.json(200, "[]") }
-            val sessions = SessionStore(dir.resolve("s.json"))
-            assertEquals(emptyList<Subscription>(), client(server, sessions).subscriptions())
-            assertEquals("Bearer a1", server.requests.last().headers.getFirst("Authorization"))
-            assertEquals("r1", sessions.load()?.refreshToken)
-        }
-    }
-
-    @Test
-    fun `a rejected token is refreshed once and the call retried once`(@TempDir dir: Path) {
-        FakeServer().use { server ->
-            server.issuesTokens()
-            var calls = 0
-            server.on("GET", "/app/rest/v3/trial/addons/check") {
-                calls++
-                if (calls == 1) FakeServer.json(401, "") else FakeServer.json(200, """{"available":true}""")
-            }
-            assertTrue(client(server, SessionStore(dir.resolve("s.json"))).trialAvailable())
-            assertEquals(2, calls)
-        }
-        FakeServer().use { server ->
-            server.issuesTokens()
-            server.on("GET", "/app/rest/v3/trial/addons/check") { FakeServer.json(401, "") }
-            assertThrows<IOException> { client(server, SessionStore(dir.resolve("t.json"))).trialAvailable() }
-            assertEquals(2, server.requests.count { it.path.endsWith("/check") })
-        }
-    }
-
-    @Test
     fun `an expired session is deleted`(@TempDir dir: Path) {
         FakeServer().use { server ->
             server.on("POST", tokenPath) { FakeServer.json(400, """{"error":"invalid_grant"}""") }
@@ -223,15 +191,6 @@ class StoreClientTest {
     }
 
     @Test
-    fun `an empty generate response means no link yet`(@TempDir dir: Path) {
-        FakeServer().use { server ->
-            server.issuesTokens()
-            server.on("POST", "/app/rest/v3/trial/addons/generate") { FakeServer.Response(200) }
-            assertEquals(StartedTrial(null, null), client(server, SessionStore(dir.resolve("s.json"))).startTrial())
-        }
-    }
-
-    @Test
     fun `store failures report the status without echoing server messages`(@TempDir dir: Path) {
         FakeServer().use { server ->
             server.issuesTokens()
@@ -276,10 +235,12 @@ class StoreClientTest {
         FakeServer().use { server ->
             server.issuesTokens()
             server.on("GET", "/app/rest/v3/subscriptions") { FakeServer.json(200, "[]") }
-            val client = client(server, SessionStore(dir.resolve("s.json")))
-            client.subscriptions()
+            val sessions = SessionStore(dir.resolve("s.json"))
+            val client = client(server, sessions)
+            assertEquals(emptyList<Subscription>(), client.subscriptions())
             client.subscriptions()
             assertEquals(1, server.requests.count { it.path == tokenPath })
+            assertEquals("r1", sessions.load()?.refreshToken)
             val tokens = server.requests.filter { it.method == "GET" }.map { it.headers.getFirst("Authorization") }
             assertEquals(listOf("Bearer a1", "Bearer a1"), tokens)
         }
@@ -298,6 +259,7 @@ class StoreClientTest {
             assertTrue(client(server, sessions).trialAvailable())
             assertEquals(listOf("r0", "r1"), server.requests.filter { it.path == tokenPath }.map { it.form()["refresh_token"] })
             assertEquals(listOf("Bearer a1", "Bearer a2"), server.requests.filter { it.method == "GET" }.map { it.headers.getFirst("Authorization") })
+            assertEquals(2, calls)
             assertEquals("r2", sessions.load()?.refreshToken)
         }
     }
@@ -309,6 +271,7 @@ class StoreClientTest {
             server.on("GET", "/app/rest/v3/subscriptions") { FakeServer.json(401, """{"message":"SECRET"}""") }
             val error = assertThrows<IOException> { client(server, SessionStore(dir.resolve("s.json"))).subscriptions() }
             assertEquals("the Jmix Store rejected the sign-in (HTTP 401)", error.message)
+            assertEquals(2, server.requests.count { it.path.endsWith("/subscriptions") })
         }
     }
 
@@ -375,7 +338,8 @@ class StoreClientTest {
 
     @Test
     fun `a started trial without a usable body has no link yet`(@TempDir dir: Path) {
-        val responses = listOf(FakeServer.Response(204), FakeServer.json(200, "{}"), FakeServer.json(200, "[]"), FakeServer.json(200, "null"))
+        val responses = listOf(FakeServer.Response(200), FakeServer.Response(204), FakeServer.json(200, "{}"),
+            FakeServer.json(200, "[]"), FakeServer.json(200, "null"))
         for (response in responses) {
             FakeServer().use { server ->
                 server.issuesTokens()
