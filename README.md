@@ -4,7 +4,10 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 Create [Jmix](https://www.jmix.io/) projects from the same templates as Jmix Studio.
+
 Use the interactive wizard or run the CLI from a script or an AI agent.
+
+<img src="docs/demo.gif" alt="Jmix CLI wizard showing add-on selection and project creation" width="800">
 
 ## Install
 
@@ -43,13 +46,6 @@ Run `jmix new --help` for options such as `--jmix-version`, `--template`, and
 `--addons`. See [wizard controls](docs/features/wizard.md),
 [project generation](docs/features/project-generation.md), and
 [commercial add-on setup](docs/features/add-ons.md#commercial-add-ons).
-
-<details>
-<summary>Watch the project wizard</summary>
-
-<img src="docs/demo.gif" alt="Jmix CLI wizard showing add-on selection and project creation" width="800">
-
-</details>
 
 ## Agent Toolkit
 
