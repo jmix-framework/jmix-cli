@@ -121,6 +121,16 @@ Besides the installer, update and checksum behavior, the install test starts the
 installed CLI, checks that `login --help` and `trial --help` run, and checks that the
 bundled runtime lists `jdk.httpserver`.
 
+## Checking a Jmix release
+
+After publishing a new stable Jmix version and its project templates, run
+[Jmix Release Check](../.github/workflows/jmix-release-check.yml) from the CLI
+repository's Actions tab and enter the exact `jmix_version`, such as `3.1.0`.
+The workflow installs the latest published CLI, starts with an empty template
+cache, and verifies that the default selection and `--jmix-version` both
+produce the expected BOM version. It also builds the default project with its
+Gradle wrapper.
+
 ## Publishing a release
 
 Releases are fully automatic. On every push to `main`, `auto-release.yml`

@@ -1,0 +1,68 @@
+name: Jmix Release Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      jmix_version:
+        description: Published Jmix version to check (for example, 3.1.0)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  generated-project-build:
+    runs-on: ubuntu-latest
+    env:
+      JMIX_VERSION: ${{ inputs.jmix_version }}
+    steps:
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Install the latest published CLI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JMIX_CLI_BIN_DIR: ${{ runner.temp }}/jmix-cli-bin
+          JMIX_CLI_INSTALL_ROOT: ${{ runner.temp }}/jmix-cli-install
+          JMIX_CLI_NO_RUN: '1'
+        run: |
+          if [[ ! "$JMIX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a stable Jmix version in X.Y.Z format." >&2
+            exit 1
+          fi
+          cli_tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          export JMIX_CLI_RELEASE_BASE_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$cli_tag"
+          echo "Testing Jmix $JMIX_VERSION with Jmix CLI $cli_tag"
+          curl -fsSL "$JMIX_CLI_RELEASE_BASE_URL/install.sh" -o "$RUNNER_TEMP/install-jmix.sh"
+          env -u GH_TOKEN bash "$RUNNER_TEMP/install-jmix.sh"
+          echo "$JMIX_CLI_BIN_DIR" >> "$GITHUB_PATH"
+
+      - name: Verify default and explicit Jmix version selection
+        shell: bash
+        run: |
+          test ! -e "$HOME/.jmix/templates"
+
+          generate() {
+            local project="$1"
+            shift
+            jmix --no-update new "$project" --non-interactive \
+              --template application --path "$RUNNER_TEMP/$project" --no-git --no-agents-toolkit "$@"
+            local actual
+            actual=$(sed -nE "s/^[[:space:]]*bomVersion[[:space:]]*=[[:space:]]*['\"]([^'\"]+)['\"].*$/\1/p" \
+              "$RUNNER_TEMP/$project/build.gradle")
+            if [[ "$actual" != "$JMIX_VERSION" ]]; then
+              printf '%s: expected Jmix %s, got %s\n' "$project" "$JMIX_VERSION" "${actual:-no BOM version}" >&2
+              return 1
+            fi
+          }
+
+          generate smoke-app
+          generate smoke-app-pinned --jmix-version "$JMIX_VERSION"
+
+      - name: Build generated project
+        working-directory: ${{ runner.temp }}/smoke-app
+        run: ./gradlew build -x test

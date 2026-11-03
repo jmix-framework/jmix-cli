@@ -31,6 +31,7 @@ import io.jmix.cli.generator.AddonInstaller
 import io.jmix.cli.generator.Repository
 import io.jmix.cli.repo.TemplateRepository
 import io.jmix.cli.repo.AddonRepository
+import io.jmix.cli.repo.TemplateVersionCatalog
 import io.jmix.cli.template.Template
 import io.jmix.cli.template.TemplateCatalog
 import io.jmix.cli.template.TemplateParams
@@ -166,7 +167,9 @@ internal fun reportJdkCheck(terminal: Terminal, status: StatusReporter, jmixVers
     terminal.println(brightYellow(EnvironmentCheck.installHint(check.supportedVersions)))
 }
 
-class NewCommand : CliktCommand(name = "new") {
+class NewCommand internal constructor(private val templateCacheDir: Path) : CliktCommand(name = "new") {
+
+    constructor() : this(TemplateRepository.defaultCacheDir())
 
     override fun help(context: Context) = "Create a new Jmix project"
 
@@ -253,6 +256,7 @@ class NewCommand : CliktCommand(name = "new") {
         state = WizardState()
         activeStepIndex = 0
         wizardStage = null
+        versionsCache = null
         addonCatalog = null
         status = StatusReporter(terminal)
         prompts = Prompts(terminal, wizardUiState = { state.toUiState(activeStepIndex, wizardStage) })
@@ -272,7 +276,11 @@ class NewCommand : CliktCommand(name = "new") {
         // One alternate screen for the whole wizard, with the banner as its
         // header: switching per step made the banner and the answers so far
         // flash between every question.
-        val usedAlternateScreen = prompts.useAlternateScreen { runWizardSteps() }
+        val usedAlternateScreen = try {
+            prompts.useAlternateScreen { runWizardSteps() }
+        } finally {
+            if (prompts.usesAlternateScreen && versionsCache?.stale == true) terminal.println(staleVersionsWarning())
+        }
         if (usedAlternateScreen) {
             // The frames lived on the alternate screen, which the terminal has
             // just discarded; restate the answers on the restored one.
@@ -312,7 +320,9 @@ class NewCommand : CliktCommand(name = "new") {
                 ProjectGenerator(
                     onWarning = { progress.println(brightYellow("Warning: $it")) },
                     onStatus = progress::relabel,
-                ).generate(templateRoot, info)
+                ).generate(templateRoot, info) {
+                    if (state.installToolkit == true) installAgentToolkit(info, progress)
+                }
             }
         } catch (e: RuntimeException) {
             // Groovy rendering errors (e.g. a missing binding) are template
@@ -320,7 +330,6 @@ class NewCommand : CliktCommand(name = "new") {
             throw CliktError("Project generation failed: ${e.message ?: e.toString()}")
         }
 
-        if (state.installToolkit == true) installAgentToolkit(info)
         printSuccess(info)
         wizardStage = null
         if (interactive && terminal.terminalInfo.inputInteractive) {
@@ -447,7 +456,7 @@ class NewCommand : CliktCommand(name = "new") {
     /** Switches the template source; a changed URL drops version and catalog caches. */
     private fun applyRepository(url: String) {
         if (state.repositoryUrl != url) {
-            repo = TemplateRepository(url)
+            repo = TemplateRepository(url, templateCacheDir)
             versionsCache = null
             catalog?.close()
             catalog = null
@@ -458,18 +467,18 @@ class NewCommand : CliktCommand(name = "new") {
     }
 
     private fun stepVersion(): Outcome {
-        val versions = fetchVersionsOnce()
-
         jmixVersionOpt?.let { requested ->
-            if (requested !in repo.fetchVersions(includeUnstable = true)) {
+            val versions = versionCatalog(requested).versions
+            if (requested !in versions) {
                 throw CliktError(
                     "Unknown Jmix version '$requested'. Available versions: " +
-                        repo.fetchVersions(includeUnstable = true).takeLast(15).joinToString(", "),
+                        versions.takeLast(15).joinToString(", "),
                 )
             }
             state = state.copy(jmixVersion = requested)
             return Outcome.AUTO
         }
+        val versions = versionCatalog().available(includeUnstable)
         if (!interactive) {
             state = state.copy(jmixVersion = versions.last())
             return Outcome.AUTO
@@ -482,8 +491,9 @@ class NewCommand : CliktCommand(name = "new") {
             is Answer.Back -> return Outcome.BACK
             is Answer.Value -> if (picked.value == OTHER_CHOICE) {
                 when (val typed = prompts.ask("Enter Jmix version", state.jmixVersion ?: versions.last(), allowBack = true) { input ->
-                    if (input in repo.fetchVersions(includeUnstable = true)) null
-                    else "Unknown version. Recent versions: ${versions.takeLast(8).joinToString(", ")}"
+                    val available = versionCatalog(input).versions
+                    if (input in available) null
+                    else "Unknown version. Recent versions: ${available.takeLast(8).joinToString(", ")}"
                 }) {
                     is Answer.Back -> return Outcome.BACK
                     is Answer.Value -> typed.value
@@ -495,11 +505,23 @@ class NewCommand : CliktCommand(name = "new") {
         return Outcome.PROMPTED
     }
 
-    private var versionsCache: List<String>? = null
+    private var versionsCache: TemplateVersionCatalog? = null
 
-    private fun fetchVersionsOnce(): List<String> = versionsCache
-        ?: status.run("Fetching Jmix versions from ${hostOf(repositoryUrl)}") { repo.fetchVersions(includeUnstable) }
-            .also { versionsCache = it }
+    private fun versionCatalog(requested: String? = null): TemplateVersionCatalog {
+        versionsCache?.let { cached ->
+            if (requested == null || requested in cached.versions || !cached.fromFreshCache) return cached
+        }
+        return status.run("Fetching Jmix versions from ${hostOf(repositoryUrl)}") { progress ->
+            repo.versionCatalog(requested).also { result ->
+                if (result.stale && !prompts.isAlternateScreenHeld) progress.println(staleVersionsWarning())
+                versionsCache = result
+            }
+        }
+    }
+
+    private fun staleVersionsWarning(): String = brightYellow(
+        "Warning: Could not refresh Jmix versions from ${hostOf(repositoryUrl)}. Using the cached version list.",
+    )
 
     private fun stepTemplate(): Outcome {
         val templates = catalogFor(state.jmixVersion!!).projectTemplates()
@@ -885,18 +907,16 @@ class NewCommand : CliktCommand(name = "new") {
      * project-local skills. A failure must never
      * fail the already-generated project — warn and move on.
      */
-    private fun installAgentToolkit(info: ProjectCreationInfo) {
+    private fun installAgentToolkit(info: ProjectCreationInfo, progress: StatusReporter.Handle) {
         try {
-            status.run("Installing the Jmix Agent Toolkit") { progress ->
-                AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion, progress::relabel)
-            }
-            summary(
-                "Agent Toolkit",
-                "local skills and shared guidelines, including Claude Code",
+            progress.relabel("Installing the Jmix Agent Toolkit")
+            AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion, progress::relabel)
+            progress.println(
+                brightGreen("✓ ") + "Agent Toolkit:" + cyan(" local skills and shared guidelines, including Claude Code"),
             )
         } catch (e: Exception) {
-            terminal.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
-            terminal.println(brightYellow("Install it later: https://github.com/jmix-framework/jmix-agent-toolkit"))
+            progress.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
+            progress.println(brightYellow("Install it later: https://github.com/jmix-framework/jmix-agent-toolkit"))
         }
     }
 

@@ -57,6 +57,7 @@ class ProjectGeneratorTest {
         locales: List<JmixLocale> = listOf(JmixLocale("en", "English", true)),
         createGitRepository: Boolean = false,
         onStatus: (String) -> Unit = {},
+        installToolkit: (Path) -> Unit = {},
     ): Path {
         val target = tempDir.resolve("out")
         val info = ProjectCreationInfo(
@@ -69,7 +70,9 @@ class ProjectGeneratorTest {
             templateMetadata = TemplateMetadata(),
             createGitRepository = createGitRepository,
         )
-        ProjectGenerator(onWarning = {}, onStatus = onStatus).generate(buildFixtureTemplate(), info)
+        ProjectGenerator(onWarning = {}, onStatus = onStatus).generate(buildFixtureTemplate(), info) {
+            installToolkit(target)
+        }
         return target
     }
 
@@ -140,11 +143,17 @@ class ProjectGeneratorTest {
     }
 
     @Test
-    fun `git repository stages every generated file`() {
+    fun `git repository stages generated files and toolkit files together`() {
         Assumptions.assumeTrue(EnvironmentCheck.isGitAvailable())
         val phases = mutableListOf<String>()
-        val target = generate(createGitRepository = true, onStatus = phases::add)
-        assertEquals(listOf("Rendering the project files", "Initializing the Git repository"), phases)
+        val target = generate(createGitRepository = true, onStatus = phases::add) { projectDir ->
+            assertTrue(Files.isRegularFile(projectDir.resolve("settings.gradle")))
+            assertFalse(Files.exists(projectDir.resolve(".git")))
+            phases.add("Installing the Agent Toolkit")
+            writeTemplate(projectDir, "AGENTS.md", "Project guidelines\n")
+            writeTemplate(projectDir, ".agents/skills/jmix/SKILL.md", "Jmix skill\n")
+        }
+        assertEquals(listOf("Rendering the project files", "Installing the Agent Toolkit", "Initializing the Git repository"), phases)
 
         val process = ProcessBuilder("git", "diff", "--cached", "--name-only")
             .directory(target.toFile())
@@ -160,6 +169,14 @@ class ProjectGeneratorTest {
                 .toSet()
         }
         assertEquals(generated, staged)
+    }
+
+    @Test
+    fun `toolkit files are generated when Git is disabled`() {
+        val target = generate { projectDir -> writeTemplate(projectDir, "AGENTS.md", "Project guidelines\n") }
+
+        assertTrue(Files.isRegularFile(target.resolve("AGENTS.md")))
+        assertFalse(Files.exists(target.resolve(".git")))
     }
 
     @Test
