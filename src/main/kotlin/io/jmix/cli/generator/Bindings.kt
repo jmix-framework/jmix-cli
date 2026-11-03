@@ -83,7 +83,7 @@ object Bindings {
             if (repo.url == MAVEN_LOCAL_URL) {
                 additionalRepositories.add(0, "    mavenLocal()")
             } else {
-                additionalRepositories.add(renderRepository(repo, indent))
+                additionalRepositories.add(renderRepository(repo, indent, info))
             }
         }
         binding["project_additionalRepositories"] = additionalRepositories
@@ -111,17 +111,17 @@ object Bindings {
             info.templateMetadata.addon
         }
 
-    private fun renderRepository(repo: Repository, indent: String): String {
+    private fun renderRepository(repo: Repository, indent: String, info: ProjectCreationInfo): String {
         if (isPremiumRepository(repo.url)) {
             return "    // Commercial Jmix add-ons require a subscription, see $PREMIUM_REPOSITORY_DOCS\n" +
                 "${indent}// Set the repository credentials in ~/.gradle/gradle.properties:\n" +
-                "${indent}// assign the first part of your license key before dash to premiumRepoUser property,\n" +
-                "${indent}// the part after dash to premiumRepoPass property.\n" +
+                "${indent}// assign the first part of your license key before dash to ${info.premiumRepoUserProperty} property,\n" +
+                "${indent}// the part after dash to ${info.premiumRepoPassProperty} property.\n" +
                 "${indent}maven {\n" +
                 "${indent}    url = '${repo.url}'\n" +
                 "${indent}    credentials {\n" +
-                "${indent}        username = rootProject['premiumRepoUser']\n" +
-                "${indent}        password = rootProject['premiumRepoPass']\n" +
+                "${indent}        username = rootProject['${info.premiumRepoUserProperty}']\n" +
+                "${indent}        password = rootProject['${info.premiumRepoPassProperty}']\n" +
                 "${indent}    }\n" +
                 "${indent}}"
         }

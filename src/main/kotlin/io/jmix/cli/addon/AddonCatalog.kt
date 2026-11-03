@@ -47,7 +47,7 @@ data class Addon(
     val tags: List<String> = emptyList(),
     val vendor: String = "",
 ) {
-    // ponytail: one primary group per add-on; tag filters would support overlapping categories.
+    // one primary group per add-on; tag filters would support overlapping categories.
     val group: AddonGroup get() = when {
         category == "Translation" -> AddonGroup.TRANSLATIONS
         "Security" in tags -> AddonGroup.SECURITY

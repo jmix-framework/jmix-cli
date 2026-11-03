@@ -36,6 +36,8 @@ data class ProjectCreationInfo(
     val templateMetadata: TemplateMetadata,
     val createGitRepository: Boolean = true,
     val addons: List<ResolvedAddon> = emptyList(),
+    val premiumRepoUserProperty: String = "premiumRepoUser",
+    val premiumRepoPassProperty: String = "premiumRepoPass",
 ) {
     val rootPath: String get() = rootPackage.replace('.', '/')
 

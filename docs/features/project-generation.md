@@ -1,6 +1,7 @@
 # Project generation
 
-`jmix` and `jmix new` start the wizard. `jmix new <name> --non-interactive`
+`jmix` opens the command menu; select `new`, or run `jmix new` to start the wizard directly.
+`jmix new <name> --non-interactive`
 uses options and defaults without prompting. Run `jmix new --help` for the
 complete option reference.
 
@@ -35,11 +36,13 @@ complete option reference.
   pinned, defaults such as
   `./<name>` and the public repository are omitted. Arguments are quoted for
   PowerShell on Windows and POSIX shells on macOS/Linux, including paths with
-  spaces or apostrophes.
+  spaces or apostrophes. Reusing separately saved premium credential names may
+  require generating interactively and choosing **Save account credentials
+  separately** again.
 
 ## Code
 
-- [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/NewCommand.kt) — workflow and options.
+- [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/command/NewCommand.kt) — workflow and options.
 - [template](../../src/main/kotlin/io/jmix/cli/template) and
   [TemplateRepository.kt](../../src/main/kotlin/io/jmix/cli/repo/TemplateRepository.kt) — discovery and cache.
 - [generator](../../src/main/kotlin/io/jmix/cli/generator) — bindings and rendering.

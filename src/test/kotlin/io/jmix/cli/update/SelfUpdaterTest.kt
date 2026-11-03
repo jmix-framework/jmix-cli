@@ -36,15 +36,19 @@ class SelfUpdaterTest {
     private val isWindows = os == "windows"
 
     @Test
-    fun `update installs the latest release and repoints the command`() {
+    fun `update installs a complete release reports progress and repoints the command`() {
         val releaseDir = tempDir.resolve("release")
         val newChecksum = prepareRelease(releaseDir, "new-launcher")
         val root = tempDir.resolve("install")
         val binDir = tempDir.resolve("bin")
         linkCommand(binDir, installVersion(root, oldChecksum))
         val installation = installation(root, oldChecksum)
-
-        val result = updater(installation, releaseDir, binDir).update()
+        val phases = mutableListOf<String>()
+        val progress = mutableListOf<Pair<Long, Long>>()
+        val result = SelfUpdater(
+            installation, releaseDir.toString(), binDir, echo = {},
+            onStatus = phases::add, onProgress = { done, total -> progress += done to total },
+        ).update()
 
         assertTrue(result is UpdateResult.Updated, "expected an update, got $result")
         val newLauncher = installation.launcher(newChecksum)
@@ -53,23 +57,13 @@ class SelfUpdaterTest {
         assertCommandPointsTo(binDir, newLauncher)
         // The previous version stays until the next run cleans it up.
         assertTrue(Files.isRegularFile(installation.launcher(oldChecksum)))
-    }
 
-    @Test
-    fun `update names its phases and reports download bytes`() {
-        val releaseDir = tempDir.resolve("release")
-        prepareRelease(releaseDir, "new-launcher")
-        val root = tempDir.resolve("install")
-        val binDir = tempDir.resolve("bin")
-        linkCommand(binDir, installVersion(root, oldChecksum))
-        val installation = installation(root, oldChecksum)
-        val phases = mutableListOf<String>()
-        val progress = mutableListOf<Pair<Long, Long>>()
-
-        SelfUpdater(
-            installation, releaseDir.toString(), binDir, echo = {},
-            onStatus = phases::add, onProgress = { done, total -> progress += done to total },
-        ).update()
+        val marker = installation.versionsDir.resolve(newChecksum).resolve(SelfUpdater.MARKER_NAME)
+        assertTrue(Files.isRegularFile(marker), "the installed version must be marked complete")
+        assertTrue(
+            Files.getLastModifiedTime(marker).toInstant().isAfter(Instant.now().minusSeconds(300)),
+            "the marker must record the install time, not the archive timestamp",
+        )
 
         val size = Files.size(releaseDir.resolve(installation.archiveName))
         assertEquals(size to size, progress.last())
@@ -91,25 +85,6 @@ class SelfUpdaterTest {
         val result = updater(installation(root, checksum), releaseDir, binDir).update()
 
         assertTrue(result is UpdateResult.UpToDate, "expected no update, got $result")
-    }
-
-    @Test
-    fun `an installed version carries its completeness marker`() {
-        val releaseDir = tempDir.resolve("release")
-        val newChecksum = prepareRelease(releaseDir, "new-launcher")
-        val root = tempDir.resolve("install")
-        val binDir = tempDir.resolve("bin")
-        linkCommand(binDir, installVersion(root, oldChecksum))
-        val installation = installation(root, oldChecksum)
-
-        updater(installation, releaseDir, binDir).update()
-
-        val marker = installation.versionsDir.resolve(newChecksum).resolve(SelfUpdater.MARKER_NAME)
-        assertTrue(Files.isRegularFile(marker), "the installed version must be marked complete")
-        assertTrue(
-            Files.getLastModifiedTime(marker).toInstant().isAfter(Instant.now().minusSeconds(300)),
-            "the marker must record the install time, not the archive timestamp",
-        )
     }
 
     @Test
@@ -171,6 +146,12 @@ class SelfUpdaterTest {
             updater(installation, tempDir.resolve("missing-release"), binDir).update()
         }
         assertFalse(SelfUpdater.describe(error).isBlank())
+    }
+
+    @Test
+    fun `describe names the server that cannot be reached`() {
+        assertEquals("cannot reach the Jmix Store", SelfUpdater.describe(java.net.ConnectException("refused"), "the Jmix Store"))
+        assertEquals("cannot reach the release server", SelfUpdater.describe(java.net.ConnectException("refused")))
     }
 
     @Test

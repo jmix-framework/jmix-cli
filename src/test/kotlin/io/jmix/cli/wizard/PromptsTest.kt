@@ -1,8 +1,8 @@
 package io.jmix.cli.wizard
 
-import io.jmix.cli.addonEntry
-import io.jmix.cli.addonSelectionLegend
-import io.jmix.cli.addonSelectionQuestion
+import io.jmix.cli.command.addonEntry
+import io.jmix.cli.command.addonSelectionLegend
+import io.jmix.cli.command.addonSelectionQuestion
 import io.jmix.cli.addon.AddonCatalog
 import io.jmix.cli.addon.AddonCatalogTest
 import io.jmix.cli.addon.AddonProjectProfile
@@ -24,8 +24,24 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 import kotlin.time.TimeMark
+import kotlin.time.Duration.Companion.seconds
 
 class PromptsTest {
+
+    @Test
+    @org.junit.jupiter.api.Timeout(5)
+    fun `an animated header never delays a selection`() {
+        val recorder = TerminalRecorder(width = 100, height = 24, supportsAnsiCursor = false)
+        recorder.inputEvents += listOf(KeyboardEvent("ArrowDown"), KeyboardEvent("Enter"))
+        val prompts = Prompts(
+            Terminal(terminalInterface = recorder),
+            header = { listOf("Animated header") },
+            headerAnimationDuration = 30.seconds,
+        )
+        prompts.useAlternateScreen {
+            assertEquals("trial", prompts.choose("Command", listOf("new", "trial"), { it }).requireValue())
+        }
+    }
 
     @Test
     fun `progress follows stage jumps and back navigation inside the same screen`() {

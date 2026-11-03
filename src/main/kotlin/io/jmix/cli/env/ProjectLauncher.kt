@@ -115,12 +115,19 @@ object ProjectLauncher {
     /** The generated app's HTTP port: `server.port` from application.properties, or 8080. */
     fun serverPort(projectDir: Path): Int {
         val props = projectDir.resolve("src/main/resources/application.properties")
-        return runCatching {
-            Files.readAllLines(props).firstNotNullOfOrNull { line ->
-                SERVER_PORT_PROPERTY.matchEntire(line.trim())?.groupValues?.get(1)
-                    ?.toIntOrNull()?.takeIf { it in 1..65535 }
-            }
-        }.getOrNull() ?: DEFAULT_SERVER_PORT
+        return readProjectMetadata(props)?.lineSequence()?.firstNotNullOfOrNull { line ->
+            SERVER_PORT_PROPERTY.matchEntire(line.trim())?.groupValues?.get(1)
+                ?.toIntOrNull()?.takeIf { it in 1..65535 }
+        } ?: DEFAULT_SERVER_PORT
+    }
+
+    /** Metadata is optional, including in downloaded projects with unusually large build files. */
+    internal fun readProjectMetadata(file: Path): String? = try {
+        val limit = 1024 * 1024
+        Files.newInputStream(file).use { it.readNBytes(limit + 1) }
+            .takeIf { it.size <= limit }?.decodeToString()
+    } catch (e: IOException) {
+        null
     }
 
     fun isPortInUse(port: Int): Boolean = try {
@@ -128,6 +135,22 @@ object ProjectLauncher {
         true
     } catch (e: IOException) {
         false
+    }
+
+    /**
+     * Opens [url] in the default browser. Never fails: a launcher that cannot
+     * start is reported through [onWarning]. Whether the page then loads is
+     * up to the browser.
+     */
+    fun openUrl(url: String, onWarning: (String) -> Unit) {
+        try {
+            ProcessBuilder(browserCommand(url))
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+        } catch (e: Exception) {
+            onWarning("Failed to open $url in the browser: ${e.message}")
+        }
     }
 
     /**
@@ -141,14 +164,7 @@ object ProjectLauncher {
             val deadline = System.nanoTime() + APP_STARTUP_TIMEOUT.toNanos()
             while (System.nanoTime() < deadline) {
                 if (isPortInUse(port)) {
-                    try {
-                        ProcessBuilder(browserCommand(url))
-                            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                            .redirectError(ProcessBuilder.Redirect.DISCARD)
-                            .start()
-                    } catch (e: Exception) {
-                        onWarning("Failed to open $url in the browser: ${e.message}")
-                    }
+                    openUrl(url, onWarning)
                     return@Thread
                 }
                 try {

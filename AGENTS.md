@@ -15,11 +15,13 @@ Read the guide relevant to the change; update it when behavior changes.
 | [Add-ons](docs/features/add-ons.md)                                       | Studio catalog, compatibility, selection, translations, installation |
 | [Environment and Agent Toolkit](docs/features/environment-and-toolkit.md) | Development JDKs, project launching, AI agent setup                  |
 | [Updates](docs/features/updates.md)                                       | Startup checks, self-update, cache cleanup                           |
+| [Account and trial](docs/features/account-and-trial.md)                   | Sign-in, session file, trial download                                |
 
 Production code is in [src/main/kotlin/io/jmix/cli](src/main/kotlin/io/jmix/cli);
 tests mirror it under [src/test/kotlin/io/jmix/cli](src/test/kotlin/io/jmix/cli).
-[Main.kt](src/main/kotlin/io/jmix/cli/Main.kt) registers commands;
-[NewCommand.kt](src/main/kotlin/io/jmix/cli/NewCommand.kt) coordinates generation.
+[Main.kt](src/main/kotlin/io/jmix/cli/Main.kt) registers commands from
+[command](src/main/kotlin/io/jmix/cli/command);
+[NewCommand.kt](src/main/kotlin/io/jmix/cli/command/NewCommand.kt) coordinates generation.
 
 ## Working rules
 
@@ -61,6 +63,7 @@ Additional checks depend on the change:
 | Generation | Also generate and build a project as described in the feature guide |
 | Wizard                                 | Real terminal and numbered/line-input fallback, including back and quit                           |
 | Distribution/installers                | `./gradlew releaseBundle`, then `tests/test-install.sh` or `tests/test-install.ps1` on Windows    |
+| Account/trial | `./gradlew test --tests 'io.jmix.cli.account.*' --tests 'io.jmix.cli.trial.*' --tests 'io.jmix.cli.command.LoginCommandTest' --tests 'io.jmix.cli.command.LogoutCommandTest' --tests 'io.jmix.cli.command.TrialCommandTest'`; manual `jmix login` and `jmix trial` on a test account; release image includes `jdk.httpserver` |
 | Documentation/demo                     | Check links and examples; validate and visually inspect the recording                             |
 
 [CI](.github/workflows/ci.yml) runs on Linux, macOS, and Windows and builds a

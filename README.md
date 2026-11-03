@@ -24,7 +24,7 @@ curl -fsSL https://github.com/jmix-framework/jmix-cli/releases/latest/download/i
 irm https://github.com/jmix-framework/jmix-cli/releases/latest/download/install.ps1 | iex
 ```
 
-The installer starts the wizard. The CLI bundles its own Java runtime;
+The installer opens the command menu. The CLI bundles its own Java runtime;
 building generated projects needs a compatible JDK, which the wizard can help install.
 On macOS and Linux, restart the shell after installation or run
 `export PATH="$HOME/.local/bin:$PATH"` before invoking `jmix` in the current shell.
@@ -34,6 +34,21 @@ On macOS and Linux, restart the shell after installation or run
 ```shell
 jmix
 ```
+
+Select a command from the menu: **new** (create a project), **trial** (download the
+Enterprise+BPM trial project), **login** or **logout** (depending on the saved
+session), and **update**. Use arrow keys and Enter, or enter a number in a text
+console. Press `q` to quit. To open the project wizard directly, run `jmix new`.
+The welcome screen groups the saved account at the top right: region in the header,
+name below it, and email on a third line when available. Signed-out and incomplete
+profiles use two lines. After signing in or out from the menu, you return
+to the menu with the updated account. Account details are cached locally, so it
+works offline. The logo has a short, one-time reveal in interactive color terminals;
+`NO_COLOR` also disables this animation.
+The account name is bold green, email is muted, and region is cyan; signed-out
+status is yellow. In the project wizard, Esc on the first editable step returns to
+the command menu (`<` in text consoles). Returning to the menu discards the draft;
+starting the wizard again begins a new one.
 
 Choose a template, languages, add-ons, and project location. Follow the keyboard
 hints at the bottom of each step. In text input, use **Ctrl+Q** to quit.
@@ -58,9 +73,14 @@ On Windows, run `gradlew.bat bootRun`.
 Commercial add-ons, marked with `[$]` in the wizard, require a
 [Jmix subscription](https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription).
 Selecting one, such as `--addons business-calendars`, automatically adds the premium
-Jmix repository. Before generation, configure `~/.gradle/gradle.properties`: use
-the part of your license key before the dash for `premiumRepoUser`, and the part
-after the dash for `premiumRepoPass`. For scripts and CI, these values can also be
+Jmix repository. If credentials are not configured, run `jmix login`: the CLI uses
+your account's commercial license key and saves premium credentials in your Gradle
+user home, as Studio does. Conflicts offer a choice of keeping, replacing or saving
+credentials separately; `--non-interactive` leaves conflicting settings untouched.
+Successful saves explicitly name the properties file. You can also configure
+`~/.gradle/gradle.properties` manually: use the part of your license key before the
+dash for `premiumRepoUser`, and the part after the dash for `premiumRepoPass`.
+For scripts and CI, these values can also be
 supplied through the `ORG_GRADLE_PROJECT_premiumRepoUser` and
 `ORG_GRADLE_PROJECT_premiumRepoPass` environment variables.
 See [commercial add-on setup and troubleshooting](docs/features/add-ons.md#commercial-add-ons).
@@ -73,6 +93,46 @@ guidelines and skills for supported AI coding assistants. The wizard's setup
 checklist can leave it out, as can `--no-agents-toolkit`.
 Skills live in `.agents/skills`, with links in `.claude/skills` for Claude Code.
 A new `CLAUDE.md` imports `AGENTS.md` so the guidelines are shared.
+
+## Jmix account and trial
+
+Sign in to your Jmix account to download the Enterprise+BPM trial project: demo
+applications that use the commercial add-ons and need no license key.
+
+```shell
+jmix login                 # sign in through your browser
+jmix trial                 # choose where to download the trial project
+jmix trial --path ~/trial  # or into another directory
+jmix logout                # sign out on this computer
+```
+
+`jmix login [--region global|ru]` opens the Jmix sign-in page in your default browser and
+prints its address in case the browser does not open. Finish within 10 minutes. Use
+`--region ru` for an account on jmix.ru. Sign-in needs a browser on the same computer, so it
+does not work over SSH yet. The session is saved in `~/.jmix/account/session.json` (readable
+only by you on macOS and Linux), and the next sign-in replaces it. `jmix logout` deletes the file.
+
+`jmix trial [--path <directory>] [--start-trial]` downloads the trial of your account.
+The wizard offers the same location picker as project creation, including a custom path
+with completion. `--path` skips that step; non-interactive runs use the current directory
+by default. The archive's own project folder is preserved inside the selected directory.
+At a terminal without a session it
+signs you in first, in the global region; for jmix.ru run `jmix login --region ru` beforehand.
+A trial that is already running, including one you started on the website, is downloaded as it
+is. When there is none, the command asks before it starts one, and `--start-trial` answers yes.
+With `--non-interactive` it never asks and never opens a browser, so scripts need `jmix login`
+and `--start-trial` up front.
+
+The project is a Gradle composite with the demos under `demo/` and the trial add-ons in
+`trial_repository`; leave that layout as it is. The command prints the trial end date and
+next steps with a general module run command, one real example and its URL.
+Its `What's next?` checklist
+can open the whole project in the detected IDE and run a selected demo module, using the
+same JDK setup as project creation. These actions are skipped in non-interactive mode.
+The demos stop starting when the
+trial ends. If one stops earlier, download a fresh copy into another directory with `--path`.
+See [account and trial](docs/features/account-and-trial.md) for the details and limits, and the
+[Jmix guide](https://docs.jmix.io/jmix/account-management.html#enterprise-trial) for the trial itself.
 
 ## Options and updates
 
@@ -94,7 +154,7 @@ non-interactive generation; the wizard lets you choose values interactively.
 | `--project-id <id>`        | Prefix for entity, table and bean names; up to 7 characters.                                                                       | Template default; required if the template demands it                       |
 | `--theme <name>`           | UI theme: `aura` or `lumo`, where supported by the template and Jmix version.                                                      | `aura` for Jmix 3; `lumo` for Jmix 2; omitted for templates without a theme |
 | `--locales <codes>`        | Comma-separated locale codes, e.g. `en,ru`. The first is the default locale.                                                       | `en`                                                                        |
-| `--addons <ids>`           | Comma-separated compatible add-on IDs, e.g. `quartz,bpm`. Commercial add-ons require a license and premium repository credentials. | No additional add-ons                                                       |
+| `--addons <ids>`           | Comma-separated compatible add-on IDs, e.g. `quartz,bpm`. Commercial add-ons use configured credentials or the signed-in account's license. | No additional add-ons                                                       |
 | `--path <directory>`       | Target directory.                                                                                                                  | `./<name>`                                                                  |
 | `--repository <url>`       | Maven repository for templates and the generated project.                                                                          | `https://global.repo.jmix.io/repository/public`                             |
 | `--no-git`                 | Skip Git initialization and staging of generated files.                                                                            | Git enabled when available                                                  |
@@ -102,8 +162,8 @@ non-interactive generation; the wizard lets you choose values interactively.
 | `--include-unstable`       | Include RC, beta and snapshot versions in version selection.                                                                       | Stable versions only                                                        |
 | `--force`                  | Allow generation into a non-empty directory without confirmation; existing files may be overwritten.                               | Confirmation required in the wizard; rejected in non-interactive mode       |
 | `--non-interactive`        | Use options and defaults without prompting.                                                                                        | Interactive wizard                                                          |
-| `--no-update`              | Skip the automatic startup update check. Also accepted by `jmix` and `jmix update`; explicit updates still run.                    | Automatic checks enabled for installed builds outside CI                    |
-| `-h`, `--help`             | Show help and exit. Available for `jmix`, `jmix new` and `jmix update`.                                                            | —                                                                           |
+| `--no-update`              | Skip the automatic startup update check. Accepted by every command; explicit updates still run.                                    | Automatic checks enabled for installed builds outside CI                    |
+| `-h`, `--help`             | Show help and exit. Available for every command.                                                                                   | —                                                                           |
 
 Installed builds check for updates automatically. Set `JMIX_CLI_NO_AUTO_UPDATE=1`
 to disable checks; they are also skipped when `CI` is set or running from source.

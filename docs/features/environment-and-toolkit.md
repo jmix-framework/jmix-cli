@@ -18,6 +18,9 @@ version. Do not report the private bundled runtime as an installed development J
   Offer the detected IDE and application run as separate choices. The file
   manager is the fallback when the IDE is not selected or cannot open the project.
   Non-interactive generation does not offer these actions.
+- Trial projects use the same follow-up and JDK setup. The IDE opens the composite
+  root; Gradle and browser opening use the selected `demo/<module>` directory and
+  its own port. Non-interactive trial downloads do not open or run projects.
 - Install Jmix Agent Toolkit from the branch matching the Jmix major version
   unless the user opts out (`--no-agents-toolkit` or the wizard's setup checklist).
   Shared guidelines go into `AGENTS.md`, and project-local skills are real folders
@@ -38,6 +41,7 @@ version. Do not report the private bundled runtime as an installed development J
   [JdkVersions.kt](../../src/main/kotlin/io/jmix/cli/env/JdkVersions.kt) — detection and compatibility.
 - [JdkInstaller.kt](../../src/main/kotlin/io/jmix/cli/env/JdkInstaller.kt) — managed JDK installation.
 - [ProjectLauncher.kt](../../src/main/kotlin/io/jmix/cli/env/ProjectLauncher.kt) — IDE, file manager, and Gradle commands.
+- [ProjectInteraction.kt](../../src/main/kotlin/io/jmix/cli/command/ProjectInteraction.kt) — shared follow-up prompts and JDK setup.
 - [AgentToolkitInstaller.kt](../../src/main/kotlin/io/jmix/cli/env/AgentToolkitInstaller.kt) — toolkit setup.
 
 ## Verification

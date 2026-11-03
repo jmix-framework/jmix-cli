@@ -16,8 +16,6 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assumptions
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.ValueSource
 
 class ProjectGeneratorTest {
 
@@ -76,27 +74,16 @@ class ProjectGeneratorTest {
     }
 
     @Test
-    fun `generation names its phases before each starts`() {
-        val phases = mutableListOf<String>()
-        generate(onStatus = phases::add)
-        assertEquals(listOf("Rendering the project files"), phases)
-
-        Assumptions.assumeTrue(EnvironmentCheck.isGitAvailable())
-        phases.clear()
-        generate(createGitRepository = true, onStatus = phases::add)
-        assertEquals(listOf("Rendering the project files", "Initializing the Git repository"), phases)
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = ["Unknown property 'premiumRepoUser'", "Received status code 401: Unauthorized",
-        "Received status code 403: Forbidden", "Could not resolve host global.repo.jmix.io"])
-    fun `commercial resolution failures leave rendered configuration and stop before Git staging`(detail: String) {
+    fun `commercial resolution failures preserve log details and stop before Git staging`() {
+        val details = listOf("Unknown property 'premiumRepoUser'", "Received status code 401: Unauthorized",
+            "Received status code 403: Forbidden", "Could not resolve host global.repo.jmix.io")
         val template = buildFixtureTemplate()
         writeTemplate(template, "build.gradle", "repositories {\n" +
             "<% project_additionalRepositories.each { repository -> %>\${repository}\n<% } %>}\n" +
             "dependencies { implementation 'io.jmix.core:jmix-core-starter' }\n")
-        writeTemplate(template, "gradlew", "#!/bin/sh\nprintf '%s\\n' \"$detail\"\nexit 1\n")
-        writeTemplate(template, "gradlew.bat", "@echo off\r\necho $detail\r\nexit /b 1\r\n")
+        writeTemplate(template, "gradlew", "#!/bin/sh\nprintf '%s\\n' \"${details.joinToString("\n")}\"\nexit 1\n")
+        writeTemplate(template, "gradlew.bat", "@echo off\r\n" +
+            details.joinToString("\r\n") { "echo $it" } + "\r\nexit /b 1\r\n")
         val target = tempDir.resolve("failed-project")
         val info = ProjectCreationInfo(name = "demo", targetDir = target, rootPackage = "com.example.demo",
             jmixVersion = "3.0.1", templateMetadata = TemplateMetadata(), createGitRepository = true,
@@ -109,7 +96,7 @@ class ProjectGeneratorTest {
         }
 
         val message = error.message!!
-        assertTrue(message.contains(detail), message)
+        details.forEach { assertTrue(message.contains(it), message) }
         assertTrue(message.contains("premiumRepoUser and premiumRepoPass"), message)
         assertTrue(message.contains("ORG_GRADLE_PROJECT_premiumRepoUser"), message)
         assertTrue(message.contains("https://docs.jmix.io/jmix/studio/subscription.html"), message)
@@ -127,25 +114,37 @@ class ProjectGeneratorTest {
     }
 
     @Test
-    fun `renders paths and contents, honors globals`() {
-        val target = generate()
+    fun `renders a complete project with Studio bindings locales and executable wrapper`() {
+        val phases = mutableListOf<String>()
+        val target = generate(listOf(JmixLocale("en", "English", true), JmixLocale("de", "German")), onStatus = phases::add)
 
+        assertEquals(listOf("Rendering the project files"), phases)
         assertEquals("rootProject.name = 'jmix-project'\n", Files.readString(target.resolve("settings.gradle")))
         val app = Files.readString(target.resolve("src/main/java/com/company/jmixproject/JmixProjectApp.java"))
         assertEquals("package com.company.jmixproject;\nclass JmixProjectApp {} // table SHP_USER\n", app)
-    }
-
-    @Test
-    fun `gitignore path binding produces dotfile`() {
-        val target = generate()
         assertTrue(Files.exists(target.resolve(".gitignore")))
         assertFalse(Files.exists(target.resolve("\${gitignore}")))
+        assertFalse(Files.exists(target.resolve("template.json")))
+        assertFalse(Files.exists(target.resolve(".globals")))
+
+        val dir = target.resolve("src/main/resources/com/company/jmixproject")
+        assertEquals("app.title=Jmix Project\n", Files.readString(dir.resolve("messages_en.properties")))
+        assertEquals("app.title=Jmix Project\n", Files.readString(dir.resolve("messages_de.properties")))
+
+        val gradlew = target.resolve("gradlew")
+        // Content NOT rendered (unknown binding untouched), but CRLF normalized to LF.
+        assertEquals("#!/bin/sh\necho \${not_a_binding}\n", Files.readString(gradlew))
+        if (isPosix(gradlew)) {
+            assertTrue(PosixFilePermission.OWNER_EXECUTE in Files.getPosixFilePermissions(gradlew))
+        }
     }
 
     @Test
     fun `git repository stages every generated file`() {
         Assumptions.assumeTrue(EnvironmentCheck.isGitAvailable())
-        val target = generate(createGitRepository = true)
+        val phases = mutableListOf<String>()
+        val target = generate(createGitRepository = true, onStatus = phases::add)
+        assertEquals(listOf("Rendering the project files", "Initializing the Git repository"), phases)
 
         val process = ProcessBuilder("git", "diff", "--cached", "--name-only")
             .directory(target.toFile())
@@ -161,23 +160,6 @@ class ProjectGeneratorTest {
                 .toSet()
         }
         assertEquals(generated, staged)
-    }
-
-    @Test
-    fun `template json and globals are not emitted`() {
-        val target = generate()
-        assertFalse(Files.exists(target.resolve("template.json")))
-        assertFalse(Files.exists(target.resolve(".globals")))
-    }
-
-    @Test
-    fun `messages file generated once per locale`() {
-        val target = generate(
-            listOf(JmixLocale("en", "English", true), JmixLocale("de", "German")),
-        )
-        val dir = target.resolve("src/main/resources/com/company/jmixproject")
-        assertEquals("app.title=Jmix Project\n", Files.readString(dir.resolve("messages_en.properties")))
-        assertEquals("app.title=Jmix Project\n", Files.readString(dir.resolve("messages_de.properties")))
     }
 
     @Test
@@ -208,18 +190,6 @@ class ProjectGeneratorTest {
                 target,
                 java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"),
             )
-        }
-    }
-
-    @Test
-    fun `skip-list files copied verbatim except gradlew line endings, gradlew is executable`() {
-        val target = generate()
-        val gradlew = target.resolve("gradlew")
-        // Content NOT rendered (unknown binding untouched), but CRLF normalized to LF.
-        assertEquals("#!/bin/sh\necho \${not_a_binding}\n", Files.readString(gradlew))
-        // The generator sets the executable bit only on POSIX file systems.
-        if (isPosix(gradlew)) {
-            assertTrue(PosixFilePermission.OWNER_EXECUTE in Files.getPosixFilePermissions(gradlew))
         }
     }
 

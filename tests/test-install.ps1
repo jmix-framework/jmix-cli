@@ -44,6 +44,13 @@ try {
     if ($helpOutput -notmatch "Jmix CLI") {
         throw "Installed CLI did not start."
     }
+    # The account commands must be registered in the release image.
+    foreach ($command in "login", "trial") {
+        $commandHelp = & $commandPath $command --help | Out-String
+        if ($commandHelp -notmatch "Usage: jmix $command") {
+            throw "Installed CLI did not show help for 'jmix $command'."
+        }
+    }
 
     # Recorded for self-update: a custom bin directory is otherwise undiscoverable.
     $recordedBinDir = (Get-Content -LiteralPath (Join-Path $installRoot "bin-dir") -Raw).Trim()
@@ -54,6 +61,12 @@ try {
     $installedVersionDir = @(Get-ChildItem -LiteralPath (Join-Path $installRoot "versions") -Directory)[0]
     if (-not (Test-Path -LiteralPath (Join-Path $installedVersionDir.FullName ".jmix-installed") -PathType Leaf)) {
         throw "Installer did not mark the installation as complete."
+    }
+    # jmix login receives the sign-in redirect with jdk.httpserver. jlink keeps only the modules it is told to,
+    # so a missing one fails in the installed CLI alone, never in tests or source runs.
+    $runtimeRelease = Join-Path $installedVersionDir.FullName "runtime\release"
+    if (-not (Select-String -Quiet -SimpleMatch -Pattern "jdk.httpserver" -LiteralPath $runtimeRelease)) {
+        throw "The release runtime does not include jdk.httpserver."
     }
 
     # 'jmix update' against a release that matches the installed one is a no-op.
@@ -89,7 +102,8 @@ try {
         -BinDir $binDir `
         -SkipPathUpdate `
         -CliArguments "--help" *>&1 | Out-String
-    if ($startOutput -notmatch "Starting the Jmix project wizard" -or $startOutput -notmatch "Jmix CLI") {
+    if ($LASTEXITCODE -ne 0 -or $startOutput -notmatch "Starting Jmix CLI" -or
+        $startOutput -notmatch "(?m)^Usage: jmix ") {
         throw "Installer did not start the CLI."
     }
 

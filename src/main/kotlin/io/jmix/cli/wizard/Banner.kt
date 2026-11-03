@@ -5,13 +5,16 @@ import com.github.ajalt.mordant.rendering.TextColors.gray
 import com.github.ajalt.mordant.rendering.TextStyle
 import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.terminal.Terminal
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * The wizard's opening banner: the Jmix logo next to the product name.
+ * The command menu's opening banner: the Jmix logo next to the product name.
  * Renderings degrade with the terminal — logo plus wordmark, wordmark alone,
  * an ASCII wordmark for consoles without block glyphs, and finally one line.
  */
 object Banner {
+
+    internal val INTRO_DURATION = 600.milliseconds
 
     // Colors sampled from the official logo artwork.
     private val PINK = TextColors.rgb("#FC1264")
@@ -22,7 +25,7 @@ object Banner {
     // The logo's own #17124B is nearly black — 1.2:1 against a dark terminal
     // background. This lighter indigo keeps the hue and stays readable on both
     // dark and light themes.
-    private val INDIGO = TextColors.rgb("#6C5CE7")
+    private val INDIGO = TextColors.rgb("#8C7DFF")
     private val BRAND = INDIGO
 
     private val PALETTE: Map<Char, TextStyle> = mapOf(
@@ -47,12 +50,12 @@ object Banner {
     )
 
     private val BLOCK = listOf(
-        "     ██╗███╗   ███╗██╗██╗  ██╗",
-        "     ██║████╗ ████║██║╚██╗██╔╝",
-        "     ██║██╔████╔██║██║ ╚███╔╝ ",
-        "██   ██║██║╚██╔╝██║██║ ██╔██╗ ",
-        "╚█████╔╝██║ ╚═╝ ██║██║██╔╝ ██╗",
-        " ╚════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═╝",
+        "   ██  ██   ██  ███  ██ ██",
+        "   ██  ███ ███   █   ██ ██",
+        "   ██  ███████   █    ███ ",
+        "██ ██  ██ █ ██   █     █  ",
+        "██ ██  ██   ██   █    ███ ",
+        " ███   ██   ██  ███  ██ ██",
     )
 
     private val ASCII = listOf(
@@ -63,8 +66,8 @@ object Banner {
         " \\___/ |_|  |_||_| /_/\\_\\",
     )
 
-    private const val TAGLINE = "Create a Jmix project"
-    private const val LOGO_GAP = "  "
+    private const val TAGLINE = "Choose a command"
+    private const val LOGO_GAP = "   "
 
     /** Cell count of each logo row; they must match or the wordmark shifts. */
     internal val logoRowWidths: List<Int> get() = LOGO.map { it.first.length }
@@ -78,42 +81,88 @@ object Banner {
      * @param blocks whether the console can render block glyphs; overridable so
      *   tests cover every rendering regardless of the host they run on.
      */
-    fun print(terminal: Terminal, version: String? = null, blocks: Boolean = supportsBlocks()) {
+    fun print(
+        terminal: Terminal,
+        version: String? = null,
+        blocks: Boolean = supportsBlocks(),
+        account: List<List<Pair<String, TextStyle>>>? = null,
+    ) {
         terminal.println()
-        lines(terminal.size.width, version, blocks).forEach { terminal.println(it) }
+        lines(terminal.size.width, version, blocks, account).forEach { terminal.println(it) }
         terminal.println()
     }
 
     /**
-     * The banner as rendered lines, so the wizard can keep it as a frame header
+     * The banner as rendered lines, so the menu can keep it as a frame header
      * instead of losing it to the first repaint.
      */
-    fun lines(width: Int, version: String? = null, blocks: Boolean = supportsBlocks()): List<String> {
+    fun lines(
+        width: Int,
+        version: String? = null,
+        blocks: Boolean = supportsBlocks(),
+        account: List<List<Pair<String, TextStyle>>>? = null,
+        introProgress: Double = 1.0,
+    ): List<String> {
         val subtitle = listOfNotNull("Jmix CLI", version).joinToString(" ")
+        val accountRows = account?.let { accountLines(width, it) }.orEmpty()
+        val visibleColumns = (LOGO_WIDTH * introProgress.coerceIn(0.0, 1.0)).toInt()
         val art = when {
-            blocks && width >= WITH_LOGO_WIDTH -> logoAndWordmark()
+            blocks && width >= WITH_LOGO_WIDTH -> logoAndWordmark(visibleColumns)
             blocks && width >= BLOCK_WIDTH -> BLOCK.map { BRAND(it) }
             width >= ASCII_WIDTH -> ASCII.map { BRAND(it) }
             // Too narrow for any art: the name still has to appear.
-            else -> return listOf(BRAND(bold(subtitle)))
+            else -> return if (accountRows.isEmpty()) listOf(BRAND(bold(subtitle))) else accountRows + "" + BRAND(bold(subtitle))
         }
         // The tagline is dropped rather than wrapped onto a second line.
         val tagline = "$LOGO_GAP·$LOGO_GAP$TAGLINE"
         val caption =
             if (width >= subtitle.length + tagline.length) bold(subtitle) + gray(tagline) else bold(subtitle)
-        return art + caption
+        val branding = art + caption
+        if (accountRows.isEmpty()) return branding
+        val leftWidth = branding.maxOf { ANSI_SEQUENCE.replace(it, "").length }
+        val accountStart = accountRows.minOf { ANSI_SEQUENCE.replace(it, "").indexOfFirst { c -> c != ' ' } }
+        if (accountStart >= leftWidth + LOGO_GAP.length) {
+            return (0 until maxOf(branding.size, accountRows.size)).map { row ->
+                val left = branding.getOrElse(row) { "" }
+                // Only leading padding overlaps the artwork; styled account text is never cut.
+                left + accountRows.getOrElse(row) { "" }.drop(ANSI_SEQUENCE.replace(left, "").length)
+            }
+        }
+        return accountRows + "" + branding
+    }
+
+    /** Right-align the block while keeping its rows on a shared left edge. Clip before applying colors. */
+    internal fun accountLines(width: Int, account: List<List<Pair<String, TextStyle>>>): List<String> {
+        val columns = (width - 1).coerceAtLeast(1)
+        val blockWidth = (account.maxOfOrNull { row -> row.sumOf { it.first.length } } ?: 0).coerceAtMost(columns)
+        val indent = " ".repeat(columns - blockWidth)
+        return account.map { row ->
+            val clipped = row.sumOf { it.first.length } > columns
+            var remaining = if (clipped) columns - 1 else columns
+            buildString {
+                append(indent)
+                for ((text, style) in row) {
+                    val visible = text.take(remaining)
+                    if (visible.isNotEmpty()) append(style(visible))
+                    remaining -= visible.length
+                }
+                if (clipped) append(gray("…"))
+            }
+        }
     }
 
     /** The logo on the left, with the wordmark centered against it. */
-    private fun logoAndWordmark(): List<String> {
+    private fun logoAndWordmark(visibleColumns: Int): List<String> {
         val wordmarkPad = (LOGO.size - BLOCK.size).coerceAtLeast(0) / 2
         return (0 until maxOf(LOGO.size, BLOCK.size + wordmarkPad)).map { line ->
-            val logo = LOGO.getOrNull(line)?.let { (glyphs, colors) -> colorize(glyphs, colors) }
+            val logo = LOGO.getOrNull(line)?.let { (glyphs, colors) -> colorize(reveal(glyphs, visibleColumns), colors) }
                 ?: " ".repeat(LOGO_WIDTH)
             val word = BLOCK.getOrNull(line - wordmarkPad)?.let { BRAND(it) } ?: ""
             (logo + LOGO_GAP + word).trimEnd()
         }
     }
+
+    private fun reveal(text: String, columns: Int): String = text.take(columns.coerceAtLeast(0)).padEnd(text.length)
 
     /** Applies the per-cell palette, coalescing runs of one color into one span. */
     private fun colorize(glyphs: String, colors: String): String {

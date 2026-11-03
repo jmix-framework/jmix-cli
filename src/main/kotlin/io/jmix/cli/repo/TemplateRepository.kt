@@ -4,6 +4,7 @@ import io.jmix.cli.util.JmixVersionComparator
 import io.jmix.cli.util.PlatformVersions
 import io.jmix.cli.util.contentLength
 import io.jmix.cli.util.copyWithProgress
+import io.jmix.cli.util.isZip
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
@@ -131,15 +132,6 @@ class TemplateRepository(
         return jar
     }
 
-    private fun isZip(file: Path): Boolean = try {
-        Files.newInputStream(file).use { input ->
-            val magic = input.readNBytes(4)
-            magic.size == 4 && magic[0] == 0x50.toByte() && magic[1] == 0x4B.toByte()
-        }
-    } catch (e: IOException) {
-        false
-    }
-
     private fun fetchVersionsXml(): String {
         val metadataCache = repoCacheDir.resolve("maven-metadata.xml")
         if (isCacheFresh(metadataCache)) {
@@ -184,7 +176,7 @@ class TemplateRepository(
 
         private val VERSION_CACHE_TTL: Duration = Duration.ofHours(24)
 
-        private val VERSION_SHAPE = Regex("[0-9A-Za-z._+-]+")
+        internal val VERSION_SHAPE = Regex("[0-9A-Za-z._+-]+")
 
         fun defaultCacheDir(): Path =
             Path.of(System.getProperty("user.home"), ".jmix", "templates")

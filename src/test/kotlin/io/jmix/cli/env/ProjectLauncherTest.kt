@@ -64,6 +64,8 @@ class ProjectLauncherTest {
         val resources = Files.createDirectories(tempDir.resolve("src/main/resources"))
         Files.writeString(resources.resolve("application.properties"), "main.datasource.username=sa\n")
         assertEquals(8080, ProjectLauncher.serverPort(tempDir))
+        Files.writeString(resources.resolve("application.properties"), "server.port=9090\n#" + "x".repeat(1024 * 1024))
+        assertEquals(8080, ProjectLauncher.serverPort(tempDir))
     }
 
     @Test

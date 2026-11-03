@@ -19,6 +19,8 @@ import com.github.ajalt.mordant.widgets.SelectList
 import com.github.ajalt.mordant.widgets.Text
 import com.github.ajalt.mordant.widgets.Viewport
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration
+import kotlin.time.TimeSource
 
 /** A prompt outcome: an answered value, or a request to return to the previous step. */
 sealed interface Answer<out T> {
@@ -192,6 +194,9 @@ class Prompts(
      * dropped whenever the frame would not leave room for the question itself.
      */
     private val header: (Int) -> List<String> = { emptyList() },
+    private val compactHeader: (Int) -> List<String> = { emptyList() },
+    private val headerAnimationDuration: Duration = Duration.ZERO,
+    private val exitOnEof: Boolean = false,
     // Trailing position keeps `Prompts(terminal) { state }` working.
     private val wizardUiState: () -> WizardUiState = { WizardUiState() },
 ) {
@@ -357,6 +362,7 @@ class Prompts(
         description: (T) -> String? = { null },
         defaultIndex: Int = 0,
         allowBack: Boolean = false,
+        legend: String? = null,
     ): Answer<T> {
         if (items.size == 1) return Answer.Value(items.first())
         if (isInputExhausted) return Answer.Value(items[defaultIndex])
@@ -371,7 +377,7 @@ class Prompts(
                 itemTitle.padEnd(titleColumnWidth) + gray(" — $itemDescription")
             } ?: itemTitle
         }
-        when (val result = runSelect(question, labels.map { SelectList.Entry(it) }, multi = false, allowBack)) {
+        when (val result = runSelect(question, labels.map { SelectList.Entry(it) }, multi = false, allowBack, legend = legend)) {
             is SelectResult.Picked ->
                 return Answer.Value(items[labels.indexOf(result.values.single()).coerceAtLeast(0)])
             SelectResult.Back -> return Answer.Back
@@ -379,13 +385,16 @@ class Prompts(
         }
 
         terminal.println(questionStyle(question))
+        legend?.let(terminal::println)
         val numberWidth = items.size.toString().length
         items.forEachIndexed { i, _ ->
             val marker = if (i == defaultIndex) cyan("*") else " "
             val number = (i + 1).toString().padStart(numberWidth)
             terminal.println("  $marker $number) ${labels[i]}")
         }
+        terminal.println(gray("$QUIT_INPUT to quit"))
         val answer = ask("Enter number", (defaultIndex + 1).toString(), allowBack) { input ->
+            if (isQuitInput(input)) quit()
             val n = input.toIntOrNull()
             if (n == null || n !in 1..items.size) "Enter a number between 1 and ${items.size}" else null
         }
@@ -575,6 +584,8 @@ class Prompts(
         rawMode: RawModeScope,
     ): SelectResult {
         val ownsScreen = !alternateScreenHeld
+        val animationStarted = TimeSource.Monotonic.markNow()
+        var animatingHeader = headerAnimationDuration > Duration.ZERO
         if (ownsScreen) terminal.rawPrint(ENTER_ALTERNATE_SCREEN)
         try {
             terminal.cursor.hide(showOnExit = false)
@@ -585,10 +596,11 @@ class Prompts(
                 val key = readKeyOrNullCompat(rawMode)
                 if (key == null) {
                     terminal.updateSize()
-                    if (terminal.size.width != renderedWidth || terminal.size.height != renderedHeight) {
+                    if (animatingHeader || terminal.size.width != renderedWidth || terminal.size.height != renderedHeight) {
                         state = renderSelection(state)
                         renderedWidth = terminal.size.width
                         renderedHeight = terminal.size.height
+                        animatingHeader = animationStarted.elapsedNow() < headerAnimationDuration
                     }
                     continue
                 }
@@ -640,7 +652,14 @@ class Prompts(
         val header = header(width)
         if (header.isEmpty()) return emptyList()
         // One blank row separates the banner from the frame body.
-        return if (height - rowsInUse - header.size - 1 >= MIN_ROWS_BELOW_HEADER) header + "" else emptyList()
+        if (height - rowsInUse - header.size - 1 >= MIN_ROWS_BELOW_HEADER) return header + ""
+        val compact = compactHeader(width)
+        val spareRows = height - rowsInUse - compact.size
+        return when {
+            compact.isEmpty() || spareRows < 0 -> emptyList()
+            spareRows == 0 -> compact
+            else -> compact + ""
+        }
     }
 
     /**
@@ -957,6 +976,7 @@ class Prompts(
             if (line == null) {
                 // Ctrl+D on a real terminal is a deliberate abort, like Ctrl+C.
                 if (terminal.terminalInfo.inputInteractive) abort()
+                if (exitOnEof) quit()
                 // EOF on piped stdin. Fall back to defaults for this and all
                 // remaining prompts instead of aborting a half-finished wizard.
                 isInputExhausted = true
@@ -1110,7 +1130,7 @@ class Prompts(
         if (e.message?.contains(WINDOWS_POLL_TIMEOUT_MESSAGE) == true) null else abort()
     }
 
-    // ponytail: terminals expose characters, so other layouts need explicit aliases.
+    // terminals expose characters, so other layouts need explicit aliases.
     private fun isQuitInput(input: String): Boolean =
         input.equals(QUIT_INPUT, ignoreCase = true) || input.equals("й", ignoreCase = true)
 
