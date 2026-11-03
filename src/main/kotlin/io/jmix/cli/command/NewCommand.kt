@@ -320,7 +320,9 @@ class NewCommand internal constructor(private val templateCacheDir: Path) : Clik
                 ProjectGenerator(
                     onWarning = { progress.println(brightYellow("Warning: $it")) },
                     onStatus = progress::relabel,
-                ).generate(templateRoot, info)
+                ).generate(templateRoot, info) {
+                    if (state.installToolkit == true) installAgentToolkit(info, progress)
+                }
             }
         } catch (e: RuntimeException) {
             // Groovy rendering errors (e.g. a missing binding) are template
@@ -328,7 +330,6 @@ class NewCommand internal constructor(private val templateCacheDir: Path) : Clik
             throw CliktError("Project generation failed: ${e.message ?: e.toString()}")
         }
 
-        if (state.installToolkit == true) installAgentToolkit(info)
         printSuccess(info)
         wizardStage = null
         if (interactive && terminal.terminalInfo.inputInteractive) {
@@ -906,18 +907,16 @@ class NewCommand internal constructor(private val templateCacheDir: Path) : Clik
      * project-local skills. A failure must never
      * fail the already-generated project — warn and move on.
      */
-    private fun installAgentToolkit(info: ProjectCreationInfo) {
+    private fun installAgentToolkit(info: ProjectCreationInfo, progress: StatusReporter.Handle) {
         try {
-            status.run("Installing the Jmix Agent Toolkit") { progress ->
-                AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion, progress::relabel)
-            }
-            summary(
-                "Agent Toolkit",
-                "local skills and shared guidelines, including Claude Code",
+            progress.relabel("Installing the Jmix Agent Toolkit")
+            AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion, progress::relabel)
+            progress.println(
+                brightGreen("✓ ") + "Agent Toolkit:" + cyan(" local skills and shared guidelines, including Claude Code"),
             )
         } catch (e: Exception) {
-            terminal.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
-            terminal.println(brightYellow("Install it later: https://github.com/jmix-framework/jmix-agent-toolkit"))
+            progress.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
+            progress.println(brightYellow("Install it later: https://github.com/jmix-framework/jmix-agent-toolkit"))
         }
     }
 

@@ -29,10 +29,13 @@ complete option reference.
   line endings and executable permissions.
 - Non-interactive output defaults to `./<name>`. An existing non-empty target
   requires interactive confirmation or `--force`; a file cannot be a target directory.
-- Install selected [add-ons](add-ons.md) before optional `git init` and
-  `git add --all`. Generation does not create a commit. `--no-git` skips Git setup.
-- Install the [Agent Toolkit](environment-and-toolkit.md) after generation unless
-  `--no-agents-toolkit` is passed or the wizard's setup entry is unchecked.
+- Install selected [add-ons](add-ons.md) and the
+  [Agent Toolkit](environment-and-toolkit.md) before optional `git init` and
+  `git add --all`, so Git stages Toolkit files alongside the rest of the project
+  according to its ignore rules. Generation does not create a commit.
+  `--no-git` skips Git setup.
+- Skip the Agent Toolkit when `--no-agents-toolkit` is passed or the wizard's
+  setup entry is unchecked.
   Its failure produces a warning and does not discard the project.
 - Report download progress through the callbacks in
   [Downloads.kt](../../src/main/kotlin/io/jmix/cli/util/Downloads.kt): the

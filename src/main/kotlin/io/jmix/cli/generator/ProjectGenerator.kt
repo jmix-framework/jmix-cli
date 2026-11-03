@@ -11,7 +11,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Project generation ported from Studio's ProjectCreator: evaluate `.globals`,
  * walk the template tree rendering paths and contents, generate messages_*
- * per locale, normalize gradlew, then optionally initialize and stage a Git repository.
+ * per locale, normalize gradlew, install add-ons and the Agent Toolkit, then
+ * optionally initialize and stage a Git repository.
  */
 class ProjectGenerator(
     private val onWarning: (String) -> Unit = { System.err.println("Warning: $it") },
@@ -19,7 +20,7 @@ class ProjectGenerator(
     private val onStatus: (String) -> Unit = {},
 ) {
 
-    fun generate(templateRoot: Path, info: ProjectCreationInfo) {
+    fun generate(templateRoot: Path, info: ProjectCreationInfo, installToolkit: () -> Unit = {}) {
         onStatus("Rendering the project files")
         val binding = Bindings.createBinding(info)
 
@@ -47,6 +48,8 @@ class ProjectGenerator(
             onStatus("Resolving add-on dependencies with the Gradle wrapper (this can take a few minutes)")
             AddonInstaller.install(info, buildFile)
         }
+
+        installToolkit()
 
         if (info.createGitRepository) {
             onStatus("Initializing the Git repository")
