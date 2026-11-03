@@ -81,7 +81,9 @@ preserved. Matching property values are reused. When existing credentials differ
 from the account license, the interactive CLI offers **Keep existing credentials**
 (the default), **Replace existing credentials**, or **Save account credentials
 separately**. The last option uses names such as `premiumRepoUser.0`, referenced
-by the generated repository block. Replacement is unavailable when conflicting
+by the generated repository block. Reusing those names may require generating
+interactively and choosing **Save account credentials separately** again.
+Replacement is unavailable when conflicting
 credentials come from environment variables. Quitting writes nothing; EOF keeps
 existing settings. With `--non-interactive`, conflicts leave the file untouched
 and generation continues with the existing settings, even if they are incomplete.
@@ -93,7 +95,9 @@ project, or the reproduction command. `jmix logout` removes the account session;
 it leaves saved Gradle credentials in place, as they are also used by other projects.
 
 You can instead use the existing Jmix credential names in your Gradle user home
-(`~/.gradle/gradle.properties`, or under `GRADLE_USER_HOME` if set):
+(`~/.gradle/gradle.properties`, or under `GRADLE_USER_HOME` if set). Use an
+absolute `GRADLE_USER_HOME` for commercial add-ons so the CLI and generated build
+use the same directory.
 
 ```properties
 premiumRepoUser=<repository-user>
@@ -110,10 +114,13 @@ jmix new demo --non-interactive --addons business-calendars
 
 On PowerShell, set `$env:ORG_GRADLE_PROJECT_premiumRepoUser` and
 `$env:ORG_GRADLE_PROJECT_premiumRepoPass` before running the same CLI command.
-Gradle's normal project property resolution applies. A complete pair supplied
-through environment variables is used without contacting the account service or
-changing the properties file. Configured credentials also remain usable when
-signed out, when the account has no commercial key, or when Store is unavailable.
+For the credential sources the CLI checks, a `systemProp.org.gradle.project.*`
+entry takes precedence over an environment variable, which takes precedence over
+a plain property in `gradle.properties`. A blank value at a higher priority still
+overrides the lower-priority value. When the environment supplies the effective
+pair, the CLI skips the account lookup and leaves the properties file untouched.
+A complete configured pair also remains usable when signed out, when the
+account key is missing or malformed, or when the Store is unavailable.
 See [Gradle project properties](https://docs.gradle.org/current/userguide/build_environment.html#sec:project_properties).
 
 A commercial selection adds the premium repository through the same Studio

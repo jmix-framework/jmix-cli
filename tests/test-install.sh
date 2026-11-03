@@ -111,7 +111,7 @@ start_output="$(
         "$repo_root/install.sh" --help
 )"
 [[ "$start_output" == *"Starting Jmix CLI"* ]]
-[[ "$start_output" == *"Jmix CLI"* ]]
+grep -q '^Usage: jmix ' <<<"$start_output"
 
 # URL downloads use curl too; redirected output must stay plain and quiet.
 url_output="$(run_installer "file://$release_dir" 2>&1)"

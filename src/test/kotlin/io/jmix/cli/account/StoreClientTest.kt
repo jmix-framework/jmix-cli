@@ -56,6 +56,7 @@ class StoreClientTest {
             server.on("POST", TOKEN_PATH) { FakeServer.json(200, """{"access_token":"$accessToken","refresh_token":"r1"}""") }
             val sessions = SessionStore(dir.resolve("s.json"))
             val session = Session("global", server.url, server.url, "r0")
+            sessions.save(session)
             val tokens = AccessTokens(sessions, session)
             assertEquals(token, tokens.current())
             assertEquals(Identity("Ann Lee", "ann@example.com"), sessions.load()?.identity)

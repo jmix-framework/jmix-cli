@@ -22,20 +22,9 @@ internal class AccessTokens(
      * Throws [SessionExpiredException], after deleting the saved session, when the provider has ended it.
      */
     fun refresh(): String {
-        val tokens = try {
-            tokenClient.refresh(session.refreshToken)
-        } catch (e: SessionExpiredException) {
-            sessions.delete()
-            throw e
-        }
-        // Refresh tokens rotate, so the old one may be spent: keep the new one in memory even if saving it fails.
-        val identity = Identity.fromAccessToken(tokens.accessToken)
-        session = session.copy(
-            refreshToken = tokens.refreshToken,
-            identity = identity.takeIf { it.displayName != null } ?: session.identity,
-        )
-        sessions.save(session)
-        accessToken = tokens.accessToken
-        return tokens.accessToken
+        val (updated, token) = sessions.refresh(session, tokenClient::refresh)
+        session = updated
+        accessToken = token
+        return token
     }
 }

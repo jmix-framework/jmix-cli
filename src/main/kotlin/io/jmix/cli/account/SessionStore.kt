@@ -4,9 +4,14 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import io.jmix.cli.util.string
+import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption.CREATE
+import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.FileAttribute
 import java.nio.file.attribute.PosixFilePermissions
 
@@ -36,24 +41,53 @@ internal class SessionStore(val file: Path = defaultFile()) {
     }
 
     /** Replaces the saved session atomically; a failed save keeps the old one and leaves no copy of the token. */
-    fun save(session: Session) {
-        val dir = file.toAbsolutePath().parent
-        Files.createDirectories(dir, *ownerOnly("rwx------"))
-        if ("posix" in file.fileSystem.supportedFileAttributeViews()) {
-            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwx------"))
+    fun save(session: Session) = withWriteLock { write(session) }
+
+    /** Rotates the token while excluding concurrent refreshes and sign-in/sign-out writes. */
+    fun refresh(expected: Session, exchange: (String) -> Tokens): Pair<Session, String> = withWriteLock {
+        if (load() != expected) throw IOException("Your Jmix account session changed. Retry the command.")
+        val tokens = try {
+            exchange(expected.refreshToken)
+        } catch (e: SessionExpiredException) {
+            Files.deleteIfExists(file)
+            throw e
         }
+        val identity = Identity.fromAccessToken(tokens.accessToken)
+        val updated = expected.copy(
+            refreshToken = tokens.refreshToken,
+            identity = identity.takeIf { it.displayName != null } ?: expected.identity,
+        )
+        write(updated)
+        updated to tokens.accessToken
+    }
+
+    private fun write(session: Session) {
+        val dir = file.toAbsolutePath().parent
         val tmp = Files.createTempFile(dir, "session", ".tmp", *ownerOnly("rw-------"))
         try {
             Files.writeString(tmp, Gson().toJson(session))
             Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } finally {
-            // Nothing is left to delete after a successful move.
             Files.deleteIfExists(tmp)
         }
     }
 
+    private fun <T> withWriteLock(action: () -> T): T = synchronized(WRITE_LOCK) {
+        val dir = file.toAbsolutePath().parent
+        Files.createDirectories(dir, *ownerOnly("rwx------"))
+        if ("posix" in file.fileSystem.supportedFileAttributeViews()) {
+            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwx------"))
+        }
+        FileChannel.open(dir.resolve(".session.lock"), setOf(CREATE, WRITE, NOFOLLOW_LINKS), *ownerOnly("rw-------")).use { channel ->
+            channel.lock().use { action() }
+        }
+    }
+
     /** Signs out. Returns whether a session was saved. */
-    fun delete(): Boolean = Files.deleteIfExists(file)
+    fun delete(): Boolean {
+        if (Files.notExists(file, NOFOLLOW_LINKS)) return false
+        return withWriteLock { Files.deleteIfExists(file) }
+    }
 
     private fun parse(text: String): Session? {
         val json = JsonParser.parseString(text) as? JsonObject ?: return null
@@ -66,6 +100,7 @@ internal class SessionStore(val file: Path = defaultFile()) {
             identity = Identity.fromClaims(json["identity"] as? JsonObject),
         )
         AccountRegion.of(session.region) // An unknown id throws, which load reads as signed out.
+        AccountEndpoints(session.ssoUrl, session.storeUrl)
         return session
     }
 
@@ -78,6 +113,8 @@ internal class SessionStore(val file: Path = defaultFile()) {
         }
 
     companion object {
+        private val WRITE_LOCK = Any()
+
         fun defaultFile(): Path = Path.of(System.getProperty("user.home"), ".jmix", "account", "session.json")
     }
 }

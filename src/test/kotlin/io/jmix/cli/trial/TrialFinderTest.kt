@@ -155,6 +155,7 @@ class TrialFinderTest {
         assertEquals(2, commands.size, lines.toString())
         assertTrue(commands.any { it.contains("MODULE") && it.contains("-p") }, lines.toString())
         assertTrue(commands.any { it.contains("Example (bpm):") && it.contains("-p") }, lines.toString())
+        assertTrue("🧩 Application (bpm): http://localhost:8101" in lines, lines.toString())
         assertTrue(lines.none { it.contains("webdav") }, lines.toString())
         assertTrue(lines.any { it.contains("cd 'My trial'") }, lines.toString())
     }

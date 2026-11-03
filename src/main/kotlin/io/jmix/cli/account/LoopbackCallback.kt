@@ -15,8 +15,8 @@ import kotlin.text.Charsets.UTF_8
 
 /**
  * One-shot receiver for the browser's redirect after sign-in, listening on a loopback port the system picks.
- * The first request that carries a `code` or an `error` ends the sign-in; every other request, and every
- * request after that, gets 404. Never put the code or the query string into a message or a log.
+ * Only a callback with matching state and an unambiguous result ends the sign-in. Other requests get 404.
+ * Never put the code or the query string into a message or a log.
  */
 internal class LoopbackCallback(
     private val expectedState: String,
@@ -51,15 +51,19 @@ internal class LoopbackCallback(
     override fun close() = server.stop(0)
 
     private fun answer(exchange: HttpExchange) {
-        val query = queryOf(exchange)
-        val code = query["code"].orEmpty()
-        val error = query["error"]
+        if (outcome.isDone || exchange.requestMethod != "GET" || exchange.requestURI.rawPath != "/") {
+            exchange.sendResponseHeaders(NOT_FOUND, NO_BODY)
+            return
+        }
+        val query = runCatching { queryOf(exchange) }.getOrDefault(emptyMap())
+        val code = query["code"]?.singleOrNull()?.takeIf(String::isNotBlank)
+        val error = query["error"]?.singleOrNull()?.takeIf(String::isNotBlank)
         when {
-            outcome.isDone || (code.isEmpty() && error == null) -> exchange.sendResponseHeaders(NOT_FOUND, NO_BODY)
-            // Before the error: only the provider's redirect carries our state, so others cannot choose the message.
-            query["state"] != expectedState -> fail(exchange, "the browser response does not match this sign-in")
+            query["state"]?.singleOrNull() != expectedState || (query["code"]?.size ?: 0) > 1 ||
+                (query["error"]?.size ?: 0) > 1 || (code == null) == (error == null) ->
+                exchange.sendResponseHeaders(NOT_FOUND, NO_BODY)
             error != null -> fail(exchange, "sign-in was denied in the browser")
-            else -> succeed(exchange, code)
+            code != null -> succeed(exchange, code)
         }
     }
 
@@ -80,11 +84,9 @@ internal class LoopbackCallback(
         exchange.sendResponseHeaders(FOUND, NO_BODY)
     }
 
-    /** The decoded query parameters; a blank value counts as absent. */
-    private fun queryOf(exchange: HttpExchange): Map<String, String> =
+    private fun queryOf(exchange: HttpExchange): Map<String, List<String>> =
         exchange.requestURI.rawQuery.orEmpty().split("&").filter { it.isNotEmpty() }
-            .associate { decode(it.substringBefore("=")) to decode(it.substringAfter("=", "")) }
-            .filterValues { it.isNotBlank() }
+            .groupBy({ decode(it.substringBefore("=")) }, { decode(it.substringAfter("=", "")) })
 
     private fun decode(text: String): String = URLDecoder.decode(text, UTF_8)
 

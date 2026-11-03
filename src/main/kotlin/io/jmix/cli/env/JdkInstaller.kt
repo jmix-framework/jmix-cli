@@ -10,6 +10,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
@@ -197,11 +198,17 @@ object JdkInstaller {
             val buffer = ByteArray(64 * 1024)
             while (true) {
                 val entry = zip.nextEntry ?: break
-                val target = destDir.resolve(entry.name).normalize()
+                if (entry.name.any(Char::isISOControl)) throw IOException("Invalid archive entry name")
+                val target = try {
+                    destDir.resolve(entry.name).normalize()
+                } catch (e: InvalidPathException) {
+                    throw IOException("Invalid archive entry name")
+                }
                 if (!target.startsWith(destDir)) {
-                    throw IOException("Invalid archive entry: ${entry.name}")
+                    throw IOException("Invalid archive entry path")
                 }
                 if (entry.isDirectory) {
+                    if (zip.read() != -1) throw IOException("an archive directory entry contains data")
                     Files.createDirectories(target)
                 } else {
                     Files.createDirectories(target.parent)

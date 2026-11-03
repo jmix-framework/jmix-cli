@@ -32,6 +32,16 @@ class AccountEndpointsTest {
     }
 
     @Test
+    fun `account overrides require a secure endpoint without credentials in the URL`() {
+        for (url in listOf("http://sso.example/PRIVATE", "https://user:PRIVATE@sso.example", "https://sso.example/?PRIVATE")) {
+            val error = assertThrows<IllegalArgumentException> {
+                AccountEndpoints.of(AccountRegion.GLOBAL) { name -> url.takeIf { name == "JMIX_CLI_SSO_URL" } }
+            }
+            assertEquals("Jmix account endpoints must use HTTPS, or HTTP on loopback for testing.", error.message)
+        }
+    }
+
+    @Test
     fun `global region links the jmix io pages`() {
         assertEquals(AccountRegion.GLOBAL, AccountRegion.of("global"))
         assertEquals("https://store.jmix.io/account", AccountRegion.GLOBAL.accountPageUrl)

@@ -1,5 +1,8 @@
 package io.jmix.cli.account
 
+import io.jmix.cli.util.isSecureOrLoopback
+import java.net.URI
+
 /** Jmix account deployments; each has its own sign-in and store hosts and public pages. */
 internal enum class AccountRegion(
     val id: String,
@@ -33,6 +36,12 @@ internal enum class AccountRegion(
 /** Identity provider and store hosts of one region, with every URL the CLI calls derived from them. */
 internal data class AccountEndpoints(val ssoUrl: String, val storeUrl: String) {
 
+    init {
+        require(isEndpoint(ssoUrl) && isEndpoint(storeUrl)) {
+            "Jmix account endpoints must use HTTPS, or HTTP on loopback for testing."
+        }
+    }
+
     private val openIdConnectUrl: String get() = "$ssoUrl/auth/realms/jmix-cuba/protocol/openid-connect"
 
     val authorizeUrl: String get() = "$openIdConnectUrl/auth"
@@ -46,6 +55,10 @@ internal data class AccountEndpoints(val ssoUrl: String, val storeUrl: String) {
     companion object {
         /** Public OAuth client, the same one Jmix Studio uses; it has no secret. */
         const val CLIENT_ID = "site-console"
+
+        private fun isEndpoint(url: String): Boolean = runCatching { URI(url) }.getOrNull()?.let {
+            it.isSecureOrLoopback() && it.rawQuery == null && it.rawFragment == null
+        } ?: false
 
         /** [env] overrides the region's hosts, which lets staging and tests point elsewhere. */
         fun of(region: AccountRegion, env: (String) -> String? = System::getenv): AccountEndpoints =

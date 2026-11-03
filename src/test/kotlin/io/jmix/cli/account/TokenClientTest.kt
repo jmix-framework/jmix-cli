@@ -46,7 +46,8 @@ class TokenClientTest {
     @Test
     fun `authorization url carries pkce, state and the loopback redirect`() {
         val pkce = Pkce.create()
-        val url = URI(TokenClient(AccountEndpoints("https://sso.jmix.io", "x")).authorizationUrl(pkce, "s1", "http://localhost:1234"))
+        val endpoints = AccountEndpoints.of(AccountRegion.GLOBAL) { null }
+        val url = URI(TokenClient(endpoints).authorizationUrl(pkce, "s1", "http://localhost:1234"))
         val query = url.rawQuery.split("&").associate { it.substringBefore("=") to URLDecoder.decode(it.substringAfter("="), UTF_8) }
         assertEquals("/auth/realms/jmix-cuba/protocol/openid-connect/auth", url.path)
         assertEquals(

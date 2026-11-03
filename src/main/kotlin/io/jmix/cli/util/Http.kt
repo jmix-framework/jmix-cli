@@ -9,6 +9,14 @@ import java.time.Duration
 internal fun cliVersion(): String? =
     Http::class.java.`package`?.implementationVersion?.takeIf { it.isNotBlank() }
 
+private val LOOPBACK_HTTP_HOSTS = setOf("localhost", "127.0.0.1", "[::1]")
+
+internal fun URI.isSecureOrLoopback(): Boolean {
+    val hostname = host?.lowercase() ?: return false
+    return userInfo == null && (scheme.equals("https", ignoreCase = true) ||
+        (scheme.equals("http", ignoreCase = true) && hostname in LOOPBACK_HTTP_HOSTS))
+}
+
 /** Shared HTTP client and request builder, so every call identifies itself as the CLI. */
 internal object Http {
 

@@ -28,13 +28,14 @@ internal class PremiumRepository(
         } catch (e: IllegalArgumentException) {
             throw IOException("Cannot read Gradle properties at $propertiesFile. Correct the properties file and retry.")
         }
-        fun values(name: String): List<String> = listOfNotNull(
-            env("ORG_GRADLE_PROJECT_$name"), properties.getProperty("systemProp.org.gradle.project.$name"),
-            properties.getProperty(name),
-        )
+        fun environmentValue(name: String): String? = env("ORG_GRADLE_PROJECT_$name")
+        fun value(name: String): String? = properties.getProperty("systemProp.org.gradle.project.$name")
+            ?: environmentValue(name) ?: properties.getProperty(name)
 
-        val configured = values(USER).any(String::isNotBlank) && values(PASS).any(String::isNotBlank)
-        if (configured && env("ORG_GRADLE_PROJECT_$USER") != null && env("ORG_GRADLE_PROJECT_$PASS") != null) return USER to PASS
+        val user = value(USER)
+        val pass = value(PASS)
+        val configured = !user.isNullOrBlank() && !pass.isNullOrBlank()
+        if (configured && user == environmentValue(USER) && pass == environmentValue(PASS)) return USER to PASS
 
         val setupHint = "Configure premiumRepoUser and premiumRepoPass in $propertiesFile, or use " +
             "ORG_GRADLE_PROJECT_premiumRepoUser and ORG_GRADLE_PROJECT_premiumRepoPass."
@@ -50,13 +51,14 @@ internal class PremiumRepository(
             else throw IOException("Your Jmix account has no available commercial license key. $setupHint")
         val parts = key.split('-').map(String::trim)
         if (parts.size != 2 || parts.any { it.isEmpty() || it.any(Char::isISOControl) }) {
+            if (configured) return USER to PASS
             throw IOException("The Jmix Store returned an invalid commercial license key. $setupHint")
         }
 
         val credentials = mapOf(USER to parts[0], PASS to parts[1])
-        if (credentials.any { (name, credential) -> values(name).any { it != credential } }) {
+        if (credentials.any { (name, credential) -> value(name)?.let { it != credential } == true }) {
             val canReplace = credentials.all { (name, credential) ->
-                env("ORG_GRADLE_PROJECT_$name")?.let { it == credential } ?: true
+                environmentValue(name)?.let { it == credential } ?: true
             }
             when (onConflict(propertiesFile, canReplace)) {
                 PremiumConflictAction.KEEP -> return USER to PASS
@@ -73,8 +75,8 @@ internal class PremiumRepository(
         val additions = linkedMapOf<String, String>()
         fun property(base: String, credential: String): String {
             val names = listOf(base) + (0..100).map { "$base.$it" }
-            return names.firstOrNull { values(it).isNotEmpty() && values(it).all { value -> value == credential } }
-                ?: names.firstOrNull { values(it).isEmpty() }?.also { additions[it] = credential }
+            return names.firstOrNull { value(it) == credential }
+                ?: names.firstOrNull { value(it) == null }?.also { additions[it] = credential }
                 ?: throw IOException("Cannot find a free premium repository property name in $propertiesFile.")
         }
         val names = property(USER, parts[0]) to property(PASS, parts[1])
@@ -137,7 +139,12 @@ internal class PremiumRepository(
         fun defaultFile(
             env: (String) -> String? = System::getenv,
             home: Path = Path.of(System.getProperty("user.home")),
-        ): Path = (env("GRADLE_USER_HOME")?.takeIf { it.isNotBlank() }?.let(Path::of) ?: home.resolve(".gradle"))
-            .resolve("gradle.properties")
+        ): Path {
+            val override = env("GRADLE_USER_HOME")?.takeIf { it.isNotBlank() }?.let(Path::of)
+            if (override != null && !override.isAbsolute) {
+                throw IOException("Set GRADLE_USER_HOME to an absolute path before generating a project with commercial add-ons.")
+            }
+            return (override ?: home.resolve(".gradle")).resolve("gradle.properties")
+        }
     }
 }

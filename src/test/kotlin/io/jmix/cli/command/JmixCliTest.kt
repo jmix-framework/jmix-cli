@@ -56,7 +56,7 @@ class JmixCliTest {
     @Test
     fun `short raw menu keeps all three account rows and the commands`() {
         sessions.save(Session("global", "https://sso.invalid", "https://store.invalid", "fixture", Identity("Ann", "ann@example.com")))
-        val result = root(commands()).test("", ansiLevel = AnsiLevel.TRUECOLOR, height = 12,
+        val result = root(commands()).test("", ansiLevel = AnsiLevel.TRUECOLOR, height = 10,
             inputEvents = listOf(KeyboardEvent("q")))
         val plain = ANSI_SEQUENCE.replace(result.stdout, "")
         assertEquals(0, result.statusCode, result.stderr)

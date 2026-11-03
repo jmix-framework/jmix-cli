@@ -654,7 +654,12 @@ class Prompts(
         // One blank row separates the banner from the frame body.
         if (height - rowsInUse - header.size - 1 >= MIN_ROWS_BELOW_HEADER) return header + ""
         val compact = compactHeader(width)
-        return if (compact.isNotEmpty() && height - rowsInUse - compact.size - 1 >= 0) compact + "" else emptyList()
+        val spareRows = height - rowsInUse - compact.size
+        return when {
+            compact.isEmpty() || spareRows < 0 -> emptyList()
+            spareRows == 0 -> compact
+            else -> compact + ""
+        }
     }
 
     /**

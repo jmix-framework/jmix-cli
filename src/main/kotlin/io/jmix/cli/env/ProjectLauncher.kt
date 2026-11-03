@@ -115,12 +115,19 @@ object ProjectLauncher {
     /** The generated app's HTTP port: `server.port` from application.properties, or 8080. */
     fun serverPort(projectDir: Path): Int {
         val props = projectDir.resolve("src/main/resources/application.properties")
-        return runCatching {
-            Files.readAllLines(props).firstNotNullOfOrNull { line ->
-                SERVER_PORT_PROPERTY.matchEntire(line.trim())?.groupValues?.get(1)
-                    ?.toIntOrNull()?.takeIf { it in 1..65535 }
-            }
-        }.getOrNull() ?: DEFAULT_SERVER_PORT
+        return readProjectMetadata(props)?.lineSequence()?.firstNotNullOfOrNull { line ->
+            SERVER_PORT_PROPERTY.matchEntire(line.trim())?.groupValues?.get(1)
+                ?.toIntOrNull()?.takeIf { it in 1..65535 }
+        } ?: DEFAULT_SERVER_PORT
+    }
+
+    /** Metadata is optional, including in downloaded projects with unusually large build files. */
+    internal fun readProjectMetadata(file: Path): String? = try {
+        val limit = 1024 * 1024
+        Files.newInputStream(file).use { it.readNBytes(limit + 1) }
+            .takeIf { it.size <= limit }?.decodeToString()
+    } catch (e: IOException) {
+        null
     }
 
     fun isPortInUse(port: Int): Boolean = try {

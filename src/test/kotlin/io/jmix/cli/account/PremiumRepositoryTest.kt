@@ -66,6 +66,45 @@ class PremiumRepositoryTest {
     }
 
     @Test
+    fun `system properties can override a complete environment pair`() {
+        val original = "systemProp.org.gradle.project.premiumRepoUser=old\npremiumRepoUser=local\n"
+        write(original)
+        val env = mapOf("ORG_GRADLE_PROJECT_premiumRepoUser" to "repo", "ORG_GRADLE_PROJECT_premiumRepoPass" to "secret")
+        FakeServer().use { server ->
+            prepare(server)
+            val requests = server.requests.size
+            val repository = PremiumRepository(sessions, file, env::get)
+            assertEquals("premiumRepoUser" to "premiumRepoPass", repository.prepare(
+                onConflict = { _, canReplace -> assertTrue(canReplace); PremiumConflictAction.KEEP },
+                onSaved = { fail("Nothing was saved") },
+            ))
+            assertTrue(server.requests.drop(requests).any { it.path.endsWith("/studio/license/check") })
+            assertEquals(original, Files.readString(file))
+
+            write("premiumRepoUser=local\npremiumRepoPass=local-pass\n")
+            val before = server.requests.size
+            repository.prepare(onConflict = { _, _ -> fail("Environment credentials take precedence") })
+            assertEquals(before, server.requests.size)
+        }
+    }
+
+    @Test
+    fun `blank higher-priority properties do not fall back to lower-priority credentials`() {
+        val original = "premiumRepoUser=local\npremiumRepoPass=secret\n"
+        val userEnv = "ORG_GRADLE_PROJECT_premiumRepoUser"
+        val passEnv = "ORG_GRADLE_PROJECT_premiumRepoPass"
+        for ((contents, env) in listOf(
+            original to mapOf(userEnv to "", passEnv to "secret"),
+            (original + "systemProp.org.gradle.project.premiumRepoUser=\n") to mapOf(userEnv to "ci", passEnv to "secret"),
+        )) {
+            write(contents)
+            val error = assertThrows<IOException> { PremiumRepository(sessions, file, env::get).prepare() }
+            assertTrue(error.message!!.contains("jmix login"))
+            assertEquals(contents, Files.readString(file))
+        }
+    }
+
+    @Test
     fun `conflicts preserve old values and reuse matching suffixed properties`() {
         val original = "# Keep these\r\norg.gradle.jvmargs=-Xmx2g\r\npremiumRepoUser=old\r\n" +
             "premiumRepoUser.0=repo\r\npremiumRepoPass.0=other\r\npremiumRepoPass.1=secret"
@@ -136,9 +175,13 @@ class PremiumRepositoryTest {
         write(original)
         FakeServer().use { server ->
             prepare(server)
-            for (status in listOf(200, 503)) {
+            for ((status, body) in listOf(
+                200 to """{"activeLicense":false}""",
+                503 to """{"activeLicense":false}""",
+                200 to """{"activeLicense":true,"sid":"malformed"}""",
+            )) {
                 server.on("GET", "/app/rest/v3/studio/license/check") {
-                    FakeServer.json(status, """{"activeLicense":false}""")
+                    FakeServer.json(status, body)
                 }
                 assertEquals("premiumRepoUser" to "premiumRepoPass", PremiumRepository(sessions, file, { null })
                     .prepare(onSaved = { fail("Nothing was saved") }))
@@ -236,5 +279,9 @@ class PremiumRepositoryTest {
         assertEquals(dir.resolve("custom/gradle.properties"), PremiumRepository.defaultFile(
             { if (it == "GRADLE_USER_HOME") dir.resolve("custom").toString() else null }, dir))
         assertEquals(dir.resolve(".gradle/gradle.properties"), PremiumRepository.defaultFile({ null }, dir))
+        val error = assertThrows<IOException> {
+            PremiumRepository.defaultFile({ if (it == "GRADLE_USER_HOME") "relative-gradle" else null }, dir)
+        }
+        assertTrue(error.message!!.contains("Set GRADLE_USER_HOME to an absolute path"))
     }
 }

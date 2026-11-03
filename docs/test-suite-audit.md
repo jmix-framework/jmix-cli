@@ -29,7 +29,7 @@ check the changes, not to select tests for deletion automatically.
 | Test class | Invocations before → after | What changed |
 |---|---:|---|
 | `StoreClientTest` | 27 → 24 | Removed weaker copies of refresh/retry checks; retained bearer headers, persisted refresh tokens and retry counts in the stronger scenarios. Moved the empty HTTP 200 generate response into the existing empty-response matrix. |
-| `TokenClientTest` | 17 → 15 | Kept provider-secret checks in the existing rejected-code scenario. Removed a check primarily testing the fake server's unmatched-route behavior; real request methods, form encoding, and HTTP failures remain checked. |
+| `TokenClientTest` | 16 → 14 | Kept provider-secret checks in the existing rejected-code scenario. Removed a check primarily testing the fake server's unmatched-route behavior; real request methods, form encoding, and HTTP failures remain checked. |
 | `ProjectGeneratorTest` | 12 → 4 | Check complete rendered output in one generation, including paths, globals, locales, exclusions, wrapper bytes and permissions. Check phases in the rendering and Git-staging scenarios. Four opaque Gradle log fragments now share one failed-wrapper run; they never represented four real authentication exchanges. |
 | `SelfUpdaterTest` | 34 → 32 | One successful installation checks the new launcher, command target, previous version, completeness marker, phase sequence and byte progress. |
 

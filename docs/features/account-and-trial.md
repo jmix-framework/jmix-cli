@@ -28,8 +28,8 @@ loopback redirect.
   that does not start is a warning; the printed address works in any browser on the
   same computer.
 - It waits up to 10 minutes. Ctrl+C cancels.
-- The first request that carries a `code` or an `error` ends the wait, and a `state` that
-  does not match this sign-in fails it. Other requests get 404. After the callback the
+- A `GET /` callback with matching `state` and one `code` or `error` ends the wait.
+  Invalid callbacks get 404 and the CLI keeps waiting. After the callback the
   browser lands on the provider's "Login Successful" page, or on the same page with
   `?error=true`.
 - The CLI trades the code for tokens with the PKCE verifier, saves the session, and
@@ -56,7 +56,8 @@ loopback redirect.
   `store.jmix.io/account` uses; they are not a documented API.
 - `JMIX_CLI_SSO_URL` and `JMIX_CLI_STORE_URL` replace the hosts of the region at sign-in,
   for staging and tests. The session keeps the URLs it was created with, and later
-  commands use them.
+  commands use them. Account endpoints require HTTPS, with HTTP allowed only on loopback
+  for local tests.
 
 ## Session file
 
@@ -80,9 +81,11 @@ loopback redirect.
   of the token.
 - A command that calls the store trades the refresh token for an access token once, reuses
   it for the rest of the process, and after a 401 refreshes and retries once. The provider
-  rotates refresh tokens, so every refresh saves the new one.
+  rotates refresh tokens, so every refresh saves the new one. A local lock serializes
+  refresh, sign-in saves and sign-out. If the session changed while another command was
+  starting, retry that command.
 - Token and store API requests refuse HTTP redirects, so credentials cannot be forwarded
-  to another endpoint. Archive downloads still follow redirects without credentials.
+  to another endpoint. Archive downloads validate each redirect and send no credentials.
 - When the provider ends the session (`invalid_grant`), the CLI deletes the file and says
   `Your Jmix account session has expired. Run 'jmix login' to sign in again.`
 - A missing, damaged or unknown-region file reads as signed out.
@@ -167,17 +170,23 @@ and the archive has no `.gitignore`.
   for loopback hosts, which the tests use), and never prints it, not even in an error.
 - The answer must be HTTP 200, at most 1 GiB, and start with the zip signature. Anything
   else ends with a short message that points to the account page.
+- The download times out if the server takes too long to respond or stops sending data
+  for a minute.
 - The zip goes to a temporary file in the system temp directory, so an interrupted or
   failed download leaves nothing in `--path`.
 - Unpacking uses a hidden `.jmix-trial-*` staging folder inside `--path` and the zip-slip
   guard of `JdkInstaller.unpackZip`. It requires a ZIP central directory and limits the
   total extracted file content to 4 GiB, counting actual bytes across all entries.
-  A truncated or oversized archive fails before any project is moved into place.
+  Directory entries must be empty and entry names cannot contain control characters.
+  A malformed or oversized archive fails before any
+  project is moved into place.
   The projects are the top folders that hold a
   `settings.gradle(.kts)` and a `trial_repository`; other entries are ignored, and an
   archive without a project is an error.
 - An existing `<path>/<folder>`, for example from an earlier run, is refused before anything
   moves: `<path>/<folder> already exists. Remove it or choose another directory with --path`.
+  This includes dangling symbolic links. If a later move fails, the CLI attempts to roll
+  back the moves already made by that download.
 - The archive stores no Unix permissions, so every `gradlew` is made executable. The folders
   then move into place and the staging folder goes away.
 
@@ -185,7 +194,7 @@ The report reads `bomVersion` from the root or `demo/*` build files (a `.trial` 
 dropped; only the shape is checked, because trials run on the newest Jmix) and runs the same
 JDK check as `jmix new`, which reports and never fails the command. Then it prints the
 location, the end date, a general module run command with one real example and its URL,
-and the guide link:
+and the guide link. Version and port detection skip metadata files larger than 1 MiB.
 
 ```
 ✓ Enterprise+BPM trial project unpacked to /home/user/jmix-commercial-addons-demo-3.1.0
@@ -196,7 +205,7 @@ Next steps:
   1. cd jmix-commercial-addons-demo-3.1.0
   2. ./demo/MODULE/gradlew -p demo/MODULE bootRun
   Example (bpm): ./demo/bpm/gradlew -p demo/bpm bootRun
-🧩 Application: http://localhost:8101
+🧩 Application (bpm): http://localhost:8101
 📖 Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial
 ```
 

@@ -861,6 +861,9 @@ class NewCommand : CliktCommand(name = "new") {
         terminal.println()
         terminal.println(bold("CLI command:"))
         terminal.println("  " + cyan(nonInteractiveCommand(info, state.template!!.id, state.installToolkit!!, currentDir)))
+        if (info.premiumRepoUserProperty != PremiumRepository.USER || info.premiumRepoPassProperty != PremiumRepository.PASS) {
+            terminal.println(gray("To reuse separately saved premium credential names, you may need to generate interactively again."))
+        }
         terminal.println()
         terminal.println(bold("Useful links:"))
         val labelWidth = USEFUL_LINKS.maxOf { it.label.length }

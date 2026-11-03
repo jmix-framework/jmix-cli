@@ -48,19 +48,19 @@ class LoopbackCallbackTest {
     }
 
     @Test
-    fun `rejects a response for another sign-in`() {
+    fun `ignores invalid requests and still accepts the real callback`() {
         LoopbackCallback("s1", "https://sso.example/delegated").use { callback ->
-            get("${callback.redirectUri}/?state=other&code=c1")
-            val error = assertThrows<IOException> { callback.await(Duration.ofSeconds(5)) }
-            assertTrue(error.message!!.contains("does not match"), error.message)
-        }
-    }
-
-    @Test
-    fun `ignores requests without a code and keeps waiting`() {
-        LoopbackCallback("s1", "https://sso.example/delegated").use { callback ->
-            assertEquals(404, get("${callback.redirectUri}/favicon.ico").statusCode())
-            get("${callback.redirectUri}/?state=s1&code=c2")
+            for (path in listOf(
+                "/?state=other&code=c1", "/?code=c1", "/?error=access_denied&state=other",
+                "/wrong?state=s1&code=c1", "/favicon.ico", "/?state=s1&state=s1&code=c1",
+                "/?state=s1&code=c1&code=c2", "/?state=s1&code=c1&error=access_denied",
+            )) {
+                assertEquals(404, get(callback.redirectUri + path).statusCode(), path)
+            }
+            val post = HttpRequest.newBuilder(URI("${callback.redirectUri}/?state=s1&code=c1"))
+                .POST(HttpRequest.BodyPublishers.noBody()).build()
+            assertEquals(404, noRedirects.send(post, HttpResponse.BodyHandlers.discarding()).statusCode())
+            assertEquals(302, get("${callback.redirectUri}/?state=s1&code=c2").statusCode())
             assertEquals("c2", callback.await(Duration.ofSeconds(5)))
         }
     }
@@ -91,16 +91,6 @@ class LoopbackCallbackTest {
             val browser = CompletableFuture.supplyAsync { get("${callback.redirectUri}/?state=s1&code=c1").statusCode() }
             callback.use { it.await(Duration.ofSeconds(5)) }
             assertEquals(302, browser.get(5, TimeUnit.SECONDS))
-        }
-    }
-
-    @Test
-    fun `does not trust a provider error that carries another sign-in's state`() {
-        LoopbackCallback("s1", "https://sso.example/delegated").use { callback ->
-            val response = get("${callback.redirectUri}/?error=access_denied&error_description=Call%20us&state=other")
-            assertEquals("https://sso.example/delegated?error=true", response.headers().firstValue("Location").orElseThrow())
-            val error = assertThrows<IOException> { callback.await(Duration.ofSeconds(5)) }
-            assertEquals("the browser response does not match this sign-in", error.message)
         }
     }
 

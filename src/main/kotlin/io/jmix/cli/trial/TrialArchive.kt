@@ -1,23 +1,31 @@
 package io.jmix.cli.trial
 
 import io.jmix.cli.env.JdkInstaller
+import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.repo.TemplateRepository
 import io.jmix.cli.util.BYTES_PER_MIB
 import io.jmix.cli.util.Http
 import io.jmix.cli.util.contentLength
 import io.jmix.cli.util.copyWithProgress
+import io.jmix.cli.util.isSecureOrLoopback
 import io.jmix.cli.util.isZip
 import java.io.IOException
+import java.io.InputStream
 import java.net.URI
-import java.net.URISyntaxException
-import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE
 import java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE
 import java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE
 import java.time.Duration
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit.NANOSECONDS
+import java.util.concurrent.TimeUnit.SECONDS
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipFile
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.deleteRecursively
@@ -37,23 +45,44 @@ internal object TrialArchive {
      * no credentials are sent and the link never appears in an error. Fails unless the answer is HTTP 200, no
      * larger than [maxBytes] and a zip; [target] may hold the partial file then.
      */
-    fun download(url: String, target: Path, onProgress: (Long, Long) -> Unit, maxBytes: Long = MAX_ARCHIVE_BYTES) {
-        val request = downloadRequest(url)
-        val response = try {
-            Http.client.send(request, HttpResponse.BodyHandlers.ofInputStream())
-        } catch (e: IllegalArgumentException) {
-            // The JDK quotes the address of a bad link, or of a bad redirect, in this exception.
-            throw unusableLink()
-        } catch (e: IOException) {
-            // HttpClient can wrap an invalid redirect (including the capability link) in an IOException.
-            throw IOException("cannot reach the trial download service")
-        }
+    fun download(
+        url: String,
+        target: Path,
+        onProgress: (Long, Long) -> Unit,
+        maxBytes: Long = MAX_ARCHIVE_BYTES,
+        timeout: Duration = DOWNLOAD_TIMEOUT,
+    ) {
+        val deadline = System.nanoTime() + timeout.toNanos()
+        val response = downloadResponse(url, deadline)
         response.body().use { body ->
             val status = response.statusCode()
             if (status != 200) throw IOException("the trial download failed with HTTP $status")
             val size = response.contentLength()
             if (size > maxBytes) throw IOException("the trial archive is larger than ${maxBytes / BYTES_PER_MIB} MiB")
-            copyWithProgress(body, target, size, onProgress, maxBytes)
+            // ofInputStream returns when headers arrive, so the request timeout cannot stop a stalled body.
+            Executors.newSingleThreadScheduledExecutor().use { timer ->
+                val expired = AtomicBoolean()
+                val lastProgress = AtomicLong(System.nanoTime())
+                val timeoutNanos = timeout.toNanos()
+                val stop = timer.scheduleWithFixedDelay({
+                    if (System.nanoTime() - lastProgress.get() >= timeoutNanos) {
+                        expired.set(true)
+                        runCatching { body.close() }
+                    }
+                }, timeoutNanos, minOf(timeoutNanos, SECONDS.toNanos(1)), NANOSECONDS)
+                try {
+                    copyWithProgress(body, target, size, { bytes, total ->
+                        lastProgress.set(System.nanoTime())
+                        onProgress(bytes, total)
+                    }, maxBytes)
+                    if (expired.get()) throw timedOut()
+                } catch (e: IOException) {
+                    if (expired.get()) throw timedOut()
+                    throw e
+                } finally {
+                    stop.cancel(false)
+                }
+            }
         }
         if (!isZip(target)) throw IOException("the trial download is not a zip archive")
     }
@@ -65,7 +94,12 @@ internal object TrialArchive {
      * the whole archive is good and no project folder exists there yet.
      */
     @OptIn(ExperimentalPathApi::class)
-    fun unpack(archive: Path, parentDir: Path, maxBytes: Long = MAX_UNPACKED_BYTES): List<Path> {
+    fun unpack(
+        archive: Path,
+        parentDir: Path,
+        maxBytes: Long = MAX_UNPACKED_BYTES,
+        publish: (Path, Path) -> Path = { source, target -> Files.move(source, target) },
+    ): List<Path> {
         // unpackZip compares normalized entry paths with its destination, so the destination must be normalized too.
         val parent = parentDir.toAbsolutePath().normalize()
         Files.createDirectories(parent)
@@ -77,11 +111,24 @@ internal object TrialArchive {
             JdkInstaller.unpackZip(archive, staging, maxBytes)
             val names = projectNames(staging)
             if (names.isEmpty()) throw IOException("the downloaded archive does not contain a Jmix trial project")
-            names.map(parent::resolve).firstOrNull { Files.exists(it) }?.let {
+            names.map(parent::resolve).firstOrNull { Files.exists(it, NOFOLLOW_LINKS) }?.let {
                 throw IOException("$it already exists. Remove it or choose another directory with --path")
             }
             names.forEach { makeWrappersExecutable(staging.resolve(it)) }
-            return names.map { Files.move(staging.resolve(it), parent.resolve(it)) }
+            val moved = mutableListOf<Path>()
+            try {
+                names.forEach { moved.add(publish(staging.resolve(it), parent.resolve(it))) }
+            } catch (e: Exception) {
+                moved.asReversed().forEach { path ->
+                    try {
+                        Files.move(path, staging.resolve(path.fileName))
+                    } catch (rollback: Exception) {
+                        e.addSuppressed(rollback)
+                    }
+                }
+                throw e
+            }
+            return moved
         } finally {
             // A failed cleanup must not replace the real error: on Windows, antivirus can hold fresh files.
             // Ctrl+C during the short unpack can leave the hidden staging folder; add a shutdown hook if users report it.
@@ -98,8 +145,9 @@ internal object TrialArchive {
     fun jmixVersion(projectDir: Path): String? {
         val bomVersion = (listOf(projectDir) + demoDirs(projectDir))
             .flatMap { dir -> BUILD_FILES.map(dir::resolve) }
-            .filter { Files.isRegularFile(it) }
-            .firstNotNullOfOrNull { BOM_VERSION.find(Files.readAllBytes(it).decodeToString())?.groupValues?.get(1) }
+            .firstNotNullOfOrNull { file ->
+                ProjectLauncher.readProjectMetadata(file)?.let { BOM_VERSION.find(it)?.groupValues?.get(1) }
+            }
         return bomVersion?.removeSuffix(".trial")?.takeIf { TemplateRepository.VERSION_SHAPE.matches(it) }
     }
 
@@ -107,19 +155,38 @@ internal object TrialArchive {
     fun runnableApps(projectDir: Path): List<Path> =
         demoDirs(projectDir).filter { Files.isRegularFile(it.resolve("gradlew")) }.ifEmpty { listOf(projectDir) }
 
-    /** The request for a trial link, or an error that does not quote the link: it is a capability. */
-    private fun downloadRequest(link: String): HttpRequest {
-        val uri = try {
-            URI(link)
-        } catch (e: URISyntaxException) {
-            throw unusableLink()
+    private fun downloadResponse(link: String, deadline: Long): HttpResponse<InputStream> {
+        var uri = runCatching { URI(link) }.getOrElse { throw unusableLink() }
+        repeat(MAX_REDIRECTS + 1) {
+            if (!uri.isSecureOrLoopback()) throw unusableLink()
+            val timeout = remaining(deadline)
+            val response = try {
+                Http.accountClient.send(Http.request(uri.toString(), timeout).GET().build(), HttpResponse.BodyHandlers.ofInputStream())
+            } catch (e: IllegalArgumentException) {
+                throw unusableLink()
+            } catch (e: HttpTimeoutException) {
+                throw timedOut()
+            } catch (e: IOException) {
+                throw IOException("cannot reach the trial download service")
+            }
+            if (response.statusCode() !in REDIRECT_STATUS_CODES) return response
+            response.body().close()
+            val location = response.headers().firstValue("Location").orElseThrow(::unusableLink)
+            val next = runCatching { uri.resolve(location) }.getOrElse { throw unusableLink() }
+            if (uri.scheme.equals("https", ignoreCase = true) && !next.scheme.equals("https", ignoreCase = true)) {
+                throw unusableLink()
+            }
+            uri = next
         }
-        val host = uri.host?.lowercase() ?: throw unusableLink()
-        val scheme = uri.scheme?.lowercase()
-        // Plain http is for the loopback servers of the tests only.
-        if (scheme != "https" && !(scheme == "http" && host in LOOPBACK_HOSTS)) throw unusableLink()
-        return Http.request(link, DOWNLOAD_TIMEOUT).GET().build()
+        throw IOException("too many redirects from the trial download service")
     }
+
+    private fun remaining(deadline: Long): Duration = (deadline - System.nanoTime()).let {
+        if (it <= 0) throw timedOut()
+        Duration.ofNanos(it)
+    }
+
+    private fun timedOut() = IOException("the trial download timed out")
 
     private fun unusableLink() = IOException("the Jmix Store returned an unusable trial download link")
 
@@ -155,6 +222,7 @@ internal object TrialArchive {
     private val SETTINGS_FILES = listOf("settings.gradle", "settings.gradle.kts")
     private val BOM_VERSION = Regex("""bomVersion\s*=\s*['"]([^'"]+)['"]""")
     private val EXECUTE_BITS = setOf(OWNER_EXECUTE, GROUP_EXECUTE, OTHERS_EXECUTE)
-    private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost")
+    private val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
+    private const val MAX_REDIRECTS = 5
     private val DOWNLOAD_TIMEOUT: Duration = Duration.ofSeconds(60)
 }

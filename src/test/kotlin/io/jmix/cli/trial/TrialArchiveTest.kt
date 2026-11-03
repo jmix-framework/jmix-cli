@@ -1,5 +1,6 @@
 package io.jmix.cli.trial
 
+import com.sun.net.httpserver.HttpServer
 import io.jmix.cli.FakeServer
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -9,11 +10,16 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.junit.jupiter.api.io.TempDir
 import java.io.IOException
+import java.net.InetSocketAddress
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit.SECONDS
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -27,6 +33,15 @@ class TrialArchiveTest {
         assertEquals("the unpacked archive is too large", error.message)
         assertTrue(Files.list(out).use { it.findAny().isEmpty })
         assertEquals(listOf(out.resolve(root)), TrialArchive.unpack(archive, out, maxBytes = 8192))
+    }
+
+    @Test
+    fun `directory entries cannot bypass the unpacking byte limit`() {
+        val archive = trialZip("$TRIAL_ROOT/extra/" to "x".repeat(4096))
+        val out = dir.resolve("work")
+        val error = assertThrows<IOException> { TrialArchive.unpack(archive, out, maxBytes = 1024) }
+        assertEquals("an archive directory entry contains data", error.message)
+        assertTrue(Files.list(out).use { it.findAny().isEmpty })
     }
 
     @Test
@@ -74,11 +89,42 @@ class TrialArchiveTest {
     }
 
     @Test
-    fun `malformed redirects do not expose the capability link`() {
+    fun `unsafe or malformed redirects are refused without exposing the capability link`() {
         FakeServer().use { server ->
-            server.on("GET", "/t.zip") { FakeServer.Response(302, headers = mapOf("Location" to "https://dl.example/PRIVATE file.zip")) }
-            val error = assertThrows<IOException> { TrialArchive.download("${server.url}/t.zip", dir.resolve("x.zip"), { _, _ -> }) }
-            assertFalse(error.message!!.contains("PRIVATE"), error.message)
+            for (destination in listOf("https://dl.example/PRIVATE file.zip", "http://dl.example/PRIVATE")) {
+                server.on("GET", "/t.zip") { FakeServer.Response(302, headers = mapOf("Location" to destination)) }
+                val error = assertThrows<IOException> { TrialArchive.download("${server.url}/t.zip", dir.resolve("x.zip"), { _, _ -> }) }
+                assertEquals("the Jmix Store returned an unusable trial download link", error.message)
+            }
+        }
+    }
+
+    @Test
+    fun `a stalled body times out after bytes have started arriving`() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val release = CountDownLatch(1)
+        server.createContext("/t.zip") { exchange ->
+            exchange.use {
+                it.sendResponseHeaders(200, 100L)
+                it.responseBody.write(byteArrayOf(0x50, 0x4b))
+                it.responseBody.flush()
+                release.await(10, SECONDS)
+            }
+        }
+        server.start()
+        val target = dir.resolve("stalled.zip")
+        try {
+            assertTimeoutPreemptively(Duration.ofSeconds(5)) {
+                val error = assertThrows<IOException> {
+                    TrialArchive.download("http://127.0.0.1:${server.address.port}/t.zip", target, { _, _ -> },
+                        timeout = Duration.ofSeconds(1))
+                }
+                assertEquals("the trial download timed out", error.message)
+                assertEquals(2L, Files.size(target))
+            }
+        } finally {
+            release.countDown()
+            server.stop(0)
         }
     }
 
@@ -150,6 +196,35 @@ class TrialArchiveTest {
     }
 
     @Test
+    fun `a dangling destination link blocks all project moves`() {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        val parent = Files.createDirectories(dir.resolve("work"))
+        val link = Files.createSymbolicLink(parent.resolve("zeta"), parent.resolve("missing"))
+        val archive = trialZip("zeta/settings.gradle" to "", "zeta/trial_repository/x" to "x")
+        assertThrows<IOException> { TrialArchive.unpack(archive, parent) }
+        assertEquals(listOf(link), Files.list(parent).use { it.toList() })
+        assertTrue(Files.isSymbolicLink(link))
+    }
+
+    @Test
+    fun `a collision after preflight rolls back the projects already moved`() {
+        val parent = dir.resolve("work")
+        val competitor = parent.resolve("zeta")
+        val archive = trialZip("zeta/settings.gradle" to "", "zeta/trial_repository/x" to "x")
+        assertThrows<IOException> {
+            TrialArchive.unpack(archive, parent) { source, target ->
+                if (target == competitor) Files.writeString(Files.createDirectory(target).resolve("mine.txt"), "keep")
+                Files.move(source, target)
+            }
+        }
+        assertEquals(listOf(competitor), Files.list(parent).use { it.toList() })
+        assertEquals("keep", Files.readString(competitor.resolve("mine.txt")))
+        Files.delete(competitor.resolve("mine.txt"))
+        Files.delete(competitor)
+        assertEquals(listOf(parent.resolve(root), competitor), TrialArchive.unpack(archive, parent))
+    }
+
+    @Test
     fun `archives that are not trial projects or escape the folder are rejected`() {
         val notTrial = dir.resolve("plain.zip").also { zip ->
             ZipOutputStream(Files.newOutputStream(zip)).use { it.putNextEntry(ZipEntry("app/settings.gradle")); it.closeEntry() }
@@ -159,6 +234,8 @@ class TrialArchiveTest {
         // The staging folder lives inside b/, so an escaping entry would land in b/.
         assertFalse(Files.exists(dir.resolve("b/evil.txt")))
         assertEquals(emptyList<String>(), Files.list(dir.resolve("b")).use { s -> s.map { it.fileName.toString() }.toList() })
+        val error = assertThrows<IOException> { TrialArchive.unpack(trialZip("private\ninstruction.txt" to "x"), dir.resolve("c")) }
+        assertEquals("Invalid archive entry name", error.message)
     }
 
     @Test
@@ -169,6 +246,8 @@ class TrialArchiveTest {
         Files.writeString(legacy.resolve("build.gradle"), "jmix { bomVersion = '1.4.4.trial' }")
         assertEquals("1.4.4", TrialArchive.jmixVersion(legacy))
         Files.writeString(legacy.resolve("build.gradle"), "jmix { bomVersion = '\$(touch x)' }")
+        assertNull(TrialArchive.jmixVersion(legacy))
+        Files.writeString(legacy.resolve("build.gradle"), "bomVersion = '1.4.4' " + "x".repeat(1024 * 1024))
         assertNull(TrialArchive.jmixVersion(legacy))
     }
 

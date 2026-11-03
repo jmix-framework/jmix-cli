@@ -36,7 +36,9 @@ complete option reference.
   pinned, defaults such as
   `./<name>` and the public repository are omitted. Arguments are quoted for
   PowerShell on Windows and POSIX shells on macOS/Linux, including paths with
-  spaces or apostrophes.
+  spaces or apostrophes. Reusing separately saved premium credential names may
+  require generating interactively and choosing **Save account credentials
+  separately** again.
 
 ## Code
 
