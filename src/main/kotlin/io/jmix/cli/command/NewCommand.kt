@@ -186,7 +186,7 @@ class NewCommand internal constructor(private val templateCacheDir: Path) : Clik
     private val repositoryOpt by option("--repository", help = "Maven repository URL (default: ${ProjectCreationInfo.DEFAULT_REPOSITORY_URL})")
     private val noGit by option("--no-git", help = "Skip git repository initialization").flag()
     private val noAgentsToolkit by option(
-        "--no-agents-toolkit", help = "Skip installing the Jmix Agent Toolkit (guidelines and skills for AI coding agents)",
+        "--no-agents-toolkit", help = "Skip the Jmix Agent Toolkit (guidelines, skills, and project MCP servers)",
     ).flag()
     private val includeUnstable by option("--include-unstable", help = "Offer unstable (RC/snapshot) Jmix versions").flag()
     private val force by option("--force", help = "Generate into a non-empty directory without asking").flag()
@@ -807,7 +807,7 @@ class NewCommand internal constructor(private val templateCacheDir: Path) : Clik
     /** Optional setup after generation, offered as one checklist; both are on by default. */
     private enum class SetupOption(val title: String, val description: String) {
         GIT("Initialize Git repository", "git init and stage the generated files"),
-        TOOLKIT("Install Jmix Agent Toolkit", "guidelines and skills for AI coding agents"),
+        TOOLKIT("Install Jmix Agent Toolkit", "guidelines, skills, and project MCP servers"),
     }
 
     private fun stepSetup(): Outcome {
@@ -904,15 +904,14 @@ class NewCommand internal constructor(private val templateCacheDir: Path) : Clik
 
     /**
      * Installs the Jmix Agent Toolkit automatically: guidelines files and
-     * project-local skills. A failure must never
-     * fail the already-generated project — warn and move on.
+     * project-local skills, and MCP configs. Warn and continue if setup fails.
      */
     private fun installAgentToolkit(info: ProjectCreationInfo, progress: StatusReporter.Handle) {
         try {
             progress.relabel("Installing the Jmix Agent Toolkit")
-            AgentToolkitInstaller.installGuidelinesAndSkills(info.projectDir, info.jmixVersion, progress::relabel)
+            AgentToolkitInstaller.install(info.projectDir, info.jmixVersion, progress::relabel)
             progress.println(
-                brightGreen("✓ ") + "Agent Toolkit:" + cyan(" local skills and shared guidelines, including Claude Code"),
+                brightGreen("✓ ") + "Agent Toolkit:" + cyan(" local skills, shared guidelines, and project MCP setup"),
             )
         } catch (e: Exception) {
             progress.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))

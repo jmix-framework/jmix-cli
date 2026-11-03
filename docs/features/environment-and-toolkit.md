@@ -27,12 +27,21 @@ version. Do not report the private bundled runtime as an installed development J
   in `.agents/skills`, read by Codex, OpenCode, Junie and other agents. Claude Code
   is enabled by default: `.claude/skills` links each skill to the shared store,
   and a new `CLAUDE.md` imports `@AGENTS.md`.
+- Run the Toolkit's project-scoped MCP setup for Codex
+  (`.codex/config.toml`), Claude Code (`.mcp.json`), and OpenCode
+  (`opencode.json`). The Toolkit registers JetBrains and Playwright, selects
+  the JetBrains transport, and merges entries into existing configs. On
+  macOS and Linux, merging JSON requires `jq` or Node.js. Enable the MCP
+  server in IntelliJ IDEA and make `npx` available for Playwright. Trust
+  the project in Codex and approve the project servers in Claude Code.
+  The CLI isolates Claude Desktop's user profile from the MCP setup step.
+  Set up Context7 separately with your API key in the agent's user settings.
 - JDK and toolkit installation report their phases (lookup, download with byte
-  counts, checksum, unpacking; installer download, skills, guidelines) through
+  counts, checksum, unpacking; installer download, skills, guidelines, MCP) through
   `onStatus`/`onProgress` callbacks so the CLI can show a progress indicator.
 - Toolkit setup runs its downloaded installer with fixed argument lists. Keep
-  setup local to the generated project; global MCP/browser configuration belongs
-  to the toolkit's own wizard. Report installer failures as warnings with a retry link.
+  setup local to the generated project. Report installer failures as warnings
+  with a retry link.
 
 ## Code
 
@@ -49,5 +58,5 @@ version. Do not report the private bundled runtime as an installed development J
 Run `./gradlew test --tests 'io.jmix.cli.env.*'`. Network-backed JDK and toolkit
 integration tests require `JMIX_CLI_IT=true`. For detection changes, also run a
 self-contained CLI image so its bundled runtime cannot mask missing JDKs.
-For toolkit changes, inspect generated guideline and skill locations, including
-Junie's shared files, and cover Windows command construction.
+For toolkit changes, inspect the generated guidelines, skills, and MCP configs,
+including Junie's shared files, and cover Windows command construction.

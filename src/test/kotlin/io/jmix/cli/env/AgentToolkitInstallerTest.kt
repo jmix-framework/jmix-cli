@@ -57,4 +57,16 @@ class AgentToolkitInstallerTest {
             AgentToolkitInstaller.command(script, AgentToolkitInstaller.skillsArgs(os = "Windows 11"), os = "Windows 11"),
         )
     }
+
+    @Test
+    fun `delegates local MCP setup to the toolkit for all three agents`() {
+        assertEquals(
+            listOf("mcp", "--servers", "jetbrains,playwright", "--agents", "claude,codex,opencode", "--scope", "local"),
+            AgentToolkitInstaller.mcpArgs(os = "Linux"),
+        )
+        assertEquals(
+            listOf("mcp", "-Servers", "jetbrains,playwright", "-Agents", "claude,codex,opencode", "-Scope", "local"),
+            AgentToolkitInstaller.mcpArgs(os = "Windows 11"),
+        )
+    }
 }

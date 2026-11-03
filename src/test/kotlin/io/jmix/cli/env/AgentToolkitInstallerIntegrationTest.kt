@@ -1,5 +1,7 @@
 package io.jmix.cli.env
 
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -25,8 +27,8 @@ class AgentToolkitInstallerIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(strings = ["2.8.3", "3.0.1"])
-    fun `installs guidelines and local skills into the project`(jmixVersion: String) {
-        AgentToolkitInstaller.installGuidelinesAndSkills(tempDir, jmixVersion)
+    fun `installs guidelines skills and MCP into the project`(jmixVersion: String) {
+        AgentToolkitInstaller.install(tempDir, jmixVersion)
 
         assertTrue(Files.isRegularFile(tempDir.resolve("CLAUDE.md")), "Claude guidelines must exist")
         assertEquals("@AGENTS.md\n", Files.readString(tempDir.resolve("CLAUDE.md")))
@@ -48,5 +50,33 @@ class AgentToolkitInstallerIntegrationTest {
             Files.list(sharedSkills).use { entries -> entries.anyMatch { it.fileName.toString().startsWith("jmix-") } },
             "jmix skills must be installed in the shared skills directory",
         )
+
+        val claude = servers(".mcp.json", "mcpServers")
+        val opencode = servers("opencode.json", "mcp")
+        val expectedServers = setOf("jetbrains", "playwright")
+        assertEquals(expectedServers, claude.keySet())
+        assertEquals(expectedServers, opencode.keySet())
+
+        val claudeJetBrains = claude.getAsJsonObject("jetbrains")
+        val jetBrainsUrl = claudeJetBrains.get("url").asString
+        assertTrue(jetBrainsUrl.endsWith("/stream") || jetBrainsUrl.endsWith("/sse"), jetBrainsUrl)
+        assertEquals(if (jetBrainsUrl.endsWith("/sse")) "sse" else "http", claudeJetBrains.get("type").asString)
+        val opencodeJetBrains = opencode.getAsJsonObject("jetbrains")
+        assertEquals("remote", opencodeJetBrains.get("type").asString)
+        assertEquals(jetBrainsUrl, opencodeJetBrains.get("url").asString)
+        assertEquals("stdio", claude.getAsJsonObject("playwright").get("type").asString)
+        assertEquals("local", opencode.getAsJsonObject("playwright").get("type").asString)
+
+        val codex = Files.readString(tempDir.resolve(".codex/config.toml"))
+        val codexServers = codex.lineSequence()
+            .filter { it.startsWith("[mcp_servers.") }
+            .map { it.removePrefix("[mcp_servers.").removeSuffix("]") }
+            .toSet()
+        assertEquals(expectedServers, codexServers)
+        assertTrue(codex.contains(jetBrainsUrl))
+        if (jetBrainsUrl.endsWith("/sse")) assertTrue(codex.contains("mcp-remote"))
     }
+
+    private fun servers(config: String, key: String): JsonObject =
+        JsonParser.parseString(Files.readString(tempDir.resolve(config))).asJsonObject.getAsJsonObject(key)
 }

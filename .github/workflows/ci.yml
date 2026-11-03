@@ -49,7 +49,8 @@ jobs:
           test -f "$RUNNER_TEMP/smoke-app/build.gradle"
           test -f "$RUNNER_TEMP/smoke-app/src/main/java/com/company/smokeapp/SmokeAppApplication.java"
           git -C "$RUNNER_TEMP/smoke-app" ls-files --error-unmatch -- \
-              AGENTS.md CLAUDE.md .agents/skills/jmix/SKILL.md .claude/skills/jmix
+              AGENTS.md CLAUDE.md .agents/skills/jmix/SKILL.md .claude/skills/jmix \
+              .codex/config.toml .mcp.json opencode.json
 
   generated-project-build:
     runs-on: ubuntu-latest

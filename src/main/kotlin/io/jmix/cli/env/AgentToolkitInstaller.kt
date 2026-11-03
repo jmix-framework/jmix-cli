@@ -7,6 +7,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Duration
@@ -15,12 +16,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Installs the Jmix Agent Toolkit
  * (https://github.com/jmix-framework/jmix-agent-toolkit) into a generated
- * project: shared guidelines and project-local skills, including Claude Code,
- * via non-interactive subcommands. Only the project
- * directory is written to — global steps (MCP servers, Playwright) are the
- * toolkit wizard's business, not the CLI's. The downloaded script runs from a
- * file with a fixed argument list; no value ever passes through a shell
- * command line.
+ * project: shared guidelines, local skills, and project MCP configuration.
+ * The downloaded script runs from a file with a fixed argument list.
  */
 object AgentToolkitInstaller {
 
@@ -45,6 +42,13 @@ object AgentToolkitInstaller {
 
     fun guidelinesArgs(): List<String> = listOf("agents-md")
 
+    internal fun mcpArgs(os: String = System.getProperty("os.name")): List<String> =
+        if (isWindows(os)) {
+            listOf("mcp", "-Servers", MCP_SERVERS, "-Agents", MCP_AGENTS, "-Scope", "local")
+        } else {
+            listOf("mcp", "--servers", MCP_SERVERS, "--agents", MCP_AGENTS, "--scope", "local")
+        }
+
     fun command(scriptFile: Path, args: List<String>, os: String = System.getProperty("os.name")): List<String> =
         if (isWindows(os)) {
             listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptFile.toString()) + args
@@ -53,10 +57,10 @@ object AgentToolkitInstaller {
         }
 
     /**
-     * Installs guidelines files and project-local skills into [projectDir].
+     * Installs the Toolkit into [projectDir].
      * [onStatus] names each phase before it starts, for a progress indicator.
      */
-    fun installGuidelinesAndSkills(projectDir: Path, jmixVersion: String, onStatus: (String) -> Unit = {}) {
+    fun install(projectDir: Path, jmixVersion: String, onStatus: (String) -> Unit = {}) {
         val suffix = if (isWindows()) ".ps1" else ".sh"
         val script = Files.createTempFile("jmix-agent-toolkit", suffix)
         try {
@@ -67,12 +71,49 @@ object AgentToolkitInstaller {
             runStep(projectDir, command(script, skillsArgs()), "skills")
             onStatus("Installing Agent Toolkit shared guidelines")
             runStep(projectDir, command(script, guidelinesArgs()), "guidelines")
+            onStatus("Configuring project MCP servers")
+            installProjectMcp(projectDir, script)
         } finally {
             Files.deleteIfExists(script)
         }
     }
 
-    private fun runStep(projectDir: Path, command: List<String>, label: String) {
+    private fun installProjectMcp(projectDir: Path, script: Path) {
+        val root = projectDir.toRealPath()
+        // Toolkit writes through symlinks, so reject redirected project config paths.
+        for (relative in listOf(".mcp.json", ".codex", ".codex/config.toml", "opencode.json")) {
+            val path = root.resolve(relative)
+            if (Files.isSymbolicLink(path) || (Files.exists(path, NOFOLLOW_LINKS) && path.toRealPath() != path)) {
+                throw IOException("Cannot configure project MCP servers through a linked path: $relative.")
+            }
+        }
+        val profile = Files.createTempDirectory("jmix-toolkit-mcp-profile")
+        try {
+            runStep(root, command(script, mcpArgs()), "MCP", profile)
+        } finally {
+            Files.deleteIfExists(profile)
+        }
+    }
+
+    private fun isolateClaudeDesktop(environment: MutableMap<String, String>, profile: Path) {
+        // Toolkit checks for Claude Desktop in the user profile even with local scope.
+        val isolatedProfile = profile.toString()
+        when {
+            isWindows() -> {
+                environment["APPDATA"] = isolatedProfile
+                environment["LOCALAPPDATA"] = isolatedProfile
+            }
+            System.getProperty("os.name").startsWith("Mac", ignoreCase = true) -> {
+                // Keep Toolkit's read-only Codex transport conflict check on the real profile.
+                val userHome = environment["HOME"] ?: System.getProperty("user.home")
+                environment.putIfAbsent("CODEX_HOME", Path.of(userHome, ".codex").toString())
+                environment["HOME"] = isolatedProfile
+            }
+            else -> environment["XDG_CONFIG_HOME"] = isolatedProfile
+        }
+    }
+
+    private fun runStep(projectDir: Path, command: List<String>, label: String, mcpProfile: Path? = null) {
         // A file sink instead of a pipe: no deadlock however much the step logs.
         val log = Files.createTempFile("jmix-agent-toolkit", ".log")
         try {
@@ -84,6 +125,7 @@ object AgentToolkitInstaller {
             // terminals, GitHub Actions) breaks Windows PowerShell 5.1 module
             // autoloading (Get-FileHash etc.); let the shell rebuild its own.
             builder.environment().remove("PSModulePath")
+            if (mcpProfile != null) isolateClaudeDesktop(builder.environment(), mcpProfile)
             val process = builder.start()
             if (!process.waitFor(STEP_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
                 // Wait out the kill so the log file is closed before cleanup;
@@ -125,6 +167,8 @@ object AgentToolkitInstaller {
         .build()
 
     private const val STEP_TIMEOUT_MINUTES = 10L
+    private const val MCP_SERVERS = "jetbrains,playwright"
+    private const val MCP_AGENTS = "claude,codex,opencode"
     private const val RAW_CONTENT_BASE =
         "https://raw.githubusercontent.com/jmix-framework/jmix-agent-toolkit"
 }
