@@ -131,9 +131,9 @@ preserved and receives the global premium repository alongside it. An existing
 known premium repository is reused. Free-only selections add no premium repository.
 Both Java and Kotlin application and add-on templates are supported.
 
-The generated `build.gradle` reads `rootProject['premiumRepoUser']` and
-`rootProject['premiumRepoPass']`. A nearby comment explains how to split the license
-key between these properties in `~/.gradle/gradle.properties` and links to the
+The generated `build.gradle` reads the selected property names from `rootProject`.
+The defaults are `premiumRepoUser` and `premiumRepoPass`. A nearby comment explains
+how to split the license key between the selected properties and links to the
 [enterprise subscription](https://docs.jmix.io/jmix/studio/subscription.html#enterprise-subscription).
 Access requires a license covering the selected add-ons; Gradle resolution checks
 access to their artifacts. To retrieve a missing key, the CLI calls Studio's
