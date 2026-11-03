@@ -7,7 +7,7 @@ Create [Jmix](https://www.jmix.io/) projects from the same templates as Jmix Stu
 
 Use the interactive wizard or run the CLI from a script or an AI agent.
 
-<img src="docs/demo.gif" alt="Jmix CLI wizard showing add-on selection and project creation" width="800">
+<img src="docs/demo.gif" alt="Jmix CLI command menu and wizard: add-on search, Agent Toolkit setup, and project generation" width="800">
 
 ## Install
 

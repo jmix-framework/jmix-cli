@@ -105,16 +105,17 @@ both terminal modes. Cover back/forward navigation, English/Russian quit shortcu
 text and search containing `q` and `й`, selection retention, template-included add-ons
 omitted, and narrow/resized terminals.
 
-The README GIF uses real CLI checkpoints captured by [demo.tape](../demo.tape).
-[render-demo.sh](../render-demo.sh) keeps the CLI's own progress bar and blends
-transitions and the loop boundary. This excludes transient
-terminal redraws while retaining the actual choices and generation result.
-Show the filled project info between the welcome and add-on selection so the
-demo represents the wizard's setup steps. Keep pauses long enough to read;
+The README GIF is rendered from a film page kept outside the repository. It
+recreates a real CLI session in an 80×20 terminal with the CLI's own strings,
+colors, clipping, and step order: the command menu, every wizard stage with the
+filled answers, add-on search, the setup checklist, the generation progress,
+and the printed summary with the reproducible command. The session is
+condensed, and the paths are illustrative. Keep pauses long enough to read;
 keep search and keyboard hints in place. Show the purple `[$]` badges and the
-secondary `[$] - commercial add-on` legend below the picker heading in the catalog checkpoint.
+secondary `[$] - commercial add-on` legend below the picker heading in the catalog.
 
-Capture and rendering commands are in the tape header. Rendering requires
-FFmpeg. Validate with
-`vhs validate docs/demo.tape` and `bash -n docs/render-demo.sh`, then inspect
-the animation at the README's displayed width.
+When the wizard's screens change, capture them again in an 80×20 terminal,
+update the film's texts, and render every frame at 800 px wide and 25 fps.
+Build the GIF with one FFmpeg palette and Bayer dithering, optimize it with
+`gifsicle -O3`, and inspect it at the README's displayed width. The last frames
+fade back into the first, so the loop has no seam.
