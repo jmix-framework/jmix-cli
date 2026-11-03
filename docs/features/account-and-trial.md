@@ -82,7 +82,8 @@ loopback redirect.
 - A command that calls the store trades the refresh token for an access token once, reuses
   it for the rest of the process, and after a 401 refreshes and retries once. The provider
   rotates refresh tokens, so every refresh saves the new one. A local lock serializes
-  refresh, sign-in saves and sign-out. If the session changed while another command was
+  refresh, sign-in saves and sign-out. Account requests time out after 30 seconds,
+  including the response body. If the session changed while another command was
   starting, retry that command.
 - Token and store API requests refuse HTTP redirects, so credentials cannot be forwarded
   to another endpoint. Archive downloads validate each redirect and send no credentials.
@@ -186,7 +187,7 @@ and the archive has no `.gitignore`.
 - An existing `<path>/<folder>`, for example from an earlier run, is refused before anything
   moves: `<path>/<folder> already exists. Remove it or choose another directory with --path`.
   This includes dangling symbolic links. If a later move fails, the CLI attempts to roll
-  back the moves already made by that download.
+  back the projects it moved and leaves replacement directories in place.
 - The archive stores no Unix permissions, so every `gradlew` is made executable. The folders
   then move into place and the staging folder goes away.
 

@@ -105,6 +105,7 @@ internal object TrialArchive {
         Files.createDirectories(parent)
         // The staging folder lies in the parent, so the final move is a rename on the same file system.
         val staging = Files.createTempDirectory(parent, ".jmix-trial-")
+        var preserveStaging = false
         try {
             // ZipInputStream accepts a missing central directory, which can hide a truncated download.
             ZipFile(archive.toFile()).use { }
@@ -115,26 +116,46 @@ internal object TrialArchive {
                 throw IOException("$it already exists. Remove it or choose another directory with --path")
             }
             names.forEach { makeWrappersExecutable(staging.resolve(it)) }
+            // A unique marker identifies our directory even on file systems without a stable file key.
+            val marker = staging.fileName.takeIf { names.size > 1 }
+            if (marker != null) names.forEach { Files.createFile(staging.resolve(it).resolve(marker)) }
             val moved = mutableListOf<Path>()
             try {
                 names.forEach { moved.add(publish(staging.resolve(it), parent.resolve(it))) }
             } catch (e: Exception) {
-                moved.asReversed().forEach { path ->
+                for (path in moved.asReversed()) {
+                    if (marker == null || !ownsPublishedProject(path, marker)) continue
                     try {
-                        Files.move(path, staging.resolve(path.fileName))
+                        val recovered = Files.move(path, staging.resolve(path.fileName))
+                        if (!ownsPublishedProject(recovered, marker)) {
+                            // The path changed between the ownership check and the move.
+                            try {
+                                Files.move(recovered, path)
+                            } catch (restore: Exception) {
+                                preserveStaging = true
+                                throw restore
+                            }
+                        }
                     } catch (rollback: Exception) {
                         e.addSuppressed(rollback)
                     }
                 }
+                if (preserveStaging) throw IOException("could not unpack the trial; a directory was preserved at $staging", e)
                 throw e
+            }
+            if (marker != null) moved.filter { ownsPublishedProject(it, marker) }.forEach {
+                runCatching { Files.deleteIfExists(it.resolve(marker)) }
             }
             return moved
         } finally {
             // A failed cleanup must not replace the real error: on Windows, antivirus can hold fresh files.
             // Ctrl+C during the short unpack can leave the hidden staging folder; add a shutdown hook if users report it.
-            runCatching { staging.deleteRecursively() }
+            if (!preserveStaging) runCatching { staging.deleteRecursively() }
         }
     }
+
+    private fun ownsPublishedProject(path: Path, marker: Path): Boolean =
+        Files.isDirectory(path, NOFOLLOW_LINKS) && Files.isRegularFile(path.resolve(marker), NOFOLLOW_LINKS)
 
     /**
      * The Jmix version of [projectDir]: the first `bomVersion` in its root build file, then in the build files of

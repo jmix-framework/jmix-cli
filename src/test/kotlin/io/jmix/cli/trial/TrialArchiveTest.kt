@@ -221,7 +221,32 @@ class TrialArchiveTest {
         assertEquals("keep", Files.readString(competitor.resolve("mine.txt")))
         Files.delete(competitor.resolve("mine.txt"))
         Files.delete(competitor)
-        assertEquals(listOf(parent.resolve(root), competitor), TrialArchive.unpack(archive, parent))
+        val projects = TrialArchive.unpack(archive, parent)
+        assertEquals(listOf(parent.resolve(root), competitor), projects)
+        assertTrue(projects.all { project -> Files.list(project).use { entries ->
+            entries.noneMatch { it.fileName.toString().startsWith(".jmix-trial-") }
+        } })
+    }
+
+    @Test
+    fun `rollback preserves a directory that replaced a published project`() {
+        val parent = dir.resolve("work")
+        val first = parent.resolve(root)
+        val saved = dir.resolve("moved-aside")
+        val archive = trialZip("zeta/settings.gradle" to "", "zeta/trial_repository/x" to "x")
+        assertThrows<IOException> {
+            TrialArchive.unpack(archive, parent) { source, target ->
+                if (target != first) {
+                    Files.move(first, saved)
+                    Files.writeString(Files.createDirectory(first).resolve("mine.txt"), "keep")
+                    Files.writeString(Files.createDirectory(target).resolve("mine.txt"), "also keep")
+                }
+                Files.move(source, target)
+            }
+        }
+        assertEquals("keep", Files.readString(first.resolve("mine.txt")))
+        assertEquals("also keep", Files.readString(parent.resolve("zeta/mine.txt")))
+        assertTrue(Files.isRegularFile(saved.resolve("settings.gradle")))
     }
 
     @Test

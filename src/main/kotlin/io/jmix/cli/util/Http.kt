@@ -3,7 +3,12 @@ package io.jmix.cli.util
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.time.Duration
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit.NANOSECONDS
+import java.util.concurrent.TimeoutException
 
 /** Release version from the jar manifest; absent in some dev runs. */
 internal fun cliVersion(): String? =
@@ -38,4 +43,21 @@ internal object Http {
         HttpRequest.newBuilder(URI.create(url))
             .timeout(timeout)
             .header("User-Agent", "jmix-cli/${cliVersion() ?: "dev"}")
+
+    /** Bounds the complete response, including a stalled body after the headers have arrived. */
+    fun sendText(client: HttpClient, request: HttpRequest): HttpResponse<String> {
+        val timeout = request.timeout().orElseThrow()
+        val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+        try {
+            return response.get(timeout.toNanos(), NANOSECONDS)
+        } catch (e: TimeoutException) {
+            response.cancel(true)
+            throw HttpTimeoutException("The HTTP response timed out")
+        } catch (e: InterruptedException) {
+            response.cancel(true)
+            throw e
+        } catch (e: ExecutionException) {
+            throw e.cause ?: e
+        }
+    }
 }

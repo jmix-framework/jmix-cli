@@ -88,7 +88,7 @@ internal class StoreClient(
         val builder = Http.request(storeApiUrl + path).header("Authorization", "Bearer $accessToken")
         // The generate call takes no body, so it sends no Content-Type either.
         val request = if (method == "POST") builder.POST(HttpRequest.BodyPublishers.noBody()) else builder.GET()
-        return http.send(request.build(), HttpResponse.BodyHandlers.ofString())
+        return Http.sendText(http, request.build())
     }
 }
 

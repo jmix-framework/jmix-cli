@@ -9,7 +9,6 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import kotlin.text.Charsets.UTF_8
 
 /** The tokens of one sign-in. */
@@ -70,7 +69,7 @@ internal class TokenClient(private val endpoints: AccountEndpoints, private val 
             .header("Content-Type", "application/x-www-form-urlencoded")
             .POST(HttpRequest.BodyPublishers.ofString(formEncode(form)))
             .build()
-        val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+        val response = Http.sendText(http, request)
         val status = response.statusCode()
         val json = parseObject(response.body())
         if (status == 200) return tokensOf(json) ?: throw unexpectedResponse(status)
