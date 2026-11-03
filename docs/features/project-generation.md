@@ -11,9 +11,16 @@ complete option reference.
   template format or forked templates. Template metadata controls available
   project types, visible parameters, and defaults.
 - Resolve stable and unstable Jmix versions through the shared version helpers.
+  Discover new releases from the selected repository's template metadata
+  without requiring a CLI update. By default, select the newest stable version.
   The wizard offers the primary public repository, its backup, and a custom URL.
   Changing repositories invalidates the current template catalog.
 - Cache templates under `~/.jmix/templates/`, isolated by repository URL.
+  Reuse valid Maven metadata for 12 hours. If a version specified with
+  `--jmix-version` or entered under **Other** is missing from a fresh list,
+  check the repository once before reporting it as unknown.
+  Replace cached metadata only after validating the response. If a refresh
+  fails, warn that the version list may be stale and use the last valid copy.
   Refresh snapshots when online; use validated cached artifacts when offline.
   Reject corrupt or partial downloads.
 - Evaluate `.globals` before rendering. Preserve Studio binding names and Groovy

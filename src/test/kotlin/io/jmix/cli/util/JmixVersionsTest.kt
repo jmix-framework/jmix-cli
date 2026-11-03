@@ -42,14 +42,6 @@ class JmixVersionComparatorTest {
 class PlatformVersionsTest {
 
     @Test
-    fun `future unknown version detection`() {
-        assertFalse(PlatformVersions.isFutureUnknownVersion("3.0.1"))
-        assertFalse(PlatformVersions.isFutureUnknownVersion("2.8.3"))
-        assertTrue(PlatformVersions.isFutureUnknownVersion("3.1.0"))
-        assertTrue(PlatformVersions.isFutureUnknownVersion("4.0.0"))
-    }
-
-    @Test
     fun `supported platform version - above 1_0 only`() {
         assertTrue(PlatformVersions.isSupportedPlatformVersion("1.0.0"))
         assertTrue(PlatformVersions.isSupportedPlatformVersion("3.0.1"))

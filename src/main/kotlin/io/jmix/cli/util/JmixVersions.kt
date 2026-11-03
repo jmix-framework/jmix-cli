@@ -33,9 +33,6 @@ object JmixVersionComparator : Comparator<String> {
 /** Ported from Studio's PlatformVersion. */
 object PlatformVersions {
 
-    /** Newest Jmix minor this CLI build knows about; newer versions are filtered as "future". */
-    const val LAST_KNOWN_MINOR_VERSION = "3.0"
-
     private val UNSTABLE_VERSION_PATTERN = Regex("(-\\w*$)|(\\.[a-zA-Z]+\\d*$)")
 
     fun compare(v1: String, v2: String): Int = JmixVersionComparator.compare(v1, v2)
@@ -43,9 +40,6 @@ object PlatformVersions {
     fun isJmix2Plus(version: String): Boolean = compare(version, "1.99.999-SNAPSHOT") > 0
 
     fun isJmix3Plus(version: String): Boolean = compare(version, "2.99.999-SNAPSHOT") > 0
-
-    fun isFutureUnknownVersion(version: String): Boolean =
-        compare(version, LAST_KNOWN_MINOR_VERSION) > 0
 
     /** Studio's SupportedVersion.JMIX_1_0.check: everything above 0.9.999-SNAPSHOT. */
     fun isSupportedPlatformVersion(version: String): Boolean =

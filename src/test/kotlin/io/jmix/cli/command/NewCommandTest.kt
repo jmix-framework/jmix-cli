@@ -1,7 +1,9 @@
 package io.jmix.cli.command
 
 import com.github.ajalt.clikt.core.ProgramResult
+import com.github.ajalt.clikt.testing.test
 import com.github.ajalt.mordant.input.KeyboardEvent
+import com.github.ajalt.mordant.rendering.AnsiLevel
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalRecorder
 import io.jmix.cli.FakeServer
@@ -14,6 +16,7 @@ import io.jmix.cli.addon.ResolvedAddon
 import io.jmix.cli.generator.JmixLocale
 import io.jmix.cli.generator.ProjectCreationInfo
 import io.jmix.cli.generator.Repository
+import io.jmix.cli.repo.TemplateRepository
 import io.jmix.cli.template.TemplateMetadata
 import io.jmix.cli.template.TemplateParam
 import io.jmix.cli.template.TemplateParams
@@ -32,6 +35,79 @@ class NewCommandTest {
 
     @TempDir
     lateinit var tempDir: Path
+
+    private val artifactId = TemplateRepository.TEMPLATES_ARTIFACT_ID
+    private val artifactPath = "/${TemplateRepository.TEMPLATES_GROUP_PATH}/$artifactId"
+    private val metadataPath = "$artifactPath/maven-metadata.xml"
+
+    private fun FakeServer.publishVersions(vararg versions: String) {
+        val entries = versions.joinToString("") { "<version>$it</version>" }
+        val body = "<metadata><versioning><versions>$entries</versions></versioning></metadata>"
+        on("GET", metadataPath) { FakeServer.Response(200, body.toByteArray()) }
+    }
+
+    @Test
+    fun `an explicit prerelease resolves with one request whether the cache is fresh or missing`() {
+        val version = "3.1.0-RC1"
+        for (warm in listOf(false, true)) FakeServer().use { server ->
+            if (warm) {
+                server.publishVersions("3.0.3")
+                TemplateRepository(server.url, tempDir).fetchVersions()
+            }
+            val requestsBefore = server.requests.size
+            server.publishVersions(version)
+
+            val result = NewCommand(tempDir).test(listOf("demo", "--non-interactive", "--repository", server.url,
+                "--jmix-version", version))
+
+            assertEquals(1, result.statusCode)
+            // The fixture stops at the jar request, after the version has passed validation.
+            assertTrue(result.stderr.contains("Failed to download templates"), result.stderr)
+            assertEquals(listOf(metadataPath, "$artifactPath/$version/$artifactId-$version.jar"),
+                server.requests.drop(requestsBefore).map { it.path })
+        }
+    }
+
+    @Test
+    fun `manual version input refreshes a fresh cache once and reuses the result after a typo`() {
+        FakeServer().use { server ->
+            server.publishVersions("3.0.3")
+            TemplateRepository(server.url, tempDir).fetchVersions()
+            server.publishVersions("3.0.3", "3.1.0")
+
+            val stdin = System.`in`
+            try {
+                System.setIn(ByteArrayInputStream("2\n9.9.9\n3.1.0\n".toByteArray()))
+                val result = NewCommand(tempDir).test(listOf("demo", "--repository", server.url),
+                    inputInteractive = false, outputInteractive = false)
+
+                assertTrue(result.stdout.contains("Unknown version. Recent versions: 3.0.3, 3.1.0"), result.stdout)
+                assertTrue(result.stderr.contains("Failed to download templates"), result.stderr)
+                assertEquals(listOf(metadataPath, "$artifactPath/3.1.0/$artifactId-3.1.0.jar"),
+                    server.requests.drop(1).map { it.path })
+            } finally {
+                System.setIn(stdin)
+            }
+        }
+    }
+
+    @Test
+    fun `a failed refresh reports the cached list once when the wizard exits on an unknown version`() {
+        FakeServer().use { server ->
+            server.publishVersions("3.0.3")
+            TemplateRepository(server.url, tempDir).fetchVersions()
+            server.on("GET", metadataPath) { FakeServer.Response(503) }
+
+            val result = NewCommand(tempDir).test(listOf("demo", "--repository", server.url,
+                "--jmix-version", "3.1.0"), ansiLevel = AnsiLevel.TRUECOLOR, width = 160,
+                inputInteractive = true, outputInteractive = true)
+
+            assertEquals(1, result.statusCode)
+            assertTrue(result.stderr.contains("Unknown Jmix version '3.1.0'. Available versions: 3.0.3"), result.stderr)
+            assertEquals(1, Regex("Using the cached version list").findAll(result.stdout).count(), result.stdout)
+            assertEquals(listOf(metadataPath, metadataPath), server.requests.map { it.path })
+        }
+    }
 
     private fun premiumRepository(server: FakeServer): Pair<PremiumRepository, Path> {
         server.issuesTokens()
