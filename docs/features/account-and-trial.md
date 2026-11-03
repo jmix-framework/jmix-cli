@@ -196,8 +196,8 @@ Next steps:
   1. cd jmix-commercial-addons-demo-3.1.0
   2. ./demo/MODULE/gradlew -p demo/MODULE bootRun
   Example (bpm): ./demo/bpm/gradlew -p demo/bpm bootRun
-Application: http://localhost:8101
-Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial
+🧩 Application: http://localhost:8101
+📖 Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial
 ```
 
 The `cd` and wrapper invocation are separate lines because Windows PowerShell 5.1 rejects

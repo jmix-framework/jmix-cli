@@ -80,9 +80,9 @@ internal fun trialSummary(projects: List<Path>, endDate: LocalDate?, currentDir:
         if (apps.size > 1) {
             add("  Example (${app.fileName}): ${projectRunCommand(project, app, "bootRun")}")
         }
-        add("Application: http://localhost:${ProjectLauncher.serverPort(app)}")
+        add("🧩 Application: http://localhost:${ProjectLauncher.serverPort(app)}")
     }
-    add("Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial")
+    add("📖 Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial")
 }
 
 /** The account's trials: the subscriptions that come with a download link. */

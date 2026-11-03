@@ -124,7 +124,7 @@ class TrialFinderTest {
         assertEquals("✓ Enterprise+BPM trial project unpacked to $project", lines.first())
         assertTrue("Trial ends on 2026-11-24. When it ends, the demo applications stop starting." in lines, lines.toString())
         assertTrue(lines.any { it.startsWith("If a demo stops starting earlier") && it.contains("jmix trial --path") }, lines.toString())
-        assertTrue("Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial" in lines, lines.toString())
+        assertTrue("📖 Guide: https://docs.jmix.io/jmix/account-management.html#enterprise-trial" in lines, lines.toString())
         assertTrue(trialSummary(listOf(project), null, cwd).any { it.startsWith("Trial end date is unknown.") })
     }
 
@@ -138,7 +138,7 @@ class TrialFinderTest {
         val relative = Path.of("jmix-commercial-addons-demo-3.1.0")
         assertTrue(lines.any { it.trimEnd().endsWith("cd $relative") }, lines.toString())
         assertTrue(lines.any { it.contains("gradlew") && it.contains("bootRun") }, lines.toString())
-        assertTrue(lines.any { it.contains("http://localhost:8101") }, lines.toString())
+        assertTrue("🧩 Application: http://localhost:8101" in lines, lines.toString())
     }
 
     @Test
