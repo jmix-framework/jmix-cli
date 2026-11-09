@@ -50,8 +50,9 @@ Run `jmix new --help` for options such as `--jmix-version`, `--template`, and
 ## Agent Toolkit
 
 New projects include Agent Toolkit guidelines and skills. The Toolkit
-configures JetBrains and Playwright MCP servers for Codex, Claude Code, and
-OpenCode. Use `--no-agents-toolkit` to skip setup. See the
+configures Jmix Docs and Playwright MCP servers for Codex, Claude Code,
+OpenCode, and Junie. It also configures JetBrains MCP for Codex, Claude Code,
+and OpenCode. Use `--no-agents-toolkit` to skip setup. See the
 [Agent Toolkit guide](docs/features/environment-and-toolkit.md).
 
 ## Jmix account and trial

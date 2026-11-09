@@ -59,13 +59,13 @@ class AgentToolkitInstallerTest {
     }
 
     @Test
-    fun `delegates local MCP setup to the toolkit for all three agents`() {
+    fun `delegates local MCP setup to the toolkit for agents with project configs`() {
         assertEquals(
-            listOf("mcp", "--servers", "jetbrains,playwright", "--agents", "claude,codex,opencode", "--scope", "local"),
+            listOf("mcp", "--servers", "jetbrains,jmix-docs,playwright", "--agents", "claude,codex,opencode,junie", "--scope", "local"),
             AgentToolkitInstaller.mcpArgs(os = "Linux"),
         )
         assertEquals(
-            listOf("mcp", "-Servers", "jetbrains,playwright", "-Agents", "claude,codex,opencode", "-Scope", "local"),
+            listOf("mcp", "-Servers", "jetbrains,jmix-docs,playwright", "-Agents", "claude,codex,opencode,junie", "-Scope", "local"),
             AgentToolkitInstaller.mcpArgs(os = "Windows 11"),
         )
     }

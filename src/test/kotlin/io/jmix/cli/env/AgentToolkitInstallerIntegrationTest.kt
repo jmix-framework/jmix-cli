@@ -53,9 +53,18 @@ class AgentToolkitInstallerIntegrationTest {
 
         val claude = servers(".mcp.json", "mcpServers")
         val opencode = servers("opencode.json", "mcp")
-        val expectedServers = setOf("jetbrains", "playwright")
+        val junie = servers(".junie/mcp/mcp.json", "mcpServers")
+        val expectedServers = setOf("jetbrains", "jmix-docs", "playwright")
         assertEquals(expectedServers, claude.keySet())
         assertEquals(expectedServers, opencode.keySet())
+        assertEquals(setOf("jmix-docs", "playwright"), junie.keySet())
+
+        val docsUrl = "https://docs-mcp.jmix.io/mcp"
+        assertEquals(docsUrl, claude.getAsJsonObject("jmix-docs").get("url").asString)
+        assertEquals(docsUrl, opencode.getAsJsonObject("jmix-docs").get("url").asString)
+        val junieDocs = junie.getAsJsonObject("jmix-docs")
+        assertEquals("npx", junieDocs.get("command").asString)
+        assertEquals(listOf("-y", "mcp-remote", docsUrl), junieDocs.getAsJsonArray("args").map { it.asString })
 
         val claudeJetBrains = claude.getAsJsonObject("jetbrains")
         val jetBrainsUrl = claudeJetBrains.get("url").asString
@@ -73,6 +82,7 @@ class AgentToolkitInstallerIntegrationTest {
             .map { it.removePrefix("[mcp_servers.").removeSuffix("]") }
             .toSet()
         assertEquals(expectedServers, codexServers)
+        assertTrue(codex.contains(docsUrl))
         assertTrue(codex.contains(jetBrainsUrl))
         if (jetBrainsUrl.endsWith("/sse")) assertTrue(codex.contains("mcp-remote"))
     }

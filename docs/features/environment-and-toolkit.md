@@ -28,12 +28,14 @@ version. Do not report the private bundled runtime as an installed development J
   is enabled by default: `.claude/skills` links each skill to the shared store,
   and a new `CLAUDE.md` imports `@AGENTS.md`.
 - Run the Toolkit's project-scoped MCP setup for Codex
-  (`.codex/config.toml`), Claude Code (`.mcp.json`), and OpenCode
-  (`opencode.json`). The Toolkit registers JetBrains and Playwright, selects
-  the JetBrains transport, and merges entries into existing configs. On
-  macOS and Linux, merging JSON requires `jq` or Node.js. Enable the MCP
-  server in IntelliJ IDEA and make `npx` available for Playwright. Trust
-  the project in Codex and approve the project servers in Claude Code.
+  (`.codex/config.toml`), Claude Code (`.mcp.json`), OpenCode
+  (`opencode.json`), and Junie (`.junie/mcp/mcp.json`). The Toolkit merges
+  Jmix Docs and Playwright into each config and selects the JetBrains
+  transport for Codex, Claude Code, and OpenCode. Junie has native IDE access.
+  Jmix Docs requires no API key. On macOS and Linux, merging JSON requires
+  `jq` or Node.js. Enable the MCP server in IntelliJ IDEA and make `npx`
+  available for Playwright and Junie's Jmix Docs bridge. Trust the project
+  in Codex and approve the project servers in Claude Code.
   The CLI isolates Claude Desktop's user profile from the MCP setup step.
   Set up Context7 separately with your API key in the agent's user settings.
 - JDK and toolkit installation report their phases (lookup, download with byte

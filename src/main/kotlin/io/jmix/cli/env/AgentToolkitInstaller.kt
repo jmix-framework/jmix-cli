@@ -81,7 +81,10 @@ object AgentToolkitInstaller {
     private fun installProjectMcp(projectDir: Path, script: Path) {
         val root = projectDir.toRealPath()
         // Toolkit writes through symlinks, so reject redirected project config paths.
-        for (relative in listOf(".mcp.json", ".codex", ".codex/config.toml", "opencode.json")) {
+        for (relative in listOf(
+            ".mcp.json", ".codex", ".codex/config.toml", "opencode.json",
+            ".junie", ".junie/mcp", ".junie/mcp/mcp.json",
+        )) {
             val path = root.resolve(relative)
             if (Files.isSymbolicLink(path) || (Files.exists(path, NOFOLLOW_LINKS) && path.toRealPath() != path)) {
                 throw IOException("Cannot configure project MCP servers through a linked path: $relative.")
@@ -167,8 +170,8 @@ object AgentToolkitInstaller {
         .build()
 
     private const val STEP_TIMEOUT_MINUTES = 10L
-    private const val MCP_SERVERS = "jetbrains,playwright"
-    private const val MCP_AGENTS = "claude,codex,opencode"
+    private const val MCP_SERVERS = "jetbrains,jmix-docs,playwright"
+    private const val MCP_AGENTS = "claude,codex,opencode,junie"
     private const val RAW_CONTENT_BASE =
         "https://raw.githubusercontent.com/jmix-framework/jmix-agent-toolkit"
 }
