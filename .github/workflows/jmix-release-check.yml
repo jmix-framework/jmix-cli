@@ -45,6 +45,8 @@ jobs:
         shell: bash
         run: |
           test ! -e "$HOME/.jmix/templates"
+          # A directory at the UUID path keeps smoke-test events out of the collector.
+          mkdir -p "$HOME/.jmix/telemetry/installation-id"
 
           generate() {
             local project="$1"

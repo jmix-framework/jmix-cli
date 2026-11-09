@@ -50,6 +50,25 @@ complete option reference.
   require generating interactively and choosing **Save account credentials
   separately** again.
 
+## Usage statistics
+
+The CLI makes one JSON `POST` to `https://usage-stat.jmix.io/rest/event/open`
+after each successful project creation, trial download and unpack, or browser
+sign-in. The `ide` field identifies the action as `cli-new`, `cli-trial`, or
+`cli-login`, respectively. Jmix Studio uses `plugin`.
+
+Each request includes `eventDate` in UTC, the CLI version as `studioVersion`,
+the OS name as `os`, and a randomly generated `studioId` stored in
+`~/.jmix/telemetry/installation-id`. The `platformVersion` field carries the
+selected Jmix version for project creation and the detected version for a trial
+archive with a single known version. The CLI only reports numeric releases and
+versions with suffixes such as `-RC1` or `-SNAPSHOT`. The `addons` and
+`databases` fields are empty arrays for compatibility with the collector. The
+payload excludes project names, paths, account details, and credentials.
+
+The CLI attempts delivery once with a short timeout. Delivery failure leaves
+the command result and output intact.
+
 ## Code
 
 - [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/command/NewCommand.kt) — workflow and options.

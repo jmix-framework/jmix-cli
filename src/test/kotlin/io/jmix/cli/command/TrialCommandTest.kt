@@ -6,10 +6,12 @@ import com.github.ajalt.clikt.testing.test
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.mordant.input.KeyboardEvent
 import com.github.ajalt.mordant.rendering.AnsiLevel
+import com.google.gson.JsonParser
 import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.account.Session
 import io.jmix.cli.account.SessionStore
 import io.jmix.cli.account.issuesTokens
+import io.jmix.cli.telemetry.UsageStatistics
 import io.jmix.cli.trial.TRIAL_ROOT
 import io.jmix.cli.trial.writeTrialZip
 import java.nio.file.Files
@@ -17,6 +19,7 @@ import java.nio.file.Path
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -25,6 +28,7 @@ import org.junit.jupiter.api.io.TempDir
 class TrialCommandTest {
 
     private val today = LocalDate.of(2026, 10, 27)
+    private val usagePath = "/rest/event/open"
 
     private fun signedIn(server: FakeServer, dir: Path): SessionStore =
         SessionStore(dir.resolve("session.json")).also { it.save(Session("global", server.url, server.url, "r0")) }
@@ -60,11 +64,13 @@ class TrialCommandTest {
             }
             server.on("GET", "/t.zip") { FakeServer.Response(403) }
             val out = dir.resolve("out")
-            val result = TrialCommand(signedIn(server, dir), { today })
+            val usageStatistics = UsageStatistics(dir.resolve("installation-id"), server.url + usagePath)
+            val result = TrialCommand(signedIn(server, dir), { today }, usageStatistics)
                 .test(listOf("--non-interactive", "--path", out.toString()))
             assertEquals(1, result.statusCode)
             assertTrue("HTTP 403" in result.stderr && "https://store.jmix.io/account" in result.stderr, result.stderr)
             assertEquals(emptyList<Path>(), Files.list(out).use { it.toList() })
+            assertTrue(server.requests.none { it.path == usagePath })
         }
     }
 
@@ -77,14 +83,22 @@ class TrialCommandTest {
                 FakeServer.json(200, """[{"endDate":"2026-11-24","trialDownloadUrl":"${server.url}/t.zip"}]""")
             }
             server.on("GET", "/t.zip") { FakeServer.Response(200, Files.readAllBytes(zip)) }
+            server.on("POST", usagePath) { FakeServer.Response(200) }
             val out = dir.resolve("new/dir")
-            val result = TrialCommand(signedIn(server, dir), { today })
+            val usageStatistics = UsageStatistics(dir.resolve("installation-id"), server.url + usagePath)
+            val result = TrialCommand(signedIn(server, dir), { today }, usageStatistics)
                 .test(listOf("--non-interactive", "--path", out.toString()))
             assertEquals(0, result.statusCode, result.stderr)
             assertTrue(Files.isDirectory(out.resolve("$TRIAL_ROOT/demo/bpm")))
             assertTrue("Trial ends on 2026-11-24." in result.stdout, result.stdout)
             assertTrue(result.stdout.contains("MODULE") && result.stdout.contains("Example (bpm):"), result.stdout)
             assertFalse(result.stdout.contains("What's next?"), result.stdout)
+            val event = server.requests.filter { it.path == usagePath }.single()
+            val payload = JsonParser.parseString(event.body).asJsonObject
+            assertEquals("cli-trial", payload.get("ide").asString)
+            assertEquals("3.1.0", payload.get("platformVersion").asString)
+            assertFalse("/t.zip" in event.body || out.toString() in event.body)
+            assertNull(event.headers.getFirst("Authorization"))
         }
     }
 

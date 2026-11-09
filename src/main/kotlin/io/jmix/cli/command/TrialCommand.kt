@@ -18,6 +18,8 @@ import io.jmix.cli.account.Session
 import io.jmix.cli.account.SessionExpiredException
 import io.jmix.cli.account.SessionStore
 import io.jmix.cli.account.StoreClient
+import io.jmix.cli.telemetry.UsageEvent
+import io.jmix.cli.telemetry.UsageStatistics
 import io.jmix.cli.trial.TrialArchive
 import io.jmix.cli.trial.TrialException
 import io.jmix.cli.trial.findOrStartTrial
@@ -40,6 +42,7 @@ import java.time.LocalDate
 internal class TrialCommand(
     private val sessions: SessionStore = SessionStore(),
     private val today: () -> LocalDate = LocalDate::now,
+    private val usageStatistics: UsageStatistics? = null,
 ) : CliktCommand(name = "trial") {
 
     override fun help(context: Context) = "Download the Enterprise+BPM trial project of your Jmix account"
@@ -81,13 +84,16 @@ internal class TrialCommand(
             val trial = findOrStartTrial(store, today(), region, ::confirmStart)
             val status = StatusReporter(terminal)
             val projects = downloadAndUnpack(trial.url, parent, status)
-            projects.mapNotNull(TrialArchive::jmixVersion).forEach { reportJdkCheck(terminal, status, it) }
+            val versions = projects.associateWith(TrialArchive::jmixVersion)
+            val knownVersions = versions.values.filterNotNull()
+            knownVersions.forEach { reportJdkCheck(terminal, status, it) }
             printSummary(trialSummary(projects, trial.endDate, Path.of("").toAbsolutePath()))
+            usageStatistics?.record(UsageEvent.TRIAL_DOWNLOADED, knownVersions.distinct().singleOrNull())
             if (!nonInteractive && !prompts.isInputExhausted) {
                 val project = if (projects.size == 1) projects.single() else prompts.choose(
                     "Select a trial project to open", projects, { it.fileName.toString() },
                 ).requireValue()
-                ProjectActions(project, TrialArchive.jmixVersion(project), terminal, prompts, status)
+                ProjectActions(project, versions[project], terminal, prompts, status)
                     .offer("bootRun", TrialArchive.runnableApps(project))
             }
         } catch (e: ReturnToMainMenu) {
@@ -131,7 +137,7 @@ internal class TrialCommand(
     /** Signs in in the browser, as `jmix login` does, when a person is there to do it. */
     private fun signIn(): Session {
         if (!interactive) throw CliktError(NOT_SIGNED_IN)
-        signInInteractively(terminal, BrowserSignIn(AccountRegion.GLOBAL, sessions = sessions))
+        signInInteractively(terminal, BrowserSignIn(AccountRegion.GLOBAL, sessions = sessions), usageStatistics)
         return sessions.load() ?: throw CliktError(NOT_SIGNED_IN)
     }
 

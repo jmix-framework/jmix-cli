@@ -6,6 +6,7 @@ import com.github.ajalt.mordant.input.KeyboardEvent
 import com.github.ajalt.mordant.rendering.AnsiLevel
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalRecorder
+import com.google.gson.JsonParser
 import io.jmix.cli.FakeServer
 import io.jmix.cli.account.PremiumRepository
 import io.jmix.cli.account.Session
@@ -17,19 +18,27 @@ import io.jmix.cli.generator.JmixLocale
 import io.jmix.cli.generator.ProjectCreationInfo
 import io.jmix.cli.generator.Repository
 import io.jmix.cli.repo.TemplateRepository
+import io.jmix.cli.telemetry.UsageStatistics
 import io.jmix.cli.template.TemplateMetadata
 import io.jmix.cli.template.TemplateParam
 import io.jmix.cli.template.TemplateParams
 import io.jmix.cli.wizard.Prompts
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class NewCommandTest {
 
@@ -57,7 +66,8 @@ class NewCommandTest {
             val requestsBefore = server.requests.size
             server.publishVersions(version)
 
-            val result = NewCommand(tempDir).test(listOf("demo", "--non-interactive", "--repository", server.url,
+            val stats = UsageStatistics(tempDir.resolve("installation-id"), server.url + "/rest/event/open")
+            val result = NewCommand(tempDir, stats).test(listOf("demo", "--non-interactive", "--repository", server.url,
                 "--jmix-version", version))
 
             assertEquals(1, result.statusCode)
@@ -65,6 +75,54 @@ class NewCommandTest {
             assertTrue(result.stderr.contains("Failed to download templates"), result.stderr)
             assertEquals(listOf(metadataPath, "$artifactPath/$version/$artifactId-$version.jar"),
                 server.requests.drop(requestsBefore).map { it.path })
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `a successfully generated project records one usage event`(nonInteractive: Boolean) {
+        val version = "3.1.0"
+        val templateJar = ByteArrayOutputStream().apply {
+            ZipOutputStream(this).use { zip ->
+                zip.putNextEntry(ZipEntry("project/application/template.json"))
+                zip.write("""{"version":1,"name":"Application"}""".toByteArray())
+                zip.putNextEntry(ZipEntry("project/application/build.gradle"))
+                zip.write("// Generated application".toByteArray())
+            }
+        }.toByteArray()
+        FakeServer().use { server ->
+            server.publishVersions(version)
+            server.on("GET", "$artifactPath/$version/$artifactId-$version.jar") { FakeServer.Response(200, templateJar) }
+            val target = tempDir.resolve("local-project")
+            val generatedAtSend = AtomicBoolean()
+            server.on("POST", "/rest/event/open") {
+                generatedAtSend.set(Files.isRegularFile(target.resolve("build.gradle")))
+                FakeServer.Response(200)
+            }
+            val stats = UsageStatistics(
+                tempDir.resolve("installation-id"), server.url + "/rest/event/open", timeout = Duration.ofSeconds(5),
+            )
+            val args = listOf(
+                "private-name", "--repository", server.url, "--jmix-version", version, "--template", "application",
+                "--package", "com.privatecompany.app", "--project-id", "sample", "--locales", "en", "--addons", "",
+                "--path", target.toString(), "--no-git", "--no-agents-toolkit",
+            )
+            val result = if (nonInteractive) {
+                NewCommand(tempDir, stats).test(args + "--non-interactive")
+            } else {
+                NewCommand(tempDir, stats).test(
+                    args, ansiLevel = AnsiLevel.TRUECOLOR, width = 160, height = 40,
+                    inputEvents = listOf(KeyboardEvent("q")),
+                )
+            }
+
+            assertEquals(0, result.statusCode, result.stderr)
+            val body = server.requests.single { it.method == "POST" && it.path == "/rest/event/open" }.body
+            assertTrue(generatedAtSend.get())
+            val payload = JsonParser.parseString(body).asJsonObject
+            assertEquals("cli-new", payload["ide"].asString)
+            assertEquals(version, payload["platformVersion"].asString)
+            assertFalse(body.contains("private-name") || body.contains("privatecompany") || body.contains(server.url))
         }
     }
 

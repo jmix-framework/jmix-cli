@@ -32,6 +32,8 @@ import io.jmix.cli.generator.Repository
 import io.jmix.cli.repo.TemplateRepository
 import io.jmix.cli.repo.AddonRepository
 import io.jmix.cli.repo.TemplateVersionCatalog
+import io.jmix.cli.telemetry.UsageEvent
+import io.jmix.cli.telemetry.UsageStatistics
 import io.jmix.cli.template.Template
 import io.jmix.cli.template.TemplateCatalog
 import io.jmix.cli.template.TemplateParams
@@ -167,7 +169,10 @@ internal fun reportJdkCheck(terminal: Terminal, status: StatusReporter, jmixVers
     terminal.println(brightYellow(EnvironmentCheck.installHint(check.supportedVersions)))
 }
 
-class NewCommand internal constructor(private val templateCacheDir: Path) : CliktCommand(name = "new") {
+class NewCommand internal constructor(
+    private val templateCacheDir: Path,
+    private val usageStatistics: UsageStatistics? = null,
+) : CliktCommand(name = "new") {
 
     constructor() : this(TemplateRepository.defaultCacheDir())
 
@@ -331,6 +336,7 @@ class NewCommand internal constructor(private val templateCacheDir: Path) : Clik
         }
 
         printSuccess(info)
+        usageStatistics?.record(UsageEvent.PROJECT_CREATED, info.jmixVersion)
         wizardStage = null
         if (interactive && terminal.terminalInfo.inputInteractive) {
             ProjectActions(info.projectDir, info.jmixVersion, terminal, prompts, status).offer(runTaskFor(info))

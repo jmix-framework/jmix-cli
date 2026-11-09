@@ -43,6 +43,8 @@ jobs:
       - name: Smoke-generate a project
         shell: bash
         run: |
+          # A directory at the UUID path keeps smoke-test events out of the collector.
+          mkdir -p "$HOME/.jmix/telemetry/installation-id"
           ./gradlew installDist
           ./build/install/jmix-cli/bin/jmix-cli new smoke-app --non-interactive \
               --path "$RUNNER_TEMP/smoke-app"
@@ -66,6 +68,8 @@ jobs:
 
       - name: Generate project
         run: |
+          # A directory at the UUID path keeps smoke-test events out of the collector.
+          mkdir -p "$HOME/.jmix/telemetry/installation-id"
           ./gradlew installDist
           ./build/install/jmix-cli/bin/jmix-cli new smoke-app --non-interactive \
               --path "$RUNNER_TEMP/smoke-app" --no-git

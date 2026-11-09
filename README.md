@@ -68,6 +68,12 @@ Use `jmix login --region ru` for a jmix.ru account. See the
 [account and trial guide](docs/features/account-and-trial.md) for activation
 and scripting options.
 
+## Usage statistics
+
+The CLI reports successful project creation, trial downloads, and browser
+sign-ins to the Jmix usage statistics service. See the
+[event fields and delivery behavior](docs/features/project-generation.md#usage-statistics).
+
 ## Update
 
 Installed builds check for updates automatically. Run `jmix update` to update

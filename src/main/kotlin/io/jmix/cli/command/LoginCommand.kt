@@ -15,6 +15,8 @@ import com.github.ajalt.mordant.terminal.Terminal
 import io.jmix.cli.account.AccountRegion
 import io.jmix.cli.account.BrowserSignIn
 import io.jmix.cli.env.ProjectLauncher
+import io.jmix.cli.telemetry.UsageEvent
+import io.jmix.cli.telemetry.UsageStatistics
 import io.jmix.cli.update.SelfUpdater
 
 /**
@@ -28,6 +30,7 @@ import io.jmix.cli.update.SelfUpdater
 internal fun signInInteractively(
     terminal: Terminal,
     signIn: BrowserSignIn,
+    usageStatistics: UsageStatistics? = null,
     openUrl: (String, (String) -> Unit) -> Unit = ProjectLauncher::openUrl,
 ) {
     val identity = signIn.start().use { pending ->
@@ -38,9 +41,12 @@ internal fun signInInteractively(
         pending.complete()
     }
     terminal.println(identity.signedInMessage())
+    usageStatistics?.record(UsageEvent.USER_LOGIN)
 }
 
-class LoginCommand : CliktCommand(name = "login") {
+class LoginCommand internal constructor(private val usageStatistics: UsageStatistics?) : CliktCommand(name = "login") {
+
+    constructor() : this(null)
 
     override fun help(context: Context) = "Sign in to your Jmix account in the browser"
 
@@ -54,7 +60,7 @@ class LoginCommand : CliktCommand(name = "login") {
 
     override fun run() {
         try {
-            signInInteractively(terminal, BrowserSignIn(AccountRegion.of(region)))
+            signInInteractively(terminal, BrowserSignIn(AccountRegion.of(region)), usageStatistics)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             throw CliktError("Sign-in was interrupted.")

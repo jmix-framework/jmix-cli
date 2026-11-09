@@ -44,10 +44,13 @@ internal object Http {
             .timeout(timeout)
             .header("User-Agent", "jmix-cli/${cliVersion() ?: "dev"}")
 
+    fun sendText(client: HttpClient, request: HttpRequest): HttpResponse<String> =
+        send(client, request, HttpResponse.BodyHandlers.ofString())
+
     /** Bounds the complete response, including a stalled body after the headers have arrived. */
-    fun sendText(client: HttpClient, request: HttpRequest): HttpResponse<String> {
+    fun <T> send(client: HttpClient, request: HttpRequest, handler: HttpResponse.BodyHandler<T>): HttpResponse<T> {
         val timeout = request.timeout().orElseThrow()
-        val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+        val response = client.sendAsync(request, handler)
         try {
             return response.get(timeout.toNanos(), NANOSECONDS)
         } catch (e: TimeoutException) {

@@ -15,6 +15,10 @@ Every command also accepts `--no-update`. For commercial add-ons, `jmix new` can
 use the signed-in account's license to configure premium repository access
 ([Add-ons](add-ons.md#commercial-add-ons)). The trial project is a separate download.
 
+The CLI reports a [usage event](project-generation.md#usage-statistics) after a
+successful browser sign-in, including one started by `jmix trial`. It reports a
+separate event once the trial archive has been successfully unpacked.
+
 ## Sign-in
 
 `jmix login` follows Jmix Studio: OAuth 2.0 authorization code with PKCE (S256) and a

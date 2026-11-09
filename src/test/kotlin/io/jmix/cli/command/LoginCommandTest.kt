@@ -6,11 +6,13 @@ import com.github.ajalt.clikt.testing.test
 import com.github.ajalt.mordant.rendering.AnsiLevel
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalRecorder
+import com.google.gson.JsonParser
 import io.jmix.cli.account.AccountEndpoints
 import io.jmix.cli.account.AccountRegion
 import io.jmix.cli.account.BrowserSignIn
 import io.jmix.cli.account.SessionStore
 import io.jmix.cli.account.jwt
+import io.jmix.cli.telemetry.UsageStatistics
 import java.io.IOException
 import java.net.URI
 import java.net.URLDecoder
@@ -20,6 +22,8 @@ import java.net.http.HttpResponse
 import java.nio.file.Path
 import kotlin.text.Charsets.UTF_8
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -28,6 +32,7 @@ import org.junit.jupiter.api.io.TempDir
 class LoginCommandTest {
 
     private val tokenPath = "/auth/realms/jmix-cuba/protocol/openid-connect/token"
+    private val usagePath = "/rest/event/open"
 
     // Narrower than the page address on purpose: the address must still print on one line to be copyable.
     private val recorder = TerminalRecorder(ansiLevel = AnsiLevel.NONE, width = 40)
@@ -56,9 +61,11 @@ class LoginCommandTest {
         FakeServer().use { sso ->
             val accessToken = jwt("""{"name":"Ann Lee","email":"ann@example.com"}""")
             sso.on("POST", tokenPath) { FakeServer.json(200, """{"access_token":"$accessToken","refresh_token":"r1"}""") }
+            sso.on("POST", usagePath) { FakeServer.Response(200) }
             val opened = mutableListOf<String>()
+            val usageStatistics = UsageStatistics(dir.resolve("installation-id"), sso.url + usagePath)
 
-            signInInteractively(terminal, signIn(sso, dir)) { url, _ ->
+            signInInteractively(terminal, signIn(sso, dir), usageStatistics) { url, _ ->
                 opened += url
                 comeBack(url)
             }
@@ -74,6 +81,12 @@ class LoginCommandTest {
                 ),
                 recorder.output().trimEnd().lines(),
             )
+            val event = sso.requests.filter { it.path == usagePath }.single()
+            val payload = JsonParser.parseString(event.body).asJsonObject
+            assertEquals("cli-login", payload.get("ide").asString)
+            assertFalse(payload.has("platformVersion"))
+            assertFalse("Ann Lee" in event.body || "ann@example.com" in event.body || accessToken in event.body)
+            assertNull(event.headers.getFirst("Authorization"))
         }
     }
 
@@ -98,9 +111,10 @@ class LoginCommandTest {
         FakeServer().use { sso ->
             sso.on("POST", tokenPath) { FakeServer.json(400, """{"error":"invalid_grant","error_description":"Code not valid"}""") }
             var redirectUri = ""
+            val usageStatistics = UsageStatistics(dir.resolve("installation-id"), sso.url + usagePath)
 
             val error = assertThrows<IOException> {
-                signInInteractively(terminal, signIn(sso, dir)) { url, _ ->
+                signInInteractively(terminal, signIn(sso, dir), usageStatistics) { url, _ ->
                     redirectUri = queryOf(url).getValue("redirect_uri")
                     comeBack(url)
                 }
@@ -109,6 +123,7 @@ class LoginCommandTest {
             assertEquals("the sign-in code is no longer valid; run 'jmix login' again", error.message)
             // Its thread is not a daemon, so a listener left open would keep the CLI from exiting.
             assertThrows<IOException> { get(redirectUri) }
+            assertTrue(sso.requests.none { it.path == usagePath })
         }
     }
 
