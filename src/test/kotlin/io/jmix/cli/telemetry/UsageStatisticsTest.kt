@@ -36,7 +36,7 @@ class UsageStatisticsTest {
     fun `open events use the Studio fields and a stable CLI installation id`() {
         FakeServer().use { server ->
             server.on("POST", route) { FakeServer.Response(200) }
-            sender(server).record(UsageEvent.PROJECT_CREATED, "3.1.0")
+            sender(server).record(UsageEvent.PROJECT_CREATED, "3.1.0", addonIds = listOf("quartz", "russian-translation"))
             sender(server).record(UsageEvent.TRIAL_DOWNLOADED, "3.0.1")
             sender(server).record(UsageEvent.USER_LOGIN)
             sender(server, directory.resolve("other/installation-id")).record(UsageEvent.USER_LOGIN)
@@ -54,12 +54,15 @@ class UsageStatisticsTest {
                     assertEquals("2026-11-09T12:30:00Z", payload["eventDate"].asString)
                     assertTrue(payload["studioVersion"].asString.isNotBlank())
                     assertEquals(System.getProperty("os.name"), payload["os"].asString)
-                    assertTrue(payload.getAsJsonArray("addons").isEmpty)
                     assertTrue(payload.getAsJsonArray("databases").isEmpty)
                 }
             }
             assertEquals(listOf("cli-new", "cli-trial", "cli-login", "cli-login"), payloads.map { it["ide"].asString })
             assertEquals(listOf("3.1.0", "3.0.1", null, null), payloads.map { it["platformVersion"]?.asString })
+            assertEquals(
+                listOf(listOf("quartz", "russian-translation"), emptyList(), emptyList(), emptyList()),
+                payloads.map { payload -> payload.getAsJsonArray("addons").map { it.asString } },
+            )
             assertEquals(listOf(id, id, id), payloads.take(3).map { it["studioId"].asString })
             assertNotEquals(id, payloads.last()["studioId"].asString)
         }

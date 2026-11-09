@@ -336,7 +336,7 @@ class NewCommand internal constructor(
         }
 
         printSuccess(info)
-        usageStatistics?.record(UsageEvent.PROJECT_CREATED, info.jmixVersion)
+        usageStatistics?.record(UsageEvent.PROJECT_CREATED, info.jmixVersion, addonIds = info.addons.map { it.id })
         wizardStage = null
         if (interactive && terminal.terminalInfo.inputInteractive) {
             ProjectActions(info.projectDir, info.jmixVersion, terminal, prompts, status).offer(runTaskFor(info))

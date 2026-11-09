@@ -62,9 +62,11 @@ the OS name as `os`, and a randomly generated `studioId` stored in
 `~/.jmix/telemetry/installation-id`. The `platformVersion` field carries the
 selected Jmix version for project creation and the detected version for a trial
 archive with a single known version. The CLI only reports numeric releases and
-versions with suffixes such as `-RC1` or `-SNAPSHOT`. The `addons` and
-`databases` fields are empty arrays for compatibility with the collector. The
-payload excludes project names, paths, account details, and credentials.
+versions with suffixes such as `-RC1` or `-SNAPSHOT`. For project creation,
+`addons` contains the selected public catalog IDs, such as `quartz`. The list
+reflects selections made during generation. `addons` is empty for trial
+downloads and sign-ins, and `databases` is always empty. The payload excludes
+project names, paths, account details, and credentials.
 
 The CLI attempts delivery once with a short timeout. Delivery failure leaves
 the command result and output intact.

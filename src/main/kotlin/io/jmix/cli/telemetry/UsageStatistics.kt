@@ -39,7 +39,7 @@ internal class UsageStatistics(
             .build()
     }
 
-    fun record(event: UsageEvent, jmixVersion: String? = null) {
+    fun record(event: UsageEvent, jmixVersion: String? = null, addonIds: List<String> = emptyList()) {
         try {
             val id = installationId() ?: return
             val body = OpenEvent(
@@ -49,6 +49,7 @@ internal class UsageStatistics(
                 os = System.getProperty("os.name"),
                 ide = event.ide,
                 platformVersion = jmixVersion?.takeIf(PLATFORM_VERSION::matches),
+                addons = addonIds,
             )
             val request = Http.request(endpoint, timeout)
                 .header("Content-Type", "application/json")
@@ -106,7 +107,7 @@ internal class UsageStatistics(
         val os: String,
         val ide: String,
         val platformVersion: String?,
-        val addons: List<String> = emptyList(),
+        val addons: List<String>,
         val databases: List<String> = emptyList(),
     )
 
