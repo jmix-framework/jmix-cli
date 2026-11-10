@@ -30,8 +30,10 @@ after installation so your shell can find `jmix`. See the
 ## Create a project
 
 Run `jmix` to open the command menu or `jmix new` to go straight to the wizard.
-Choose a template, languages, and add-ons. From a script, generate a project
-with `--non-interactive`.
+From a script, generate a project with `--non-interactive`.
+
+New projects include **Agent Toolkit** guidelines, skills and MCP. 
+Use `--no-agents-toolkit` to skip setup. See the [Agent Toolkit guide](docs/features/environment-and-toolkit.md).
 
 ```shell
 jmix new demo --non-interactive
@@ -39,21 +41,12 @@ cd demo
 ./gradlew bootRun
 ```
 
-On Windows, use `.\gradlew.bat bootRun`. The CLI bundles Java, but building the
-generated app requires a compatible JDK. The wizard can help install one.
-
 Run `jmix new --help` for options such as `--jmix-version`, `--template`, and
-`--addons`. See [wizard controls](docs/features/wizard.md),
+`--addons`. 
+
+See [wizard controls](docs/features/wizard.md),
 [project generation](docs/features/project-generation.md), and
 [commercial add-on setup](docs/features/add-ons.md#commercial-add-ons).
-
-## Agent Toolkit
-
-New projects include Agent Toolkit guidelines and skills. The Toolkit
-configures Jmix Docs and Playwright MCP servers for Codex, Claude Code,
-OpenCode, and Junie. It also configures JetBrains MCP for Codex, Claude Code,
-and OpenCode. Use `--no-agents-toolkit` to skip setup. See the
-[Agent Toolkit guide](docs/features/environment-and-toolkit.md).
 
 ## Jmix account and trial
 
@@ -63,16 +56,6 @@ Sign in to download the Enterprise+BPM trial project.
 jmix login
 jmix trial
 ```
-
-Use `jmix login --region ru` for a jmix.ru account. See the
-[account and trial guide](docs/features/account-and-trial.md) for activation
-and scripting options.
-
-## Usage statistics
-
-The CLI reports successful project creation, trial downloads, and browser
-sign-ins to the Jmix usage statistics service. See the
-[event fields and delivery behavior](docs/features/project-generation.md#usage-statistics).
 
 ## Update
 
