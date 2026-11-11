@@ -47,6 +47,9 @@ internal object Http {
     fun sendText(client: HttpClient, request: HttpRequest): HttpResponse<String> =
         send(client, request, HttpResponse.BodyHandlers.ofString())
 
+    fun sendBytes(client: HttpClient, request: HttpRequest, maxBytes: Int): HttpResponse<ByteArray> =
+        send(client, request, HttpResponse.BodyHandlers.limiting(HttpResponse.BodyHandlers.ofByteArray(), maxBytes.toLong()))
+
     /** Bounds the complete response, including a stalled body after the headers have arrived. */
     fun <T> send(client: HttpClient, request: HttpRequest, handler: HttpResponse.BodyHandler<T>): HttpResponse<T> {
         val timeout = request.timeout().orElseThrow()

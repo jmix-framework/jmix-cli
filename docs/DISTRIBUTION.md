@@ -47,6 +47,10 @@ the bootstrap script runs in a child shell, it also prints the `export` command
 needed to use `jmix` immediately without restarting the current shell. Set
 `JMIX_CLI_SKIP_PATH_UPDATE=1` to keep shell profiles unchanged.
 
+On Windows, installation and updates write a Unicode-capable `jmix.cmd` for the
+selected install and bin directories. Rerun `install.ps1` to regenerate a
+wrapper from an earlier installer if its launcher path was corrupted.
+
 The stable asset names allow installers to use GitHub's
 `releases/latest/download` URL while the release tag records the exact version.
 Installations are stored by archive checksum, so installing the same release is
@@ -64,21 +68,20 @@ to ten minutes old before a run picks it up. A check that cannot complete is
 reported and the command continues. `jmix update` performs the same install on
 demand and ignores the interval.
 
-`update.lock` in the install root serves both as the updater lock, so parallel
-runs never download the same release at once, and as the record of the last
-check time, which throttles checks to one per `SelfUpdater.CHECK_INTERVAL`
-(ten minutes). The time is written before the check runs, so an offline machine
-reports the failure once per interval rather than on every command. A stamp
-dated in the future is treated as stale, so a wrong clock cannot suppress
-updates permanently. The restarted command receives `--no-update` as its first
-argument, which stops an update loop without an environment variable that the
-IDE, file manager and Gradle processes would inherit.
+`update.lock` in the install root serializes manual updates, automatic updates,
+and version cleanup. Manual updates wait for the lock. Automatic updates and
+version cleanup skip that run when it is busy. The file also records the last
+automatic check time, which throttles automatic checks to one per
+`SelfUpdater.CHECK_INTERVAL` (ten minutes). The time is written before the check
+runs, so an offline machine reports the failure once per interval. A stamp
+dated in the future is treated as stale. The restarted command receives
+`--no-update` as its first argument, which stops an update loop without an
+environment variable that the IDE, file manager and Gradle processes would inherit.
 
 The release check is skipped for `--help`, for `jmix update`, and for the
 `--no-update` flag, which is read from the raw arguments in `main()` because
-the update happens before parsing. Local bookkeeping — cache pruning, the
-in-use marker, and version cleanup — still runs, so a version used only with
-`--no-update` is never pruned as unused.
+the update happens before parsing. Cache pruning and the in-use marker still
+run. Version cleanup runs when it can acquire the lock.
 
 Each complete version directory holds a `.jmix-installed` marker, written by
 the installers and by self-update. Every run touches the marker of the version
@@ -146,9 +149,25 @@ last `v*` tag:
 
 When a bump applies, the workflow pushes the `vX.Y.Z` tag and dispatches the
 release workflow on it (tags pushed with the workflow token do not fire the
-tag-push event). The release workflow builds and tests every platform image,
-verifies all checksums, and creates the GitHub release only after the complete
-matrix succeeds — a broken build therefore fails before anything is published.
+tag-push event). Auto Release passes the commit SHA it selected. The release
+workflow checks it against the tag and runs
+the [full CI workflow](../.github/workflows/ci.yml) on that SHA, including the
+platform test matrix and the generated-project build. It also builds and tests
+every release image from the same commit. Publication requires both CI and
+packaging to succeed. The publish job verifies the asset checksums and checks
+that the tag still points to the tested commit.
+
+Workflow actions are pinned to upstream commit SHAs. When updating an action,
+verify the new SHA against its upstream release tag. When updating Gradle, set
+`distributionSha256Sum` to the published checksum for the selected ZIP from
+the [Gradle checksum reference](https://gradle.org/release-checksums/).
+
+If the tag was pushed but dispatch failed, rerun the failed **Auto Release**
+job. It reuses the existing `vX.Y.Z` tag for the original commit. If several
+release tags point to that commit, dispatch **Release** manually for the
+intended tag. To recover from a failed build, rerun **Release** for that tag.
+Release runs for the same tag are serialized. A run stops after validation
+if the release is already published.
 
 Commit types decide releases: keep them accurate, and use `docs:`/`chore:`/`ci:`
 for changes that must not publish a release.

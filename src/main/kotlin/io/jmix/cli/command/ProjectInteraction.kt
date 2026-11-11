@@ -8,6 +8,7 @@ import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.widgets.SelectList
 import io.jmix.cli.env.EnvironmentCheck
 import io.jmix.cli.env.JdkInstaller
+import io.jmix.cli.env.JdkVersions
 import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.wizard.Answer
 import io.jmix.cli.wizard.PathCompleter
@@ -92,26 +93,29 @@ internal class ProjectActions(
 ) {
     fun offer(runTask: String?, runDirectories: List<Path> = listOf(projectDir)) {
         val ideaOpen = ProjectLauncher.ideaOpenCommand(projectDir)
-        val openChoice = ideaOpen?.let { "Open the project in ${it.opener.displayName}" }
-        val runChoice = runTask?.let {
-            if (runDirectories.size > 1) "Run a demo module"
-            else "Run the application (${projectRunCommand(projectDir, runDirectories.single(), it)})"
+        val actionLabels = buildMap {
+            if (ideaOpen != null) put(OPEN_IN_IDE, "Open the project in ${ideaOpen.opener.displayName}")
+            if (runTask != null) {
+                val label = if (runDirectories.size > 1) "Run a demo module"
+                else "Run the application (${projectRunCommand(projectDir, runDirectories.single(), runTask)})"
+                put(RUN, label)
+            }
         }
-        val entries = listOfNotNull(openChoice, runChoice).map { SelectList.Entry(it) }
+        val entries = actionLabels.values.map { SelectList.Entry(it) }
+        val actionIds = actionLabels.keys.toList()
         while (true) {
             val picked = when {
                 entries.isEmpty() -> emptyList()
-                else -> when (val answer = prompts.chooseMany("What's next?", entries)) {
-                    null -> listOfNotNull(
-                        openChoice?.takeIf { prompts.askYesNo("$it?", default = false).requireValue() },
-                        runChoice?.takeIf { prompts.askYesNo("$it?", default = false).requireValue() },
-                    )
+                else -> when (val answer = prompts.chooseMany("What's next?", entries, values = actionIds)) {
+                    null -> actionLabels.mapNotNull { (id, label) ->
+                        id.takeIf { prompts.askYesNo("$label?", default = false).requireValue() }
+                    }
                     is Answer.Back -> emptyList()
                     is Answer.Value -> answer.value
                 }
             }
             if (prompts.isInputExhausted) return
-            val runDir = if (runChoice != null && runChoice in picked) {
+            val runDir = if (runTask != null && RUN in picked) {
                 if (runDirectories.size == 1) runDirectories.single()
                 else when (val module = prompts.choose(
                     "Select a demo module to run", runDirectories,
@@ -124,9 +128,12 @@ internal class ProjectActions(
             } else null
             if (prompts.isInputExhausted) return
 
-            openProject(ideaOpen.takeIf { openChoice != null && openChoice in picked })
-            if (runDir != null) runApplication(runDir, runTask!!)
-            else if (runTask != null) offerJdkInstall()
+            openProject(ideaOpen.takeIf { OPEN_IN_IDE in picked })
+            if (runTask != null) {
+                val javaHome = jmixVersion?.let { EnvironmentCheck.checkJdk(it).compatible.firstOrNull()?.home }
+                if (runDir != null) runApplication(runDir, runTask, javaHome)
+                else if (javaHome == null) offerJdkInstall()
+            }
             return
         }
     }
@@ -141,8 +148,8 @@ internal class ProjectActions(
         ProjectLauncher.open(ProjectLauncher.fileManagerOpenCommand(projectDir), warn)
     }
 
-    private fun runApplication(runDir: Path, runTask: String) {
-        val javaHome = compatibleJdkHome() ?: installJdk() ?: run {
+    private fun runApplication(runDir: Path, runTask: String, compatibleJavaHome: Path?) {
+        val javaHome = compatibleJavaHome ?: installJdk(jdkVersionToInstall()) ?: run {
             terminal.println(brightYellow("Skipping the run — no compatible JDK is available."))
             return
         }
@@ -153,25 +160,20 @@ internal class ProjectActions(
     }
 
     private fun offerJdkInstall() {
-        if (jmixVersion == null || compatibleJdkHome() != null) return
-        val major = jdkVersionToInstall()
+        val major = jdkVersionToInstall() ?: return
         if (prompts.askYesNo(
                 "No compatible JDK was found. Install JDK $major (Temurin) now so the project can run later?",
                 default = true,
-            ).requireValue()) installJdk()
+            ).requireValue()) installJdk(major)
     }
 
-    private fun compatibleJdkHome(): Path? =
-        jmixVersion?.let { EnvironmentCheck.checkJdk(it).compatible.firstOrNull()?.home }
+    private fun jdkVersionToInstall(): Int? = jmixVersion?.let { JdkVersions.supportedJdks(it).max() }
 
-    private fun jdkVersionToInstall(): Int = EnvironmentCheck.checkJdk(jmixVersion!!).supportedVersions.max()
-
-    private fun installJdk(): Path? {
-        if (jmixVersion == null) {
+    private fun installJdk(major: Int?): Path? {
+        if (major == null) {
             terminal.println(brightYellow("Cannot determine the trial's Jmix version. Run the demo manually with a compatible JDK."))
             return null
         }
-        val major = jdkVersionToInstall()
         return try {
             val home = status.run("Installing JDK $major (Temurin)") { progress ->
                 JdkInstaller.install(major, onStatus = progress::relabel, onProgress = progress::progress)
@@ -195,5 +197,10 @@ internal class ProjectActions(
         }
         terminal.println(gray("The app will open at $url in your browser once it starts."))
         ProjectLauncher.openBrowserWhenReady(port, url) { terminal.println(brightYellow("Warning: $it")) }
+    }
+
+    private companion object {
+        const val OPEN_IN_IDE = "open-in-ide"
+        const val RUN = "run"
     }
 }

@@ -1,11 +1,11 @@
 package io.jmix.cli.repo
 
 import io.jmix.cli.addon.AddonCatalog
+import io.jmix.cli.util.Http
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -29,16 +29,13 @@ class AddonRepository(
             return cached
         }
         return try {
-            val response = http.send(
+            val response = Http.sendBytes(
+                http,
                 HttpRequest.newBuilder(URI.create(sourceUrl)).timeout(Duration.ofSeconds(20)).GET().build(),
-                HttpResponse.BodyHandlers.ofInputStream(),
+                MAX_CATALOG_BYTES,
             )
-            val json = response.body().use { body ->
-                if (response.statusCode() != 200) throw IOException("HTTP ${response.statusCode()}")
-                val bytes = body.readNBytes(MAX_CATALOG_BYTES + 1)
-                if (bytes.size > MAX_CATALOG_BYTES) throw IOException("Add-on catalog exceeds the size limit")
-                bytes.toString(Charsets.UTF_8)
-            }
+            if (response.statusCode() != 200) throw IOException("HTTP ${response.statusCode()}")
+            val json = response.body().toString(Charsets.UTF_8)
             val result = AddonCatalog.parse(json)
             Files.createDirectories(cacheFile.parent)
             val tmp = Files.createTempFile(cacheFile.parent, "catalog-", ".tmp")
@@ -49,6 +46,9 @@ class AddonRepository(
                 Files.deleteIfExists(tmp)
             }
             result
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("Interrupted while fetching the add-on catalog.", e)
         } catch (e: Exception) {
             cached ?: throw IOException("Cannot load the add-on catalog from $sourceUrl and no valid cache is available. ${e.message}", e)
         }

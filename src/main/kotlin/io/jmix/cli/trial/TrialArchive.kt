@@ -6,7 +6,7 @@ import io.jmix.cli.repo.TemplateRepository
 import io.jmix.cli.util.BYTES_PER_MIB
 import io.jmix.cli.util.Http
 import io.jmix.cli.util.contentLength
-import io.jmix.cli.util.copyWithProgress
+import io.jmix.cli.util.copyHttpBody
 import io.jmix.cli.util.isSecureOrLoopback
 import io.jmix.cli.util.isZip
 import java.io.IOException
@@ -21,14 +21,11 @@ import java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE
 import java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE
 import java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE
 import java.time.Duration
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit.NANOSECONDS
-import java.util.concurrent.TimeUnit.SECONDS
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipFile
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.deleteRecursively
+
+internal class TrialDestinationConflict(val paths: List<Path>) : IOException()
 
 /**
  * The Enterprise+BPM trial project as the Jmix Store ships it: a zip with one top folder that holds a composite
@@ -59,62 +56,51 @@ internal object TrialArchive {
             if (status != 200) throw IOException("the trial download failed with HTTP $status")
             val size = response.contentLength()
             if (size > maxBytes) throw IOException("the trial archive is larger than ${maxBytes / BYTES_PER_MIB} MiB")
-            // ofInputStream returns when headers arrive, so the request timeout cannot stop a stalled body.
-            Executors.newSingleThreadScheduledExecutor().use { timer ->
-                val expired = AtomicBoolean()
-                val lastProgress = AtomicLong(System.nanoTime())
-                val timeoutNanos = timeout.toNanos()
-                val stop = timer.scheduleWithFixedDelay({
-                    if (System.nanoTime() - lastProgress.get() >= timeoutNanos) {
-                        expired.set(true)
-                        runCatching { body.close() }
-                    }
-                }, timeoutNanos, minOf(timeoutNanos, SECONDS.toNanos(1)), NANOSECONDS)
-                try {
-                    copyWithProgress(body, target, size, { bytes, total ->
-                        lastProgress.set(System.nanoTime())
-                        onProgress(bytes, total)
-                    }, maxBytes)
-                    if (expired.get()) throw timedOut()
-                } catch (e: IOException) {
-                    if (expired.get()) throw timedOut()
-                    throw e
-                } finally {
-                    stop.cancel(false)
-                }
+            try {
+                copyHttpBody(body, target, size, timeout, onProgress, maxBytes)
+            } catch (_: HttpTimeoutException) {
+                throw timedOut()
             }
         }
         if (!isZip(target)) throw IOException("the trial download is not a zip archive")
     }
 
-    /**
-     * Unpacks [archive] into [parentDir], which is created when missing, and returns the projects it holds: the
-     * top folders with a Gradle settings file and a `trial_repository`. Other top-level entries are ignored.
-     * The archive stores no permissions, so every `gradlew` is made executable. Nothing reaches [parentDir] unless
-     * the whole archive is good and no project folder exists there yet.
-     */
-    @OptIn(ExperimentalPathApi::class)
+    fun prepareDestination(parentDir: Path): Staging {
+        val parent = Files.createDirectories(parentDir.toAbsolutePath().normalize())
+        // Staging in the parent checks write access now and allows same-filesystem publication later.
+        return Staging(Files.createTempDirectory(parent, ".jmix-trial-"))
+    }
+
     fun unpack(
         archive: Path,
         parentDir: Path,
         maxBytes: Long = MAX_UNPACKED_BYTES,
         publish: (Path, Path) -> Path = { source, target -> Files.move(source, target) },
-    ): List<Path> {
-        // unpackZip compares normalized entry paths with its destination, so the destination must be normalized too.
-        val parent = parentDir.toAbsolutePath().normalize()
-        Files.createDirectories(parent)
-        // The staging folder lies in the parent, so the final move is a rename on the same file system.
-        val staging = Files.createTempDirectory(parent, ".jmix-trial-")
-        var preserveStaging = false
-        try {
+    ): List<Path> = prepareDestination(parentDir).use { it.unpack(archive, maxBytes, publish) }
+
+    class Staging internal constructor(private val staging: Path) : AutoCloseable {
+        private var preserveStaging = false
+        private var closed = false
+
+        init {
+            // Shutdown while signing in or downloading can skip close() while staging is still empty.
+            staging.toFile().deleteOnExit()
+        }
+
+        /** Returns the Gradle project folders with a trial_repository, after staging the whole archive. */
+        fun unpack(
+            archive: Path,
+            maxBytes: Long = MAX_UNPACKED_BYTES,
+            publish: (Path, Path) -> Path = { source, target -> Files.move(source, target) },
+        ): List<Path> {
+            val parent = staging.parent
             // ZipInputStream accepts a missing central directory, which can hide a truncated download.
             ZipFile(archive.toFile()).use { }
             JdkInstaller.unpackZip(archive, staging, maxBytes)
             val names = projectNames(staging)
             if (names.isEmpty()) throw IOException("the downloaded archive does not contain a Jmix trial project")
-            names.map(parent::resolve).firstOrNull { Files.exists(it, NOFOLLOW_LINKS) }?.let {
-                throw IOException("$it already exists. Remove it or choose another directory with --path")
-            }
+            val occupied = names.map(parent::resolve).filter { Files.exists(it, NOFOLLOW_LINKS) }
+            if (occupied.isNotEmpty()) throw TrialDestinationConflict(occupied)
             names.forEach { makeWrappersExecutable(staging.resolve(it)) }
             // A unique marker identifies our directory even on file systems without a stable file key.
             val marker = staging.fileName.takeIf { names.size > 1 }
@@ -147,9 +133,13 @@ internal object TrialArchive {
                 runCatching { Files.deleteIfExists(it.resolve(marker)) }
             }
             return moved
-        } finally {
+        }
+
+        @OptIn(ExperimentalPathApi::class)
+        override fun close() {
+            if (closed) return
+            closed = true
             // A failed cleanup must not replace the real error: on Windows, antivirus can hold fresh files.
-            // Ctrl+C during the short unpack can leave the hidden staging folder; add a shutdown hook if users report it.
             if (!preserveStaging) runCatching { staging.deleteRecursively() }
         }
     }

@@ -7,14 +7,79 @@ on:
   # Dispatched on a tag ref by auto-release.yml; the version check below
   # rejects a dispatch on a branch ref.
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Commit SHA selected by Auto Release
+        type: string
+        required: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    name: Resolve release commit and version
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate release tag
+        id: release
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" != tag || ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unsupported release tag: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          sha="$(git rev-parse --verify 'HEAD^{commit}')"
+          if [[ -n "$EXPECTED_SHA" && "$sha" != "$EXPECTED_SHA" ]]; then
+            echo "Release tag $GITHUB_REF_NAME points to $sha, expected $EXPECTED_SHA." >&2
+            exit 1
+          fi
+
+          status="$(curl --silent --show-error --max-time 15 --output /dev/null --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          case "$status" in
+            200)
+              echo "Release $GITHUB_REF_NAME is already published."
+              exit 0
+              ;;
+            404) ;;
+            *)
+              echo "Cannot check release $GITHUB_REF_NAME: HTTP $status." >&2
+              exit 1
+              ;;
+          esac
+          printf 'sha=%s\nversion=%s\n' "$sha" "${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: Full CI
+    needs: prepare
+    if: needs.prepare.outputs.sha != ''
+    uses: ./.github/workflows/ci.yml
+    with:
+      sha: ${{ needs.prepare.outputs.sha }}
+
   package:
     name: Package (${{ matrix.name }})
+    needs: prepare
+    if: needs.prepare.outputs.sha != ''
     runs-on: ${{ matrix.runner }}
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,24 +101,16 @@ jobs:
             artifact: windows-x64
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
 
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: 25
 
-      - uses: gradle/actions/setup-gradle@v6
-
-      - name: Resolve release version
-        shell: bash
-        run: |
-          release_version="${GITHUB_REF_NAME#v}"
-          if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Unsupported release tag: $GITHUB_REF_NAME" >&2
-            exit 1
-          fi
-          echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Build and package
         shell: bash
@@ -69,7 +126,7 @@ jobs:
         shell: pwsh
         run: tests/test-install.ps1
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: release-${{ matrix.artifact }}
           path: build/release/*
@@ -78,15 +135,17 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: package
+    needs: [prepare, ci, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: release-*
           path: release
@@ -116,11 +175,19 @@ jobs:
           cp install.ps1 release/install.ps1
 
       - name: Create release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" release/*
-          --repo "$GITHUB_REPOSITORY"
-          --verify-tag
-          --generate-notes
-          --title "Jmix CLI $GITHUB_REF_NAME"
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$GITHUB_REF"
+          tag_sha="$(git rev-parse --verify 'FETCH_HEAD^{commit}')"
+          if [[ "$tag_sha" != "$RELEASE_SHA" ]]; then
+            echo "Release tag $GITHUB_REF_NAME points to $tag_sha, expected $RELEASE_SHA." >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            --title "Jmix CLI $GITHUB_REF_NAME"

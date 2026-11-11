@@ -4,8 +4,15 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.URI
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Duration
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit.NANOSECONDS
+import java.util.concurrent.TimeUnit.SECONDS
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 internal const val BYTES_PER_MIB = 1L shl 20
 
@@ -24,6 +31,41 @@ internal fun isZip(file: Path): Boolean = try {
     }
 } catch (e: IOException) {
     false
+}
+
+/** Copies an HTTP body with a byte limit and an idle timeout that resets while data arrives. */
+internal fun copyHttpBody(
+    input: InputStream,
+    target: Path,
+    total: Long,
+    timeout: Duration,
+    onProgress: (Long, Long) -> Unit,
+    maxBytes: Long = 1L shl 30,
+) {
+    val timeoutNanos = timeout.toNanos()
+    val expired = AtomicBoolean()
+    val lastProgress = AtomicLong(System.nanoTime())
+    // The request future completes at the headers for ofInputStream bodies.
+    Executors.newSingleThreadScheduledExecutor().use { timer ->
+        val stop = timer.scheduleWithFixedDelay({
+            if (System.nanoTime() - lastProgress.get() >= timeoutNanos) {
+                expired.set(true)
+                runCatching { input.close() }
+            }
+        }, timeoutNanos, minOf(timeoutNanos, SECONDS.toNanos(1)), NANOSECONDS)
+        try {
+            copyWithProgress(input, target, total, { done, size ->
+                lastProgress.set(System.nanoTime())
+                onProgress(done, size)
+            }, maxBytes)
+        } catch (e: IOException) {
+            if (expired.get()) throw HttpTimeoutException("The HTTP response timed out").apply { initCause(e) }
+            throw e
+        } finally {
+            stop.cancel(false)
+        }
+        if (expired.get()) throw HttpTimeoutException("The HTTP response timed out")
+    }
 }
 
 /**

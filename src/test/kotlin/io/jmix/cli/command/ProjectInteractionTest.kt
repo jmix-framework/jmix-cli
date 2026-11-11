@@ -3,13 +3,16 @@ package io.jmix.cli.command
 import com.github.ajalt.mordant.input.KeyboardEvent
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.terminal.TerminalRecorder
+import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.wizard.Answer
 import io.jmix.cli.wizard.Prompts
+import io.jmix.cli.wizard.StatusReporter
 import io.jmix.cli.wizard.requireValue
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
@@ -46,6 +49,26 @@ class ProjectInteractionTest {
         } finally {
             System.setIn(stdin)
         }
+    }
+
+    @Test
+    fun `the line input follow-up opens the module picker and stops on EOF after Back`(@TempDir dir: Path) {
+        val modules = listOf(dir.resolve("demo/bpm"), dir.resolve("demo/webdav"))
+        val recorder = TerminalRecorder(inputInteractive = false, outputInteractive = false)
+        val terminal = Terminal(terminalInterface = recorder)
+        val input = if (ProjectLauncher.ideaOpenCommand(dir) != null) "n\ny\n<\n" else "y\n<\n"
+        val stdin = System.`in`
+        try {
+            System.setIn(ByteArrayInputStream(input.toByteArray()))
+            ProjectActions(dir, null, terminal, Prompts(terminal), StatusReporter(terminal)).offer("bootRun", modules)
+        } finally {
+            System.setIn(stdin)
+        }
+
+        val output = recorder.output()
+        assertTrue(output.contains("Run a demo module?"), output)
+        assertTrue(output.contains("Select a demo module to run"), output)
+        assertFalse(output.contains("Opening the project"), output)
     }
 
     @Test

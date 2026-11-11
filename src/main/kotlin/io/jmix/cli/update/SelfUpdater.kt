@@ -1,24 +1,21 @@
 package io.jmix.cli.update
 
+import io.jmix.cli.util.Http
 import io.jmix.cli.util.contentLength
+import io.jmix.cli.util.copyHttpBody
 import io.jmix.cli.util.copyWithProgress
+import io.jmix.cli.util.describeIoError
 import io.jmix.cli.util.hostOf
 import java.io.IOException
-import java.net.ConnectException
-import java.net.SocketException
 import java.net.URI
 import java.net.URISyntaxException
-import java.net.UnknownHostException
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
-import java.net.http.HttpTimeoutException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
+import java.nio.channels.FileLockInterruptionException
 import java.nio.charset.StandardCharsets
-import java.nio.file.AccessDeniedException
 import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
@@ -32,6 +29,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.HexFormat
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.ZipInputStream
 import kotlin.io.path.name
 import kotlin.system.exitProcess
@@ -87,11 +85,19 @@ class SelfUpdater(
         // Skipped when another process is already updating, or when the last
         // check is younger than CHECK_INTERVAL — a short window that keeps a
         // burst of commands from repeating the same request.
-        val lock = claimUpdateCheck(now) ?: return UpdateResult.UpToDate
         val result = try {
-            lock.use { update() }
+            withUpdateLock(wait = false) { channel ->
+                // Record failed checks too, so an offline machine retries on the same schedule.
+                try {
+                    if (isCheckFresh(readInstant(channel), now)) return@withUpdateLock UpdateResult.UpToDate
+                    writeInstant(channel, now)
+                } catch (_: Exception) {
+                    return@withUpdateLock UpdateResult.UpToDate
+                }
+                updateLocked()
+            } ?: UpdateResult.UpToDate
         } catch (e: Exception) {
-            echo("Could not update Jmix CLI (${describe(e)}); continuing with the current version.")
+            echo("Could not update Jmix CLI (${describeIoError(e)}); continuing with the current version.")
             return UpdateResult.UpToDate
         }
         if (result is UpdateResult.InstallerRequired) {
@@ -100,7 +106,9 @@ class SelfUpdater(
         return result
     }
 
-    fun update(): UpdateResult {
+    fun update(): UpdateResult = checkNotNull(withUpdateLock(wait = true) { updateLocked() })
+
+    private fun updateLocked(): UpdateResult {
         val latest = fetchLatestChecksum()
         // Already switched by an earlier run: the current process still runs the
         // old image, so its checksum alone cannot decide this.
@@ -140,7 +148,7 @@ class SelfUpdater(
             Thread.currentThread().interrupt()
             null
         } catch (e: Exception) {
-            echo("Could not start the updated Jmix CLI (${describe(e)}); continuing with the current version.")
+            echo("Could not start the updated Jmix CLI (${describeIoError(e)}); continuing with the current version.")
             null
         }
     }
@@ -152,6 +160,10 @@ class SelfUpdater(
      * own version, so a second command using this install root keeps its version.
      */
     fun cleanupOldVersions(now: Instant = Instant.now()) {
+        withUpdateLock(wait = false) { cleanupOldVersionsLocked(now) }
+    }
+
+    private fun cleanupOldVersionsLocked(now: Instant) {
         // cleanup only runs when the managed command is visible; an
         // unmanaged custom link could otherwise be left dangling.
         val linked = managedTargetChecksum() ?: return
@@ -212,45 +224,38 @@ class SelfUpdater(
         return isOlderThan(marker, unusedBefore)
     }
 
-    /**
-     * Claims the right to check for a release now, returning the held lock, or
-     * null when another process is checking or the previous check is still
-     * fresh. The lock file also stores that check time, so one file carries
-     * both. Never waits.
-     *
-     * The time is recorded before the check runs, so a failing check is
-     * retried on the same schedule instead of on every command.
-     */
-    private fun claimUpdateCheck(now: Instant): AutoCloseable? {
-        var channel: FileChannel? = null
-        var lock: java.nio.channels.FileLock? = null
-        var claimed = false
-        try {
-            Files.createDirectories(installation.installRoot)
-            channel = FileChannel.open(
-                installation.installRoot.resolve(UPDATE_LOCK),
-                StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE,
-            )
-            lock = channel.tryLock() ?: return null
-            if (isCheckFresh(readInstant(channel), now)) return null
-            writeInstant(channel, now)
-            claimed = true
-            val held = lock
-            val open = channel
-            return AutoCloseable {
-                runCatching { held.release() }
-                runCatching { open.close() }
-            }
-        } catch (e: Exception) {
-            // Read-only or shared install root: skip updating, never block the command.
+    /** Startup maintenance skips a busy or unwritable lock. An explicit update waits. */
+    private fun <T : Any> withUpdateLock(wait: Boolean, action: (FileChannel) -> T): T? {
+        if (processUpdateLock.isHeldByCurrentThread) {
+            check(!wait) { "An update is already running on this thread" }
             return null
-        } finally {
-            // Anything that did not hand the lock to the caller must release it
-            // here; a leaked lock would block every later run in this process.
-            if (!claimed) {
-                runCatching { lock?.release() }
-                runCatching { channel?.close() }
+        }
+        if (wait) processUpdateLock.lockInterruptibly()
+        else if (!processUpdateLock.tryLock()) return null
+
+        try {
+            val channel = try {
+                Files.createDirectories(installation.installRoot)
+                FileChannel.open(
+                    installation.installRoot.resolve(UPDATE_LOCK),
+                    StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE,
+                )
+            } catch (e: Exception) {
+                if (wait) throw e
+                return null
             }
+            return channel.use {
+                val lock = try {
+                    if (wait) channel.lock() else channel.tryLock()
+                } catch (e: Exception) {
+                    if (!wait) return null
+                    if (e is FileLockInterruptionException) throw InterruptedException().apply { initCause(e) }
+                    throw e
+                }
+                lock?.use { action(channel) }
+            }
+        } finally {
+            processUpdateLock.unlock()
         }
     }
 
@@ -321,12 +326,9 @@ class SelfUpdater(
 
     private fun repoint(commandPath: Path, launcher: Path) {
         if (installation.os == "windows") {
-            val content = "$WRAPPER_MARKER\r\n@echo off\r\n\"$launcher\" %*\r\n"
             val tmp = Files.createTempFile(commandPath.parent, "jmix", ".cmd.tmp")
             try {
-                // install.ps1 writes this wrapper as ASCII with replacement; match
-                // it so a non-Latin-1 install path cannot fail the update.
-                Files.write(tmp, encodeAscii(content))
+                Files.writeString(tmp, windowsWrapper(launcher), StandardCharsets.UTF_8)
                 Files.move(
                     tmp, commandPath,
                     StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
@@ -343,6 +345,19 @@ class SelfUpdater(
         }
     }
 
+    /** Match install.ps1. Switch to UTF-8 only while cmd reads the launcher path. */
+    private fun windowsWrapper(launcher: Path): String = listOf(
+        WRAPPER_MARKER,
+        "@echo off",
+        "setlocal EnableExtensions DisableDelayedExpansion",
+        "set \"_JMIX_CP=\"",
+        "for /f \"tokens=2 delims=:.\" %%P in ('chcp 2^>nul') do set \"_JMIX_CP=%%P\"",
+        "chcp 65001 >nul 2>&1",
+        "$WINDOWS_LAUNCHER_PREFIX${launcher.toString().replace("%", "%%")}\"",
+        "if defined _JMIX_CP chcp %_JMIX_CP% >nul 2>&1",
+        "\"%_JMIX_LAUNCHER%\" %*",
+    ).joinToString("\r\n", postfix = "\r\n")
+
     /** The installer-managed `jmix` command, or null when absent or foreign. */
     private fun managedCommandPath(): Path? {
         val command = binDir.resolve(if (installation.os == "windows") "jmix.cmd" else "jmix")
@@ -358,10 +373,18 @@ class SelfUpdater(
     private fun commandTarget(command: Path): Path? {
         if (installation.os == "windows") {
             if (!Files.isRegularFile(command)) return null
-            val content = runCatching { Files.readString(command, StandardCharsets.ISO_8859_1) }.getOrNull()
+            val content = runCatching { Files.readString(command, StandardCharsets.UTF_8) }.getOrNull()
             if (content?.startsWith(WRAPPER_MARKER) != true) return null
-            val quoted = Regex("\"([^\"]+)\"").find(content)?.groupValues?.get(1) ?: return null
-            return runCatching { Path.of(quoted) }.getOrNull()
+            val path = content.lineSequence().firstNotNullOfOrNull { line ->
+                when {
+                    line.startsWith(WINDOWS_LAUNCHER_PREFIX) && line.endsWith('"') ->
+                        line.removePrefix(WINDOWS_LAUNCHER_PREFIX).dropLast(1).replace("%%", "%")
+                    // Legacy ASCII wrappers invoked the quoted path directly.
+                    line.startsWith('"') && line.endsWith("\" %*") -> line.drop(1).removeSuffix("\" %*")
+                    else -> null
+                }
+            } ?: return null
+            return runCatching { Path.of(path) }.getOrNull()
         }
         if (!Files.isSymbolicLink(command)) return null
         return runCatching {
@@ -451,11 +474,11 @@ class SelfUpdater(
 
     private fun fetchText(name: String): String {
         if (!isHttpBase()) return Files.readString(localAsset(name))
-        val response = http.send(request(name), HttpResponse.BodyHandlers.ofString())
+        val response = Http.sendBytes(http, request(name), MAX_CHECKSUM_BYTES)
         if (response.statusCode() != 200) {
             throw IOException("HTTP ${response.statusCode()} from ${assetUrl(name)}")
         }
-        return response.body()
+        return response.body().toString(Charsets.UTF_8)
     }
 
     private fun fetchTo(name: String, destination: Path) {
@@ -469,7 +492,7 @@ class SelfUpdater(
             response.body().close()
             throw IOException("HTTP ${response.statusCode()} from ${assetUrl(name)}")
         }
-        copyWithProgress(response.body(), destination, response.contentLength(), onProgress)
+        copyHttpBody(response.body(), destination, response.contentLength(), requestTimeout, onProgress)
     }
 
     private fun request(name: String): HttpRequest {
@@ -510,12 +533,16 @@ class SelfUpdater(
 
         /** Must match the wrapper marker written by install.ps1. */
         const val WRAPPER_MARKER = "@rem Managed by the Jmix CLI installer"
+        private const val WINDOWS_LAUNCHER_PREFIX = "set \"_JMIX_LAUNCHER="
 
         /** File where the installers record the bin directory they used. */
         const val BIN_DIR_FILE = "bin-dir"
 
-        /** Lock file; its content is the last release-check time. */
+        /** Lock file; its content is the last automatic release-check time. */
         internal const val UPDATE_LOCK = "update.lock"
+
+        // Closing another channel to the same file can release the JVM's OS lock on some systems.
+        private val processUpdateLock = ReentrantLock()
 
         /** Written into a version directory once its install is complete. */
         const val MARKER_NAME = ".jmix-installed"
@@ -528,6 +555,7 @@ class SelfUpdater(
         private val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(10)
         private val EXPLICIT_REQUEST_TIMEOUT: Duration = Duration.ofSeconds(30)
         private val AUTO_REQUEST_TIMEOUT: Duration = Duration.ofSeconds(5)
+        private const val MAX_CHECKSUM_BYTES = 4096
         private val DOWNLOAD_TIMEOUT: Duration = Duration.ofMinutes(10)
         private val AUTO_DOWNLOAD_TIMEOUT: Duration = Duration.ofMinutes(2)
         private val EXTRACT_TIMEOUT: Duration = Duration.ofMinutes(5)
@@ -631,37 +659,6 @@ class SelfUpdater(
                 else -> String(bytes, StandardCharsets.UTF_8)
             }
             return text.trim().lineSequence().firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-        }
-
-        /**
-         * Human-readable cause for messages that must not show a stack trace.
-         * Network and permission failures are the expected ones, and their
-         * exception messages alone (a bare host name, a bare path, or nothing)
-         * do not explain anything. [server] names what was being reached when
-         * the network failed, for callers that talk to something other than
-         * the release server.
-         */
-        fun describe(e: Throwable, server: String = "the release server"): String = when (e) {
-            is UnknownHostException, is ConnectException, is HttpTimeoutException, is SocketException ->
-                "cannot reach $server"
-            is AccessDeniedException -> "no permission to write ${e.file}"
-            is FileSystemException -> "${e.reason ?: "file system error"}: ${e.file}"
-            else -> e.message?.takeIf { it.isNotBlank() }?.let {
-                if (e is IOException) it else "${e::class.simpleName}: $it"
-            } ?: (e::class.simpleName ?: "unknown error")
-        }
-
-        /** ASCII with replacement, matching install.ps1's `Set-Content -Encoding Ascii`. */
-        private fun encodeAscii(text: String): ByteArray {
-            val encoder = StandardCharsets.US_ASCII.newEncoder()
-                .onMalformedInput(CodingErrorAction.REPLACE)
-                .onUnmappableCharacter(CodingErrorAction.REPLACE)
-            return try {
-                val buffer = encoder.encode(java.nio.CharBuffer.wrap(text))
-                ByteArray(buffer.remaining()).also { buffer.get(it) }
-            } catch (e: CharacterCodingException) {
-                text.toByteArray(StandardCharsets.US_ASCII)
-            }
         }
 
         private fun deleteRecursively(root: Path, trashParent: Path = root.parent) {

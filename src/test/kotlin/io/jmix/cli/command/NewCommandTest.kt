@@ -48,11 +48,284 @@ class NewCommandTest {
     private val artifactId = TemplateRepository.TEMPLATES_ARTIFACT_ID
     private val artifactPath = "/${TemplateRepository.TEMPLATES_GROUP_PATH}/$artifactId"
     private val metadataPath = "$artifactPath/maven-metadata.xml"
+    private val invalidPackage = "Invalid Java package name. Each segment must be a Java identifier without keywords."
+
+    private fun metadataXml(vararg versions: String): String {
+        val entries = versions.joinToString("") { "<version>$it</version>" }
+        return "<metadata><versioning><versions>$entries</versions></versioning></metadata>"
+    }
 
     private fun FakeServer.publishVersions(vararg versions: String) {
-        val entries = versions.joinToString("") { "<version>$it</version>" }
-        val body = "<metadata><versioning><versions>$entries</versions></versioning></metadata>"
-        on("GET", metadataPath) { FakeServer.Response(200, body.toByteArray()) }
+        on("GET", metadataPath) { FakeServer.Response(200, metadataXml(*versions).toByteArray()) }
+    }
+
+    private fun FakeServer.publishApplicationTemplate(
+        version: String = "3.1.0",
+        buildScript: String = "// Generated application",
+    ) = publishProjectTemplates(
+        "application/template.json" to """{"version":1,"name":"Application"}""",
+        "application/build.gradle" to buildScript,
+        version = version,
+    )
+
+    private fun FakeServer.publishProjectTemplates(vararg files: Pair<String, String>, version: String = "3.1.0") {
+        val templateJar = templateJar(*files)
+        publishVersions(version)
+        on("GET", "$artifactPath/$version/$artifactId-$version.jar") { FakeServer.Response(200, templateJar) }
+    }
+
+    private fun templateJar(vararg files: Pair<String, String>): ByteArray =
+        ByteArrayOutputStream().apply {
+            ZipOutputStream(this).use { zip ->
+                for ((path, content) in files) {
+                    zip.putNextEntry(ZipEntry("project/$path"))
+                    zip.write(content.toByteArray())
+                }
+            }
+        }.toByteArray()
+
+    private fun seedTemplateCache(url: String, jarsByVersion: Map<String, ByteArray>) {
+        val cache = Files.createDirectories(TemplateRepository(url, tempDir).repoCacheDir)
+        Files.writeString(cache.resolve("maven-metadata.xml"), metadataXml(*jarsByVersion.keys.toTypedArray()))
+        for ((version, jar) in jarsByVersion) {
+            Files.write(cache.resolve("$artifactId-$version.jar"), jar)
+        }
+    }
+
+    private fun projectTestArgs(server: FakeServer, name: String = "demo") = listOf(
+        name, "--repository", server.url, "--jmix-version", "3.1.0",
+        "--project-id", "demo", "--locales", "en", "--addons", "",
+        "--no-git", "--no-agents-toolkit",
+    )
+
+    private fun locationTestArgs(server: FakeServer) = projectTestArgs(server) + listOf("--package", "com.company.demo")
+
+    private fun testWizard(args: List<String>, raw: Boolean, keys: List<String>, lines: String) = if (raw) {
+        NewCommand(tempDir).test(
+            args, ansiLevel = AnsiLevel.TRUECOLOR, width = 100, height = 30,
+            inputEvents = (keys + "q").map { KeyboardEvent(it) },
+        )
+    } else {
+        val stdin = System.`in`
+        try {
+            System.setIn(ByteArrayInputStream(lines.toByteArray()))
+            NewCommand(tempDir).test(args, inputInteractive = false, outputInteractive = false)
+        } finally {
+            System.setIn(stdin)
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `Back restores the listed repository version and theme on Enter`(raw: Boolean) {
+        val repositories = listOf(
+            ProjectCreationInfo.DEFAULT_REPOSITORY_URL to "primary",
+            "https://nexus.jmix.io/repository/public" to "backup",
+        )
+        for ((url, name) in repositories) {
+            val jars = listOf("3.0.3", "3.1.0").associateWith { version ->
+                templateJar(
+                    "application/template.json" to
+                        """{"version":1,"name":"Application","params":[{"name":"projectTheme"}]}""",
+                    "application/build.gradle" to "// $name $version \${project_theme}",
+                )
+            }
+            seedTemplateCache(url, jars)
+        }
+        val target = tempDir.resolve("out")
+        val args = listOf("demo", "--package", "com.company.demo", "--project-id", "demo", "--addons", "",
+            "--path", target.toString(), "--no-git", "--no-agents-toolkit")
+        val selectSecondAndRevisit = listOf("ArrowDown", "Enter", "Escape", "Enter")
+        val result = testWizard(args, raw,
+            selectSecondAndRevisit + selectSecondAndRevisit + selectSecondAndRevisit + "Enter",
+            "2\n<\n\n2\n<\n\n2\n<\n\n\n",
+        )
+
+        assertEquals(0, result.statusCode, result.stderr)
+        assertEquals("// backup 3.0.3 lumo", Files.readString(target.resolve("build.gradle")))
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `Back restores a custom repository and manually entered version on one Enter each`(raw: Boolean) {
+        FakeServer().use { server ->
+            val version = "3.1.0-RC1"
+            server.publishApplicationTemplate("3.1.0", "// Stable version")
+            server.publishApplicationTemplate(version, "// Explicit pre-release")
+            server.publishVersions(version, "3.1.0")
+            val primaryJar = templateJar(
+                "application/template.json" to """{"version":1,"name":"Application"}""",
+                "application/build.gradle" to "// Primary repository",
+            )
+            seedTemplateCache(ProjectCreationInfo.DEFAULT_REPOSITORY_URL, mapOf(version to primaryJar, "3.1.0" to primaryJar))
+            val target = tempDir.resolve("out")
+            val args = listOf("demo", "--project-id", "demo", "--locales", "en", "--addons", "",
+                "--path", target.toString(), "--no-git", "--no-agents-toolkit")
+            val result = testWizard(args, raw,
+                listOf("ArrowDown", "ArrowDown", "Enter") + server.url.map(Char::toString) +
+                    listOf("Enter", "Escape", "Enter", "ArrowDown", "Enter") + version.map(Char::toString) +
+                    listOf("Enter", "Escape", "Enter", "Enter"),
+                "3\n${server.url}\n<\n\n2\n$version\n<\n\n\n",
+            )
+
+            assertEquals(0, result.statusCode, result.stderr)
+            assertEquals("// Explicit pre-release", Files.readString(target.resolve("build.gradle")))
+            assertEquals(listOf(metadataPath, "$artifactPath/$version/$artifactId-$version.jar"),
+                server.requests.map { it.path })
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `going back from package preserves the Kotlin template on Enter`(raw: Boolean) {
+        FakeServer().use { server ->
+            server.publishProjectTemplates(
+                "application/template.json" to """{"version":1,"name":"Java Application","order":0}""",
+                "application/src/main/java/Demo.java" to "class Demo {}",
+                "application-kotlin/template.json" to """{"version":1,"name":"Kotlin Application","order":1}""",
+                "application-kotlin/src/main/kotlin/Demo.kt" to "class Demo",
+            )
+            val target = tempDir.resolve("out")
+            val args = projectTestArgs(server) + listOf("--path", target.toString())
+            val result = if (raw) {
+                NewCommand(tempDir).test(
+                    args, ansiLevel = AnsiLevel.TRUECOLOR, width = 100, height = 30,
+                    inputEvents = listOf("ArrowDown", "Enter", "Escape", "Enter", "Enter", "q").map { KeyboardEvent(it) },
+                )
+            } else {
+                val stdin = System.`in`
+                try {
+                    System.setIn(ByteArrayInputStream("2\n<\n\n\n".toByteArray()))
+                    NewCommand(tempDir).test(args, inputInteractive = false, outputInteractive = false)
+                } finally {
+                    System.setIn(stdin)
+                }
+            }
+
+            assertEquals(0, result.statusCode, result.stderr)
+            assertTrue(Files.isRegularFile(target.resolve("src/main/kotlin/Demo.kt")), result.stdout)
+            assertFalse(Files.exists(target.resolve("src/main/java/Demo.java")))
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["com.class.demo", "com.1team.demo"])
+    fun `the package option rejects invalid segments before generation`(pkg: String) {
+        FakeServer().use { server ->
+            server.publishApplicationTemplate()
+            val target = tempDir.resolve("out")
+            val result = NewCommand(tempDir).test(
+                projectTestArgs(server) + listOf("--non-interactive", "--path", target.toString(), "--package", pkg),
+            )
+
+            assertEquals(1, result.statusCode)
+            assertEquals("$invalidPackage\n", result.stderr)
+            assertFalse(Files.exists(target))
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `manual package input retries invalid segments`(raw: Boolean) {
+        FakeServer().use { server ->
+            server.publishApplicationTemplate(buildScript = "// \${project_rootPackage}")
+            val target = tempDir.resolve("out")
+            val packages = listOf("com.class.demo", "com.1team.demo", "com._team2.demo")
+            val args = projectTestArgs(server) + listOf("--path", target.toString())
+            val result = if (raw) {
+                val input = packages.flatMap { pkg -> pkg.map { KeyboardEvent(it.toString()) } + KeyboardEvent("Enter") }
+                NewCommand(tempDir).test(
+                    args, ansiLevel = AnsiLevel.TRUECOLOR, width = 160, height = 40,
+                    inputEvents = input + KeyboardEvent("q"),
+                )
+            } else {
+                val stdin = System.`in`
+                try {
+                    System.setIn(ByteArrayInputStream(packages.joinToString("\n", postfix = "\n").toByteArray()))
+                    NewCommand(tempDir).test(args, inputInteractive = false, outputInteractive = false)
+                } finally {
+                    System.setIn(stdin)
+                }
+            }
+
+            assertEquals(0, result.statusCode, result.stderr)
+            assertTrue(Regex.fromLiteral(invalidPackage).findAll(result.stdout).count() >= 2, result.stdout)
+            assertEquals("// com._team2.demo", Files.readString(target.resolve("build.gradle")))
+        }
+    }
+
+    @Test
+    fun `automatic package is validated before generation`() {
+        FakeServer().use { server ->
+            server.publishApplicationTemplate(buildScript = "// \${project_rootPackage}")
+            val target = tempDir.resolve("out")
+            val options = listOf("--non-interactive", "--path", target.toString())
+            val args = projectTestArgs(server, "cl-ass") + options
+
+            val rejected = NewCommand(tempDir).test(args)
+            assertEquals(1, rejected.statusCode)
+            assertEquals("$invalidPackage Pass a valid package with --package.\n", rejected.stderr)
+            assertFalse(Files.exists(target))
+
+            val overridden = NewCommand(tempDir).test(args + listOf("--package", "com.company.class_app"))
+            assertEquals(0, overridden.statusCode, overridden.stderr)
+            assertEquals("// com.company.class_app", Files.readString(target.resolve("build.gradle")))
+
+            val derivedTarget = tempDir.resolve("derived")
+            val derived = NewCommand(tempDir).test(
+                projectTestArgs(server, "my-demo") + listOf("--non-interactive", "--path", derivedTarget.toString()),
+            )
+            assertEquals(0, derived.statusCode, derived.stderr)
+            assertEquals("// com.company.mydemo", Files.readString(derivedTarget.resolve("build.gradle")))
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["http://", "http://bad_host.invalid"])
+    fun `an invalid repository option fails before template lookup`(url: String) {
+        val result = NewCommand(tempDir).test(listOf("demo", "--non-interactive", "--repository", url))
+
+        assertEquals(1, result.statusCode)
+        assertEquals("Repository URL must be a valid HTTP(S) URL with a host.\n", result.stderr)
+        assertFalse(result.stdout.contains("Fetching Jmix versions"), result.stdout)
+        Files.list(tempDir).use { assertFalse(it.findAny().isPresent) }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `the wizard retries invalid repository input before contacting the valid source`(raw: Boolean) {
+        FakeServer().use { server ->
+            server.publishApplicationTemplate()
+            val target = tempDir.resolve("demo")
+            val args = listOf(
+                "demo", "--jmix-version", "3.1.0", "--template", "application", "--package", "com.company.demo",
+                "--project-id", "demo", "--locales", "en", "--addons", "", "--path", target.toString(),
+                "--no-git", "--no-agents-toolkit",
+            )
+            val urls = listOf("http://", "http://bad_host.invalid", "${server.url}?invalid=1", "${server.url}/")
+            val result = if (raw) {
+                val input = urls.flatMap { url -> url.map { KeyboardEvent(it.toString()) } + KeyboardEvent("Enter") }
+                NewCommand(tempDir).test(
+                    args, ansiLevel = AnsiLevel.TRUECOLOR, width = 160, height = 40,
+                    inputEvents = List(2) { KeyboardEvent("ArrowDown") } + KeyboardEvent("Enter") + input + KeyboardEvent("q"),
+                )
+            } else {
+                val stdin = System.`in`
+                try {
+                    System.setIn(ByteArrayInputStream(urls.joinToString("\n", prefix = "3\n", postfix = "\n").toByteArray()))
+                    NewCommand(tempDir).test(args, inputInteractive = false, outputInteractive = false)
+                } finally {
+                    System.setIn(stdin)
+                }
+            }
+
+            assertEquals(0, result.statusCode, result.stderr)
+            val invalidHost = Regex.fromLiteral("Repository URL must be a valid HTTP(S) URL with a host.")
+            assertTrue(invalidHost.findAll(result.stdout).count() >= 2, result.stdout)
+            assertTrue(result.stdout.contains("Use a repository base URL without credentials, a query, or a fragment."))
+            assertEquals(listOf(metadataPath, "$artifactPath/3.1.0/$artifactId-3.1.0.jar"), server.requests.map { it.path })
+            assertEquals("// Generated application", Files.readString(target.resolve("build.gradle")))
+        }
     }
 
     @Test
@@ -82,17 +355,8 @@ class NewCommandTest {
     @ValueSource(booleans = [true, false])
     fun `a successfully generated project records one usage event`(nonInteractive: Boolean) {
         val version = "3.1.0"
-        val templateJar = ByteArrayOutputStream().apply {
-            ZipOutputStream(this).use { zip ->
-                zip.putNextEntry(ZipEntry("project/application/template.json"))
-                zip.write("""{"version":1,"name":"Application"}""".toByteArray())
-                zip.putNextEntry(ZipEntry("project/application/build.gradle"))
-                zip.write("// Generated application".toByteArray())
-            }
-        }.toByteArray()
         FakeServer().use { server ->
-            server.publishVersions(version)
-            server.on("GET", "$artifactPath/$version/$artifactId-$version.jar") { FakeServer.Response(200, templateJar) }
+            server.publishApplicationTemplate(version)
             val target = tempDir.resolve("local-project")
             val generatedAtSend = AtomicBoolean()
             server.on("POST", "/rest/event/open") {
@@ -117,12 +381,130 @@ class NewCommandTest {
             }
 
             assertEquals(0, result.statusCode, result.stderr)
+            assertTrue(result.stdout.contains("--repository ${server.url}"), result.stdout)
             val body = server.requests.single { it.method == "POST" && it.path == "/rest/event/open" }.body
             assertTrue(generatedAtSend.get())
             val payload = JsonParser.parseString(body).asJsonObject
             assertEquals("cli-new", payload["ide"].asString)
             assertEquals(version, payload["platformVersion"].asString)
             assertFalse(body.contains("private-name") || body.contains("privatecompany") || body.contains(server.url))
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `declining overwrite lets the wizard choose another folder`(raw: Boolean) {
+        FakeServer().use { server ->
+            server.publishApplicationTemplate()
+            val occupied = Files.createDirectory(tempDir.resolve("occupied"))
+            val existing = Files.writeString(occupied.resolve("build.gradle"), "// Keep this project")
+            val target = Files.createDirectory(tempDir.resolve("empty folder"))
+            val args = locationTestArgs(server)
+            val result = if (raw) {
+                fun chooseCustom(path: Path) = List(3) { KeyboardEvent("ArrowDown") } + KeyboardEvent("Enter") +
+                    path.toString().map { KeyboardEvent(it.toString()) } + KeyboardEvent("Enter")
+                NewCommand(tempDir).test(
+                    args, ansiLevel = AnsiLevel.TRUECOLOR, width = 80, height = 40,
+                    inputEvents = chooseCustom(occupied) + KeyboardEvent("Enter") + chooseCustom(target) +
+                        KeyboardEvent("q"),
+                )
+            } else {
+                val stdin = System.`in`
+                try {
+                    System.setIn(ByteArrayInputStream("4\n$occupied\nn\n4\n$target\n".toByteArray()))
+                    NewCommand(tempDir).test(args, inputInteractive = false, outputInteractive = false)
+                } finally {
+                    System.setIn(stdin)
+                }
+            }
+
+            assertEquals(0, result.statusCode, result.stderr)
+            assertTrue(result.stdout.contains("Overwrite matching files"), result.stdout)
+            assertEquals("// Keep this project", Files.readString(existing))
+            assertEquals("// Generated application", Files.readString(target.resolve("build.gradle")))
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["yes", ""])
+    fun `an explicitly chosen non-empty folder needs confirmation even at end of input`(answer: String) {
+        FakeServer().use { server ->
+            server.publishApplicationTemplate()
+            val target = Files.createDirectory(tempDir.resolve("occupied"))
+            val buildFile = Files.writeString(target.resolve("build.gradle"), "// Keep this project")
+            val stdin = System.`in`
+            val result = try {
+                System.setIn(ByteArrayInputStream(answer.toByteArray()))
+                NewCommand(tempDir).test(
+                    locationTestArgs(server) + listOf("--path", target.toString()),
+                    inputInteractive = false, outputInteractive = false,
+                )
+            } finally {
+                System.setIn(stdin)
+            }
+
+            assertTrue(result.stdout.contains("Overwrite matching files"), result.stdout)
+            if (answer == "yes") {
+                assertEquals(0, result.statusCode, result.stderr)
+                assertEquals("// Generated application", Files.readString(buildFile))
+            } else {
+                assertEquals(1, result.statusCode)
+                assertTrue(result.stderr.contains("Choose another folder with --path"), result.stderr)
+                assertFalse(result.stdout.contains("Detecting installed JDKs"), result.stdout)
+                assertEquals("// Keep this project", Files.readString(buildFile))
+            }
+        }
+    }
+
+    @Test
+    fun `non-interactive overwrite requires force and keeps unrelated files`() {
+        FakeServer().use { server ->
+            server.publishApplicationTemplate()
+            val target = Files.createDirectory(tempDir.resolve("occupied"))
+            val buildFile = Files.writeString(target.resolve("build.gradle"), "// Keep this project")
+            val notes = Files.writeString(target.resolve("notes.txt"), "Existing notes")
+            val args = locationTestArgs(server) + listOf("--non-interactive", "--path", target.toString())
+
+            val declined = NewCommand(tempDir).test(args)
+            assertEquals(1, declined.statusCode)
+            assertTrue(declined.stderr.contains("or use --force"), declined.stderr)
+            assertEquals("// Keep this project", Files.readString(buildFile))
+
+            val accepted = NewCommand(tempDir).test(args + "--force")
+            assertEquals(0, accepted.statusCode, accepted.stderr)
+            assertFalse(accepted.stdout.contains("Overwrite matching files"), accepted.stdout)
+            assertEquals("// Generated application", Files.readString(buildFile))
+            assertEquals("Existing notes", Files.readString(notes))
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["3.1.0", "3.0.3"])
+    fun `switching repositories reloads the template catalog and uses an available version`(secondVersion: String) {
+        FakeServer().use { first ->
+            FakeServer().use { second ->
+                first.publishApplicationTemplate(buildScript = "// First repository")
+                second.publishApplicationTemplate(secondVersion, "// Second repository")
+                val target = tempDir.resolve("out")
+                val stdin = System.`in`
+                val result = try {
+                    System.setIn(ByteArrayInputStream("3\n${first.url}\n1\n<\n<\n3\n${second.url}\n\n\n".toByteArray()))
+                    NewCommand(tempDir).test(
+                        listOf("demo", "--project-id", "demo", "--locales", "en", "--addons", "",
+                            "--path", target.toString(), "--no-git", "--no-agents-toolkit"),
+                        inputInteractive = false, outputInteractive = false,
+                    )
+                } finally {
+                    System.setIn(stdin)
+                }
+
+                assertEquals(0, result.statusCode, result.stderr)
+                assertEquals("// Second repository", Files.readString(target.resolve("build.gradle")))
+                assertEquals(listOf(metadataPath, "$artifactPath/3.1.0/$artifactId-3.1.0.jar"),
+                    first.requests.map { it.path })
+                assertEquals(listOf(metadataPath, "$artifactPath/$secondVersion/$artifactId-$secondVersion.jar"),
+                    second.requests.map { it.path })
+            }
         }
     }
 

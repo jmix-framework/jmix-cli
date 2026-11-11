@@ -29,6 +29,7 @@ import io.jmix.cli.generator.ProjectCreationInfo
 import io.jmix.cli.generator.ProjectGenerator
 import io.jmix.cli.generator.AddonInstaller
 import io.jmix.cli.generator.Repository
+import io.jmix.cli.generator.projectTargetHasFiles
 import io.jmix.cli.repo.TemplateRepository
 import io.jmix.cli.repo.AddonRepository
 import io.jmix.cli.repo.TemplateVersionCatalog
@@ -149,13 +150,13 @@ internal fun toAbsolutePath(raw: String): Path {
     return Path.of(expanded).toAbsolutePath().normalize()
 }
 
-/** Reports whether a JDK that [jmixVersion] supports is installed and, when none is, how to get one. */
-internal fun reportJdkCheck(terminal: Terminal, status: StatusReporter, jmixVersion: String) {
+/** Reports JDK compatibility and returns the home of the preferred compatible JDK, if found. */
+internal fun reportJdkCheck(terminal: Terminal, status: StatusReporter, jmixVersion: String): Path? {
     val check = status.run("Detecting installed JDKs") { EnvironmentCheck.checkJdk(jmixVersion) }
-    if (check.compatible.isNotEmpty()) {
-        val jdk = check.compatible.first()
+    val jdk = check.compatible.firstOrNull()
+    if (jdk != null) {
         terminal.println(gray("Found compatible JDK ${jdk.majorVersion} at ${jdk.home}"))
-        return
+        return jdk.home
     }
     val majorMinor = PlatformVersions.majorMinor(jmixVersion)
     terminal.println(brightYellow(EnvironmentCheck.jdkMismatchMessage(majorMinor, check.supportedVersions)))
@@ -167,6 +168,7 @@ internal fun reportJdkCheck(terminal: Terminal, status: StatusReporter, jmixVers
         )
     }
     terminal.println(brightYellow(EnvironmentCheck.installHint(check.supportedVersions)))
+    return null
 }
 
 class NewCommand internal constructor(
@@ -194,7 +196,7 @@ class NewCommand internal constructor(
         "--no-agents-toolkit", help = "Skip the Jmix Agent Toolkit (guidelines, skills, and project MCP servers)",
     ).flag()
     private val includeUnstable by option("--include-unstable", help = "Offer unstable (RC/snapshot) Jmix versions").flag()
-    private val force by option("--force", help = "Generate into a non-empty directory without asking").flag()
+    private val force by option("--force", help = "Allow overwriting matching files in a non-empty directory without asking").flag()
     private val nonInteractive by option("--non-interactive", help = "Never prompt; use flags and defaults").flag()
 
     // Handled in main() before parsing; declared so it is accepted here too.
@@ -212,9 +214,11 @@ class NewCommand internal constructor(
         val theme: String? = null,
         val localeCodes: String? = null,
         val addons: List<ResolvedAddon>? = null,
+        val addonProfile: AddonProjectProfile? = null,
         val suggestedTranslationIds: Set<String> = emptySet(),
         val autoSelectedTranslationIds: Set<String> = emptySet(),
         val targetDir: Path? = null,
+        val overwriteConfirmed: Boolean = false,
         val createGit: Boolean? = null,
         val installToolkit: Boolean? = null,
     ) {
@@ -251,10 +255,12 @@ class NewCommand internal constructor(
 
     private enum class Outcome { PROMPTED, AUTO, BACK }
 
+    private class OpenCatalog(val version: String, val catalog: TemplateCatalog)
+
     private lateinit var repo: TemplateRepository
-    private lateinit var repositoryUrl: String
-    private var catalog: TemplateCatalog? = null
-    private var catalogVersion: String? = null
+    private val repositoryHost: String
+        get() = hostOf(checkNotNull(state.repositoryUrl))
+    private var openCatalog: OpenCatalog? = null
     private var addonCatalog: AddonCatalog? = null
 
     override fun run() {
@@ -271,9 +277,7 @@ class NewCommand internal constructor(
             // Network/filesystem failures deserve a one-line message, not a stack trace.
             throw CliktError(e.message ?: e.toString())
         } finally {
-            catalog?.close()
-            catalog = null
-            catalogVersion = null
+            closeCatalog()
         }
     }
 
@@ -286,47 +290,31 @@ class NewCommand internal constructor(
         } finally {
             if (prompts.usesAlternateScreen && versionsCache?.stale == true) terminal.println(staleVersionsWarning())
         }
+        val answers = state
         if (usedAlternateScreen) {
             // The frames lived on the alternate screen, which the terminal has
             // just discarded; restate the answers on the restored one.
-            state.toUiState(activeStepIndex).choices.forEach { summary(it.label, it.value) }
+            answers.toUiState(activeStepIndex).choices.forEach { summary(it.label, it.value) }
         }
 
-        val targetDir = state.targetDir!!
-        reportJdkCheck(terminal, status, state.jmixVersion!!)
-        if (state.addons.orEmpty().any { !it.included }) AddonInstaller.requireJavaHome(state.jmixVersion!!)
-        checkTargetDir(targetDir)
-
-        val (premiumUser, premiumPass) = if (state.addons.orEmpty().any { !it.included && it.addon.commercial }) {
-            configurePremiumRepository(terminal, prompts, interactive)
-        } else PremiumRepository.USER to PremiumRepository.PASS
-
-        val info = ProjectCreationInfo(
-            name = state.name!!,
-            targetDir = targetDir,
-            rootPackage = state.rootPackage!!,
-            projectId = state.projectId!!,
-            projectTheme = state.theme!!,
-            locales = parseLocales(state.localeCodes!!),
-            repositories = listOf(Repository(repositoryUrl)),
-            jmixVersion = state.jmixVersion!!,
-            templateMetadata = state.template!!.metadata,
-            createGitRepository = state.createGit!!,
-            addons = state.addons.orEmpty(),
-            premiumRepoUserProperty = premiumUser,
-            premiumRepoPassProperty = premiumPass,
-        )
+        val (info, addonJavaHome) = prepareProjectCreation(answers)
+        val templateId = checkNotNull(answers.template).id
+        val installToolkit = checkNotNull(answers.installToolkit)
+        val overwriteExisting = force || answers.overwriteConfirmed
 
         wizardStage = WizardStage.GENERATION.takeIf { interactive }
         prompts.printProgress()
-        val templateRoot = catalogFor(info.jmixVersion).templateRoot(state.template!!.id)
+        val templateRoot = catalogFor(info.jmixVersion).templateRoot(templateId)
         try {
             status.run("Generating the project") { progress ->
                 ProjectGenerator(
                     onWarning = { progress.println(brightYellow("Warning: $it")) },
                     onStatus = progress::relabel,
-                ).generate(templateRoot, info) {
-                    if (state.installToolkit == true) installAgentToolkit(info, progress)
+                ).generate(
+                    templateRoot, info, overwriteExisting = overwriteExisting,
+                    addonJavaHome = addonJavaHome, addonProfile = answers.addonProfile,
+                ) {
+                    if (installToolkit) installAgentToolkit(info, progress)
                 }
             }
         } catch (e: RuntimeException) {
@@ -335,12 +323,41 @@ class NewCommand internal constructor(
             throw CliktError("Project generation failed: ${e.message ?: e.toString()}")
         }
 
-        printSuccess(info)
+        val runTask = runTaskFor(info)
+        printSuccess(info, templateId, installToolkit, runTask)
         usageStatistics?.record(UsageEvent.PROJECT_CREATED, info.jmixVersion, addonIds = info.addons.map { it.id })
         wizardStage = null
         if (interactive && terminal.terminalInfo.inputInteractive) {
-            ProjectActions(info.projectDir, info.jmixVersion, terminal, prompts, status).offer(runTaskFor(info))
+            ProjectActions(info.projectDir, info.jmixVersion, terminal, prompts, status).offer(runTask)
         }
+    }
+
+    private fun prepareProjectCreation(answers: WizardState): Pair<ProjectCreationInfo, Path?> {
+        val jmixVersion = checkNotNull(answers.jmixVersion)
+        val addons = answers.addons.orEmpty()
+        val javaHome = reportJdkCheck(terminal, status, jmixVersion)
+        val addonJavaHome = if (addons.any { !it.included }) AddonInstaller.requireJavaHome(jmixVersion, javaHome) else null
+
+        val (premiumUser, premiumPass) = if (addons.any { !it.included && it.addon.commercial }) {
+            configurePremiumRepository(terminal, prompts, interactive)
+        } else PremiumRepository.USER to PremiumRepository.PASS
+
+        val info = ProjectCreationInfo(
+            name = checkNotNull(answers.name),
+            targetDir = checkNotNull(answers.targetDir),
+            rootPackage = checkNotNull(answers.rootPackage),
+            projectId = checkNotNull(answers.projectId),
+            projectTheme = checkNotNull(answers.theme),
+            locales = parseLocales(checkNotNull(answers.localeCodes)),
+            repositories = listOf(Repository(checkNotNull(answers.repositoryUrl))),
+            jmixVersion = jmixVersion,
+            templateMetadata = checkNotNull(answers.template).metadata,
+            createGitRepository = checkNotNull(answers.createGit),
+            addons = addons,
+            premiumRepoUserProperty = premiumUser,
+            premiumRepoPassProperty = premiumPass,
+        )
+        return info to addonJavaHome
     }
 
     /**
@@ -389,14 +406,18 @@ class NewCommand internal constructor(
     }
 
     private fun catalogFor(version: String): TemplateCatalog {
-        if (catalogVersion != version) {
-            catalog?.close()
-            catalog = status.run("Loading templates $version from ${hostOf(repositoryUrl)}") { progress ->
-                TemplateCatalog(repo.templatesJar(version, progress::progress))
-            }
-            catalogVersion = version
+        openCatalog?.let { if (it.version == version) return it.catalog }
+        closeCatalog()
+        return status.run("Loading templates $version from $repositoryHost") { progress ->
+            val catalog = TemplateCatalog(repo.templatesJar(version, progress::progress))
+            openCatalog = OpenCatalog(version, catalog)
+            catalog
         }
-        return catalog!!
+    }
+
+    private fun closeCatalog() {
+        openCatalog?.catalog?.close()
+        openCatalog = null
     }
 
     // --- Steps ---------------------------------------------------------------
@@ -439,9 +460,12 @@ class NewCommand internal constructor(
             return Outcome.AUTO
         }
         val known = listOf(default, BACKUP_REPOSITORY_URL)
-        val previousCustom = state.repositoryUrl?.takeIf { it !in known }
+        val previous = state.repositoryUrl
+        val previousCustom = previous?.takeIf { it !in known }
+        val options = known + OTHER_CHOICE + listOfNotNull(previousCustom)
         val url = when (val picked = prompts.choose(
-            "Select artifact repository", known + OTHER_CHOICE, { it }, allowBack = true,
+            "Select artifact repository", options, { it },
+            defaultIndex = options.indexOf(previous).coerceAtLeast(0), allowBack = true,
         )) {
             is Answer.Back -> return Outcome.BACK
             is Answer.Value -> if (picked.value == OTHER_CHOICE) {
@@ -461,14 +485,10 @@ class NewCommand internal constructor(
 
     /** Switches the template source; a changed URL drops version and catalog caches. */
     private fun applyRepository(url: String) {
-        if (state.repositoryUrl != url) {
-            repo = TemplateRepository(url, templateCacheDir)
-            versionsCache = null
-            catalog?.close()
-            catalog = null
-            catalogVersion = null
-        }
-        repositoryUrl = url
+        if (state.repositoryUrl == url) return
+        repo = TemplateRepository(url, templateCacheDir)
+        versionsCache = null
+        closeCatalog()
         state = state.copy(repositoryUrl = url)
     }
 
@@ -484,19 +504,23 @@ class NewCommand internal constructor(
             state = state.copy(jmixVersion = requested)
             return Outcome.AUTO
         }
-        val versions = versionCatalog().available(includeUnstable)
+        val catalog = versionCatalog()
+        val versions = catalog.available(includeUnstable)
         if (!interactive) {
             state = state.copy(jmixVersion = versions.last())
             return Outcome.AUTO
         }
         // Latest patch of each of the newest minor lines (3.0.z, 2.8.y, ...).
         val recent = PlatformVersions.latestPatchPerMinor(versions).take(MINOR_VERSIONS_SHOWN)
+        val previous = state.jmixVersion?.takeIf { it in catalog.versions }
+        val options = recent + OTHER_CHOICE + listOfNotNull(previous?.takeIf { it !in recent })
         val version = when (val picked = prompts.choose(
-            "Select Jmix version", recent + OTHER_CHOICE, { it }, allowBack = true,
+            "Select Jmix version", options, { it },
+            defaultIndex = options.indexOf(previous).coerceAtLeast(0), allowBack = true,
         )) {
             is Answer.Back -> return Outcome.BACK
             is Answer.Value -> if (picked.value == OTHER_CHOICE) {
-                when (val typed = prompts.ask("Enter Jmix version", state.jmixVersion ?: versions.last(), allowBack = true) { input ->
+                when (val typed = prompts.ask("Enter Jmix version", previous ?: versions.last(), allowBack = true) { input ->
                     val available = versionCatalog(input).versions
                     if (input in available) null
                     else "Unknown version. Recent versions: ${available.takeLast(8).joinToString(", ")}"
@@ -517,7 +541,7 @@ class NewCommand internal constructor(
         versionsCache?.let { cached ->
             if (requested == null || requested in cached.versions || !cached.fromFreshCache) return cached
         }
-        return status.run("Fetching Jmix versions from ${hostOf(repositoryUrl)}") { progress ->
+        return status.run("Fetching Jmix versions from $repositoryHost") { progress ->
             repo.versionCatalog(requested).also { result ->
                 if (result.stale && !prompts.isAlternateScreenHeld) progress.println(staleVersionsWarning())
                 versionsCache = result
@@ -526,7 +550,7 @@ class NewCommand internal constructor(
     }
 
     private fun staleVersionsWarning(): String = brightYellow(
-        "Warning: Could not refresh Jmix versions from ${hostOf(repositoryUrl)}. Using the cached version list.",
+        "Warning: Could not refresh Jmix versions from $repositoryHost. Using the cached version list.",
     )
 
     private fun stepTemplate(): Outcome {
@@ -545,8 +569,11 @@ class NewCommand internal constructor(
             state = state.copy(template = templates.first())
             return Outcome.AUTO
         }
+        val previousTemplateId = state.template?.id
+        val defaultIndex = templates.indexOfFirst { it.id == previousTemplateId }.coerceAtLeast(0)
         return when (val answer = prompts.choose(
-            "Select project template", templates, { it.id }, { it.displayName }, allowBack = true,
+            "Select project template", templates, { it.id }, { it.displayName },
+            defaultIndex = defaultIndex, allowBack = true,
         )) {
             is Answer.Back -> Outcome.BACK
             is Answer.Value -> {
@@ -568,6 +595,9 @@ class NewCommand internal constructor(
             return Outcome.AUTO
         }
         if (!interactive || !metadata.isVisibleParam(TemplateParams.ROOT_PACKAGE)) {
+            Validation.validateRootPackage(derived)?.let {
+                throw CliktError("$it Pass a valid package with --package.")
+            }
             state = state.copy(rootPackage = derived)
             return Outcome.AUTO
         }
@@ -642,7 +672,10 @@ class NewCommand internal constructor(
             state = state.copy(theme = options.first())
             return Outcome.AUTO
         }
-        return when (val answer = prompts.choose("Select project theme", options, { it }, allowBack = true)) {
+        return when (val answer = prompts.choose(
+            "Select project theme", options, { it },
+            defaultIndex = options.indexOf(state.theme).coerceAtLeast(0), allowBack = true,
+        )) {
             is Answer.Back -> Outcome.BACK
             is Answer.Value -> {
                 state = state.copy(theme = answer.value)
@@ -714,13 +747,13 @@ class NewCommand internal constructor(
             }
         }
         if (explicitIds?.isEmpty() == true || (explicitIds == null && (!interactive || prompts.isInputExhausted))) {
-            state = state.copy(addons = emptyList())
+            state = state.copy(addons = emptyList(), addonProfile = null)
             return Outcome.AUTO
         }
         val profile = AddonProjectProfile.from(catalogFor(state.jmixVersion!!).templateRoot(state.template!!.id))
         if (profile == null) {
             if (!explicitIds.isNullOrEmpty()) throw CliktError("This template has no application or add-on module to install add-ons into.")
-            state = state.copy(addons = emptyList())
+            state = state.copy(addons = emptyList(), addonProfile = null)
             return Outcome.AUTO
         }
         while (addonCatalog == null) {
@@ -736,7 +769,7 @@ class NewCommand internal constructor(
                 )) {
                     is Answer.Back -> return Outcome.BACK
                     is Answer.Value -> if (answer.value != "Retry" || prompts.isInputExhausted) {
-                        state = state.copy(addons = emptyList())
+                        state = state.copy(addons = emptyList(), addonProfile = null)
                         return Outcome.PROMPTED
                     }
                 }
@@ -744,13 +777,13 @@ class NewCommand internal constructor(
         }
         val catalog = addonCatalog!!
         if (explicitIds != null) {
-            state = state.copy(addons = catalog.select(explicitIds, state.jmixVersion!!, profile))
+            state = state.copy(addons = catalog.select(explicitIds, state.jmixVersion!!, profile), addonProfile = profile)
             return Outcome.AUTO
         }
         val compatible = catalog.available(state.jmixVersion!!, profile)
         val available = compatible.filterNot { it.included }
         if (available.isEmpty()) {
-            state = state.copy(addons = emptyList())
+            state = state.copy(addons = emptyList(), addonProfile = null)
             summary("Add-ons", "No additional compatible add-ons")
             return Outcome.AUTO
         }
@@ -775,7 +808,7 @@ class NewCommand internal constructor(
             is Answer.Back -> Outcome.BACK
             is Answer.Value -> {
                 val chosen = available.filter { it.id in answer.value }
-                state = state.copy(addons = chosen, suggestedTranslationIds = suggestedTranslations,
+                state = state.copy(addons = chosen, addonProfile = profile, suggestedTranslationIds = suggestedTranslations,
                     autoSelectedTranslationIds = automatic intersect chosen.map { it.id }.toSet())
                 summary("Add-ons", chosen.joinToString(", ", transform = ::addonTitle).ifEmpty { "(none)" })
                 Outcome.PROMPTED
@@ -790,25 +823,48 @@ class NewCommand internal constructor(
             .ifEmpty { code }
 
     private fun stepPath(): Outcome {
-        pathOpt?.let {
-            state = state.copy(targetDir = toAbsolutePath(it))
+        if (pathOpt != null || !interactive) {
+            val targetDir = pathOpt?.let(::toAbsolutePath)
+                ?: Path.of("").toAbsolutePath().resolve(state.name!!).normalize()
+            if (!acceptProjectTarget(targetDir)) cancelForExistingTarget(targetDir)
             return Outcome.AUTO
         }
-        val currentDir = Path.of("").toAbsolutePath().normalize()
-        val subdirectory = currentDir.resolve(state.name!!).normalize()
-        if (!interactive) {
-            // Scripts get the conventional CWD-relative default.
-            state = state.copy(targetDir = state.targetDir ?: subdirectory)
-            return Outcome.AUTO
+
+        var previous = state.targetDir
+        while (true) {
+            val targetDir = when (val picked = chooseProjectLocation(prompts, state.name!!, previous)) {
+                is Answer.Back -> return Outcome.BACK
+                is Answer.Value -> picked.value
+            }
+            if (acceptProjectTarget(targetDir)) {
+                summary("Location", targetDir.toString())
+                return Outcome.PROMPTED
+            }
+            if (prompts.isInputExhausted) cancelForExistingTarget(targetDir)
+            previous = targetDir
         }
-        val targetDir = when (val picked = chooseProjectLocation(prompts, state.name!!, state.targetDir)) {
-            is Answer.Back -> return Outcome.BACK
-            is Answer.Value -> picked.value
-        }
-        state = state.copy(targetDir = targetDir)
-        summary("Location", targetDir.toString())
-        return Outcome.PROMPTED
     }
+
+    private fun acceptProjectTarget(targetDir: Path): Boolean {
+        val needsConfirmation = projectTargetHasFiles(targetDir) && !force
+        if (needsConfirmation && !(state.targetDir == targetDir && state.overwriteConfirmed)) {
+            if (!interactive) {
+                throw CliktError("Directory $targetDir is not empty. Choose another folder with --path or use --force.")
+            }
+            val answer = prompts.askYesNo(
+                "Overwrite matching files in the non-empty directory?",
+                default = false,
+                allowBack = pathOpt == null,
+                legend = targetDir.toString(),
+            )
+            if (answer != Answer.Value(true)) return false
+        }
+        state = state.copy(targetDir = targetDir, overwriteConfirmed = needsConfirmation)
+        return true
+    }
+
+    private fun cancelForExistingTarget(targetDir: Path): Nothing =
+        throw CliktError("Directory $targetDir is not empty. Choose another folder with --path.")
 
     /** Optional setup after generation, offered as one checklist; both are on by default. */
     private enum class SetupOption(val title: String, val description: String) {
@@ -859,36 +915,18 @@ class NewCommand internal constructor(
         return Outcome.PROMPTED
     }
 
-    // --- Post-wizard checks and output ----------------------------------------
-
-    private fun checkTargetDir(targetDir: Path) {
-        if (Files.exists(targetDir) && !Files.isDirectory(targetDir)) {
-            throw CliktError("$targetDir already exists and is not a directory.")
-        }
-        if (!Files.isDirectory(targetDir)) return
-        val isEmpty = Files.list(targetDir).use { it.findFirst().isEmpty }
-        if (isEmpty || force) return
-        if (interactive &&
-            prompts.askYesNo(
-                "Directory $targetDir is not empty. Existing files may be overwritten. Continue?",
-                false,
-            ).requireValue()
-        ) return
-        throw CliktError("Directory $targetDir is not empty. Use --force to generate anyway.")
-    }
-
-    private fun printSuccess(info: ProjectCreationInfo) {
+    private fun printSuccess(info: ProjectCreationInfo, templateId: String, installToolkit: Boolean, runTask: String?) {
         val dir = info.projectDir
         val currentDir = Path.of("").toAbsolutePath().normalize()
         terminal.println()
         terminal.println(brightGreen("✓ Project '${info.name}' created at $dir"))
         terminal.println()
-        projectNextSteps(dir, currentDir, runTaskFor(info)).forEach { line ->
+        projectNextSteps(dir, currentDir, runTask).forEach { line ->
             terminal.println(if (line == "Next steps:") bold(line) else cyan(line))
         }
         terminal.println()
         terminal.println(bold("CLI command:"))
-        terminal.println("  " + cyan(nonInteractiveCommand(info, state.template!!.id, state.installToolkit!!, currentDir)))
+        terminal.println("  " + cyan(nonInteractiveCommand(info, templateId, installToolkit, currentDir)))
         if (info.premiumRepoUserProperty != PremiumRepository.USER || info.premiumRepoPassProperty != PremiumRepository.PASS) {
             terminal.println(gray("To reuse separately saved premium credential names, you may need to generate interactively again."))
         }

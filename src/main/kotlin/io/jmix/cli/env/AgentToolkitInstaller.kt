@@ -1,15 +1,14 @@
 package io.jmix.cli.env
 
+import io.jmix.cli.util.Http
 import io.jmix.cli.util.hostOf
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 
@@ -152,14 +151,15 @@ object AgentToolkitInstaller {
     }
 
     private fun download(url: String, target: Path) {
-        val response = http.send(
+        val response = Http.sendBytes(
+            http,
             HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(30)).GET().build(),
-            HttpResponse.BodyHandlers.ofInputStream(),
+            MAX_INSTALLER_BYTES,
         )
         if (response.statusCode() != 200) {
             throw IOException("Failed to download the Agent Toolkit installer ($url): HTTP ${response.statusCode()}")
         }
-        response.body().use { Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING) }
+        Files.write(target, response.body())
     }
 
     private fun isWindows(os: String = System.getProperty("os.name")) = os.lowercase().contains("win")
@@ -170,6 +170,7 @@ object AgentToolkitInstaller {
         .build()
 
     private const val STEP_TIMEOUT_MINUTES = 10L
+    private const val MAX_INSTALLER_BYTES = 2 * 1024 * 1024
     private const val MCP_SERVERS = "jetbrains,jmix-docs,playwright"
     private const val MCP_AGENTS = "claude,codex,opencode,junie"
     private const val RAW_CONTENT_BASE =

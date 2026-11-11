@@ -12,9 +12,14 @@ Source builds do not self-update. `jmix update` requests an immediate update.
   version. Diagnostics go to stderr so piped stdout remains usable.
 - `jmix update` shows a progress indicator naming the release host with byte
   counts while downloading; the startup check prints its phases as plain stderr lines.
-- Verify archive checksums and extraction paths, serialize updates, and switch
-  the launcher only to a complete installation. Preserve arguments and terminal
-  input when restarting into an updated image.
+- The checksum request has a deadline through the end of the response. An
+  archive download stops if its response body stops making progress.
+- Verify archive checksums and extraction paths and switch the launcher only to
+  a complete installation. Preserve arguments and terminal input when restarting
+  into an updated image.
+- Use the same installation lock for manual updates, automatic updates, and
+  version cleanup. Manual updates wait for the lock. Automatic updates and
+  version cleanup skip that run when the lock is busy.
 - Clean superseded CLI versions and unused template caches without deleting the
   active installation or artifacts still in use. Keep custom-repository caches
   isolated during cleanup as well as during download.

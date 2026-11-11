@@ -34,15 +34,18 @@ object AddonInstaller {
         val changelog: String?,
     )
 
-    fun requireJavaHome(version: String): Path = EnvironmentCheck.checkJdk(version).compatible.firstOrNull()?.home
+    fun requireJavaHome(
+        version: String,
+        javaHome: Path? = EnvironmentCheck.checkJdk(version).compatible.firstOrNull()?.home,
+    ): Path = javaHome
         ?: throw IOException("Installing add-ons requires a development JDK compatible with Jmix $version. " +
             "Install a supported JDK and set JAVA_HOME, or generate without --addons.")
 
-    fun install(info: ProjectCreationInfo, buildFile: Path) {
-        val javaHome = requireJavaHome(info.jmixVersion)
+    fun install(info: ProjectCreationInfo, buildFile: Path, javaHome: Path? = null) {
+        val compatibleJavaHome = javaHome ?: requireJavaHome(info.jmixVersion)
         appendDependencies(info, buildFile)
         val artifacts = try {
-            resolveArtifacts(info.projectDir, buildFile.parent, javaHome)
+            resolveArtifacts(checkedProjectOutput(info.targetDir, info.projectDir), buildFile.parent, compatibleJavaHome)
         } catch (e: IOException) {
             val credentialsHint = if (info.addons.any { it.addon.commercial }) {
                 "\nCommercial add-ons require premium repository access. Set premiumRepoUser and premiumRepoPass in " +
@@ -184,13 +187,13 @@ object AddonInstaller {
         val redundant = selected.flatMap { it.dependsOn }.toSet()
         val required = selected.filterNot { it.className in redundant }.map { it.className }
         if (required.isEmpty()) return
-        val source = moduleDir.resolve("src/main")
+        val source = checkedProjectOutput(moduleDir, moduleDir.resolve("src/main"))
         val configs = Files.walk(source).use { paths ->
             paths.filter { Files.isRegularFile(it) && (it.toString().endsWith(".java") || it.toString().endsWith(".kt")) }
-                .filter { Files.readString(it).contains("@JmixModule") }.toList()
+                .filter { Files.readString(checkedProjectOutput(moduleDir, it)).contains("@JmixModule") }.toList()
         }
         if (configs.size != 1) throw IOException("Cannot identify the generated add-on's @JmixModule configuration.")
-        val file = configs.single()
+        val file = checkedProjectOutput(moduleDir, configs.single())
         val text = Files.readString(file)
         val kotlin = file.toString().endsWith(".kt")
         val annotation = Regex("@JmixModule\\s*\\(([^)]*)\\)").find(text)
@@ -212,10 +215,12 @@ object AddonInstaller {
     /** Add-ons such as Reports expect host security; generated tests have no application user repository. */
     internal fun configureTestSecurity(buildFile: Path, modules: List<Module>) {
         if (modules.none { it.className == "io.jmix.security.SecurityConfiguration" }) return
-        val source = buildFile.parent.resolve("src/test")
+        val moduleDir = buildFile.parent
+        val source = checkedProjectOutput(moduleDir, moduleDir.resolve("src/test"))
         if (!Files.isDirectory(source)) return
         val files = Files.walk(source).use { paths ->
             paths.filter { Files.isRegularFile(it) && (it.toString().endsWith(".java") || it.toString().endsWith(".kt")) }
+                .map { checkedProjectOutput(moduleDir, it) }
                 .toList()
         }
         val config = files.singleOrNull { Files.readString(it).contains("@SpringBootConfiguration") }
@@ -263,7 +268,9 @@ object AddonInstaller {
             }.orEmpty()
         }
         for (test in listOf(false, true)) {
-            val file = moduleDir.resolve("src/${if (test) "test" else "main"}/resources/${info.rootPath}/liquibase/changelog.xml")
+            val file = checkedProjectOutput(moduleDir, moduleDir.resolve(
+                "src/${if (test) "test" else "main"}/resources/${info.rootPath}/liquibase/changelog.xml",
+            ))
             if (!Files.isRegularFile(file)) continue
             val text = Files.readString(file)
             val included = xmlIncludes(text.toByteArray())

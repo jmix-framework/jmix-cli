@@ -128,9 +128,20 @@ try {
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
     $commandPath = Join-Path $BinDir "jmix.cmd"
     $wrapperMarker = "@rem Managed by the Jmix CLI installer"
-    $wrapper = "$wrapperMarker`r`n@echo off`r`n`"$launcher`" %*`r`n"
+    # Match SelfUpdater: cmd reads the UTF-8 path on a separate line after chcp.
+    $wrapper = (@(
+        $wrapperMarker
+        '@echo off'
+        'setlocal EnableExtensions DisableDelayedExpansion'
+        'set "_JMIX_CP="'
+        'for /f "tokens=2 delims=:." %%P in (''chcp 2^>nul'') do set "_JMIX_CP=%%P"'
+        'chcp 65001 >nul 2>&1'
+        ('set "_JMIX_LAUNCHER={0}"' -f $launcher.Replace('%', '%%'))
+        'if defined _JMIX_CP chcp %_JMIX_CP% >nul 2>&1'
+        '"%_JMIX_LAUNCHER%" %*'
+    ) -join "`r`n") + "`r`n"
     $currentWrapper = if (Test-Path -LiteralPath $commandPath -PathType Leaf) {
-        Get-Content -LiteralPath $commandPath -Raw
+        Get-Content -LiteralPath $commandPath -Encoding UTF8 -Raw
     } else {
         $null
     }
@@ -138,7 +149,8 @@ try {
         throw "Jmix CLI installer: $commandPath already exists and is not managed by this installer."
     }
     if ($currentWrapper -cne $wrapper) {
-        Set-Content -LiteralPath $commandPath -Value $wrapper -Encoding Ascii -NoNewline
+        $wrapperPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($commandPath)
+        [IO.File]::WriteAllText($wrapperPath, $wrapper, [Text.UTF8Encoding]::new($false))
     }
 
     New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null

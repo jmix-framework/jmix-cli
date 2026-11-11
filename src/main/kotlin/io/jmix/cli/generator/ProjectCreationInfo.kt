@@ -46,10 +46,10 @@ data class ProjectCreationInfo(
      * the literal `${project_name}` placeholder, without the template engine).
      */
     val projectDir: Path
-        get() = templateMetadata.subFolder
+        get() = (templateMetadata.subFolder
             ?.replace("\${project_name}", name)
             ?.let { targetDir.resolve(it) }
-            ?: targetDir
+            ?: targetDir).normalize()
 
     companion object {
         const val DEFAULT_REPOSITORY_URL = "https://global.repo.jmix.io/repository/public"

@@ -18,6 +18,7 @@ import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.telemetry.UsageEvent
 import io.jmix.cli.telemetry.UsageStatistics
 import io.jmix.cli.update.SelfUpdater
+import io.jmix.cli.util.describeIoError
 
 /**
  * Prints the sign-in page address, tries to open it in the browser (a failure is only a warning, the user can
@@ -66,7 +67,7 @@ class LoginCommand internal constructor(private val usageStatistics: UsageStatis
             throw CliktError("Sign-in was interrupted.")
         } catch (e: Exception) {
             // Expected failures (denied, timed out, unreachable) must stay readable; never a stack trace.
-            throw CliktError("Sign-in failed: ${SelfUpdater.describe(e, "the Jmix sign-in service")}.")
+            throw CliktError("Sign-in failed: ${describeIoError(e, "the Jmix sign-in service")}.")
         }
     }
 }

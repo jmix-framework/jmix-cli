@@ -3,6 +3,7 @@ package io.jmix.cli.wizard
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.mordant.input.RawModeScope
+import com.github.ajalt.mordant.rendering.OverflowWrap
 import com.github.ajalt.mordant.input.enterRawModeOrNull
 import com.github.ajalt.mordant.input.isCtrlC
 import com.github.ajalt.mordant.rendering.TextColors
@@ -327,15 +328,16 @@ class Prompts(
     private fun noInputError(error: String) =
         "$error No input is available to correct it — pass the value as an option or use --non-interactive."
 
-    fun askYesNo(question: String, default: Boolean, allowBack: Boolean = false): Answer<Boolean> {
+    fun askYesNo(question: String, default: Boolean, allowBack: Boolean = false, legend: String? = null): Answer<Boolean> {
         if (isInputExhausted) return Answer.Value(default)
         val options = if (default) listOf(YES, NO) else listOf(NO, YES)
-        when (val result = runSelect(question, options.map { SelectList.Entry(it) }, multi = false, allowBack)) {
+        when (val result = runSelect(question, options.map { SelectList.Entry(it) }, multi = false, allowBack, legend = legend)) {
             is SelectResult.Picked -> return Answer.Value(result.values.single() == YES)
             SelectResult.Back -> return Answer.Back
             SelectResult.Unsupported -> {}
         }
 
+        legend?.let(terminal::println)
         val hintPlain = if (default) " (Y/n)" else " (y/N)"
         val prompt = questionStyle(question) + gray(hintPlain) + questionStyle(":") + " "
         val promptWidth = question.length + hintPlain.length + 2
@@ -377,7 +379,10 @@ class Prompts(
                 itemTitle.padEnd(titleColumnWidth) + gray(" — $itemDescription")
             } ?: itemTitle
         }
-        when (val result = runSelect(question, labels.map { SelectList.Entry(it) }, multi = false, allowBack, legend = legend)) {
+        when (val result = runSelect(
+            question, labels.map { SelectList.Entry(it) }, multi = false, allowBack,
+            legend = legend, cursorIndex = defaultIndex,
+        )) {
             is SelectResult.Picked ->
                 return Answer.Value(items[labels.indexOf(result.values.single()).coerceAtLeast(0)])
             SelectResult.Back -> return Answer.Back
@@ -544,6 +549,7 @@ class Prompts(
         groups: List<String>? = null,
         values: List<String> = entries.map { it.title },
         legend: String? = null,
+        cursorIndex: Int = 0,
     ): SelectResult {
         val rawMode = terminal.enterRawModeOrNull() ?: run {
             printProgress(compact = true)
@@ -558,6 +564,7 @@ class Prompts(
             filterTexts = filterTexts,
             lockedIndices = lockedIndices,
             groups = groups,
+            cursorIndex = cursorIndex,
             values = values,
             legend = legend,
         )
@@ -713,10 +720,14 @@ class Prompts(
         // Keep the focused entry usable before spending rows on progress or history.
         val minimumEntryRows = 1 + (if (state.groups != null) 1 else 0) +
             (if (state.entries.any { it.description != null }) 1 else 0)
-        val legend = state.legend?.takeIf {
-            showTitle && terminalHeight - navigationRows - statusRows - 1 > minimumEntryRows
-        }
-        val fixedSelectionRows = navigationRows + statusRows + (if (showTitle) 1 else 0) + (if (legend != null) 1 else 0)
+        val legendRowBudget = (terminalHeight - navigationRows - statusRows - 1 - minimumEntryRows).coerceAtLeast(0)
+        val legendLines = if (showTitle && state.legend != null && legendRowBudget > 0) {
+            terminal.render(
+                state.legend, Whitespace.PRE_WRAP, overflowWrap = OverflowWrap.BREAK_WORD,
+                width = (terminalWidth - 1).coerceAtLeast(1),
+            ).lineSequence().take(legendRowBudget).toList()
+        } else emptyList()
+        val fixedSelectionRows = navigationRows + statusRows + (if (showTitle) 1 else 0) + legendLines.size
         val progress = progressLines(uiState.stage, terminalWidth, terminalHeight - fixedSelectionRows - minimumEntryRows)
         val entryRowBudget = (terminalHeight - fixedSelectionRows - progress.size).coerceAtLeast(1)
         val showGroups = state.groups != null && entryRowBudget >= 2
@@ -757,7 +768,7 @@ class Prompts(
             choices.forEach { add(renderChoice(it)) }
             if (choices.isNotEmpty()) add("")
             if (showTitle) add(questionStyle(state.question) + position + selectionCount(state))
-            legend?.let(::add)
+            addAll(legendLines)
             if (statusRows > 0) add(filterStatus(positionedState))
             if (window == null) {
                 add(gray("  No matches."))

@@ -40,6 +40,9 @@ project ID, theme, locales, add-ons, location, and a setup checklist (Git
 repository and Agent Toolkit, both checked by default). Flags and
 template metadata can resolve or hide steps. Back navigation returns to the
 previous prompted step and preserves answers that remain valid.
+When you return to the repository, Jmix version, template, or theme list, Enter
+confirms the previous choice if it is still available. A repository URL or
+version entered through **Other...** appears as its own choice on return.
 Going back from the first editable step returns to the main menu instead of
 quitting: Esc in raw terminals, `<` in line-input consoles. This works for both
 menu-launched creation and direct `jmix new`. Reopening creation starts a fresh
@@ -80,6 +83,12 @@ draft; templates opened during a cancelled run are closed before returning home.
   completed answers are preserved when navigating back.
 - Location choices include a project subdirectory, the current directory,
   `~/IdeaProjects/<name>`, and a custom path with completion.
+- If the selected folder for `jmix new` is non-empty, the location step asks
+  whether to continue and possibly overwrite files at matching paths. The
+  default is No. Declining returns to the location picker. If `--path` was
+  given, declining exits with a message to choose a different path. EOF at
+  the confirmation stops generation. Use `--force` to allow overwriting
+  matching files without a prompt.
 - Commercial add-on credential conflicts offer keeping the existing settings,
   replacing them, or saving the account credentials separately. Keeping is the
   default, including on EOF; `--non-interactive` keeps the file unchanged without

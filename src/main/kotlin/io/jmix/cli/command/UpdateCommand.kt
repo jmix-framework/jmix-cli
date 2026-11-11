@@ -10,6 +10,7 @@ import io.jmix.cli.update.CacheCleaner
 import io.jmix.cli.update.CliInstallation
 import io.jmix.cli.update.SelfUpdater
 import io.jmix.cli.update.UpdateResult
+import io.jmix.cli.util.describeIoError
 import io.jmix.cli.wizard.StatusReporter
 
 class UpdateCommand : CliktCommand(name = "update") {
@@ -43,7 +44,7 @@ class UpdateCommand : CliktCommand(name = "update") {
         } catch (e: Exception) {
             // Expected network, permission and archive failures must stay
             // readable; never surface a Java stack trace here.
-            throw CliktError("Update failed: ${SelfUpdater.describe(e)}.")
+            throw CliktError("Update failed: ${describeIoError(e)}.")
         }
         when (result) {
             is UpdateResult.UpToDate -> echo("Jmix CLI is already up to date.")

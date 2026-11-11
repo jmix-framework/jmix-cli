@@ -16,6 +16,8 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assumptions
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class ProjectGeneratorTest {
 
@@ -57,6 +59,8 @@ class ProjectGeneratorTest {
         locales: List<JmixLocale> = listOf(JmixLocale("en", "English", true)),
         createGitRepository: Boolean = false,
         onStatus: (String) -> Unit = {},
+        onWarning: (String) -> Unit = {},
+        overwriteExisting: Boolean = true,
         installToolkit: (Path) -> Unit = {},
     ): Path {
         val target = tempDir.resolve("out")
@@ -70,35 +74,47 @@ class ProjectGeneratorTest {
             templateMetadata = TemplateMetadata(),
             createGitRepository = createGitRepository,
         )
-        ProjectGenerator(onWarning = {}, onStatus = onStatus).generate(buildFixtureTemplate(), info) {
+        ProjectGenerator(onWarning, onStatus).generate(buildFixtureTemplate(), info, overwriteExisting) {
             installToolkit(target)
         }
         return target
     }
 
-    @Test
-    fun `commercial resolution failures preserve log details and stop before Git staging`() {
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `commercial resolution uses the selected build file and JDK before Git staging`(useSuppliedProfile: Boolean) {
         val details = listOf("Unknown property 'premiumRepoUser'", "Received status code 401: Unauthorized",
             "Received status code 403: Forbidden", "Could not resolve host global.repo.jmix.io")
         val template = buildFixtureTemplate()
         writeTemplate(template, "build.gradle", "repositories {\n" +
             "<% project_additionalRepositories.each { repository -> %>\${repository}\n<% } %>}\n" +
             "dependencies { implementation 'io.jmix.core:jmix-core-starter' }\n")
-        writeTemplate(template, "gradlew", "#!/bin/sh\nprintf '%s\\n' \"${details.joinToString("\n")}\"\nexit 1\n")
+        val addonProfile = if (useSuppliedProfile) {
+            val profile = checkNotNull(AddonProjectProfile.from(template))
+            // This module would sort first if the generator scanned the template again.
+            writeTemplate(template, "00.gradle", "dependencies { implementation 'io.jmix.core:jmix-core-starter' }\n")
+            profile
+        } else null
+        writeTemplate(template, "gradlew",
+            "#!/bin/sh\nprintf '%s\\n' \"\$JAVA_HOME\" \"${details.joinToString("\n")}\"\nexit 1\n")
         writeTemplate(template, "gradlew.bat", "@echo off\r\n" +
-            details.joinToString("\r\n") { "echo $it" } + "\r\nexit /b 1\r\n")
+            "echo \"%JAVA_HOME%\"\r\n" + details.joinToString("\r\n") { "echo $it" } + "\r\nexit /b 1\r\n")
         val target = tempDir.resolve("failed-project")
         val info = ProjectCreationInfo(name = "demo", targetDir = target, rootPackage = "com.example.demo",
             jmixVersion = "3.0.1", templateMetadata = TemplateMetadata(), createGitRepository = true,
             addons = AddonCatalog.parse(AddonCatalogTest.CATALOG_JSON)
                 .select(listOf("paid"), "3.0.1", AddonProjectProfile("build.gradle", emptySet())))
         val phases = mutableListOf<String>()
+        val javaHome = tempDir.resolve("selected JDK")
 
         val error = assertThrows(IOException::class.java) {
-            ProjectGenerator(onStatus = phases::add).generate(template, info)
+            ProjectGenerator(onStatus = phases::add).generate(
+                template, info, addonJavaHome = javaHome, addonProfile = addonProfile,
+            )
         }
 
         val message = error.message!!
+        assertTrue(message.contains(javaHome.toString()), message)
         details.forEach { assertTrue(message.contains(it), message) }
         assertTrue(message.contains("premiumRepoUser and premiumRepoPass"), message)
         assertTrue(message.contains("ORG_GRADLE_PROJECT_premiumRepoUser"), message)
@@ -172,6 +188,70 @@ class ProjectGeneratorTest {
     }
 
     @Test
+    fun `generation into an existing repository preserves its index`() {
+        Assumptions.assumeTrue(EnvironmentCheck.isGitAvailable())
+        val target = Files.createDirectories(tempDir.resolve("out"))
+        git(target, "init", "--quiet")
+        val notes = target.resolve("notes.txt")
+        Files.writeString(notes, "staged\n")
+        git(target, "add", "notes.txt")
+        Files.writeString(notes, "edited\n")
+        val warnings = mutableListOf<String>()
+
+        generate(createGitRepository = true, onWarning = warnings::add)
+
+        assertEquals("staged\n", git(target, "show", ":notes.txt"))
+        assertEquals("edited\n", Files.readString(notes))
+        assertEquals("notes.txt\n", git(target, "diff", "--cached", "--name-only"))
+        assertTrue(warnings.any { it.contains("Skipping Git setup") })
+        assertTrue(Files.isRegularFile(target.resolve("settings.gradle")))
+    }
+
+    @Test
+    fun `generation inside a Git work tree skips nested Git setup`() {
+        Assumptions.assumeTrue(EnvironmentCheck.isGitAvailable())
+        git(tempDir, "init", "--quiet")
+        val warnings = mutableListOf<String>()
+
+        val target = generate(createGitRepository = true, onWarning = warnings::add)
+
+        assertFalse(Files.exists(target.resolve(".git")))
+        assertEquals("", git(tempDir, "diff", "--cached", "--name-only"))
+        assertTrue(warnings.any { it.contains("inside an existing Git repository") })
+    }
+
+    @Test
+    fun `generation rechecks a destination before writing when overwrite is not approved`() {
+        val target = Files.createDirectories(tempDir.resolve("out"))
+        val settings = Files.writeString(target.resolve("settings.gradle"), "original\n")
+
+        val error = assertThrows(IOException::class.java) { generate(overwriteExisting = false) }
+
+        assertTrue(error.message.orEmpty().contains("not empty"))
+        assertEquals("original\n", Files.readString(settings))
+        assertFalse(Files.exists(target.resolve("src")))
+    }
+
+    @Test
+    fun `output validation requires paths within the destination`() {
+        val target = tempDir.resolve("out")
+        val output = target.resolve("src/Example.java")
+
+        assertEquals(output, checkedProjectOutput(target, output))
+        assertThrows(IOException::class.java) { checkedProjectOutput(target, tempDir.resolve("another-project")) }
+    }
+
+    @Test
+    fun `output validation rejects linked directories even inside the destination`() {
+        Assumptions.assumeTrue(isPosix(tempDir))
+        val target = Files.createDirectories(tempDir.resolve("out"))
+        val actual = Files.createDirectory(target.resolve("source"))
+        val link = Files.createSymbolicLink(target.resolve("src"), actual)
+
+        assertThrows(IOException::class.java) { checkedProjectOutput(target, link.resolve("Example.java")) }
+    }
+
+    @Test
     fun `toolkit files are generated when Git is disabled`() {
         val target = generate { projectDir -> writeTemplate(projectDir, "AGENTS.md", "Project guidelines\n") }
 
@@ -212,4 +292,14 @@ class ProjectGeneratorTest {
 
     private fun isPosix(path: Path): Boolean =
         "posix" in path.fileSystem.supportedFileAttributeViews()
+
+    private fun git(projectDir: Path, vararg args: String): String {
+        val process = ProcessBuilder(listOf("git") + args)
+            .directory(projectDir.toFile())
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        assertEquals(0, process.waitFor(), output)
+        return output
+    }
 }

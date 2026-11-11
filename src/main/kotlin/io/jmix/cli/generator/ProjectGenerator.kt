@@ -4,7 +4,10 @@ import io.jmix.cli.addon.AddonProjectProfile
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.TimeUnit
 
@@ -20,7 +23,23 @@ class ProjectGenerator(
     private val onStatus: (String) -> Unit = {},
 ) {
 
-    fun generate(templateRoot: Path, info: ProjectCreationInfo, installToolkit: () -> Unit = {}) {
+    fun generate(
+        templateRoot: Path,
+        info: ProjectCreationInfo,
+        overwriteExisting: Boolean = true,
+        addonJavaHome: Path? = null,
+        addonProfile: AddonProjectProfile? = null,
+        installToolkit: () -> Unit = {},
+    ) {
+        val targetDir = info.targetDir.toAbsolutePath().normalize()
+        val targetHadFiles = projectTargetHasFiles(targetDir)
+        if (targetHadFiles && !overwriteExisting) {
+            throw IOException("Directory $targetDir is not empty. Choose another directory or use --force to generate there.")
+        }
+        val projectDir = checkedProjectOutput(targetDir, info.projectDir)
+        if (Files.exists(projectDir, NOFOLLOW_LINKS) && !Files.isDirectory(projectDir, NOFOLLOW_LINKS)) {
+            throw IOException("Project directory $projectDir already exists and is not a directory.")
+        }
         onStatus("Rendering the project files")
         val binding = Bindings.createBinding(info)
 
@@ -30,30 +49,35 @@ class ProjectGenerator(
         val allFiles = listTemplateFiles(templateRoot)
         for (file in allFiles) {
             if (isSkippedInMainPass(file)) continue
-            if (!processFile(file, templateRoot, info.targetDir, binding)) failed++
+            if (!processFile(file, templateRoot, targetDir, binding)) failed++
         }
 
-        failed += createLocaleMessages(allFiles, templateRoot, info, binding)
+        failed += createLocaleMessages(allFiles, templateRoot, targetDir, info.locales, binding)
 
         if (failed > 0) {
             throw IOException("$failed file(s) could not be generated — the project is incomplete.")
         }
 
-        setGradlewExecutable(info.projectDir)
+        setGradlewExecutable(checkedProjectOutput(targetDir, projectDir.resolve(GRADLEW)))
 
         if (info.addons.any { !it.included }) {
-            val profile = AddonProjectProfile.from(templateRoot)
+            val profile = addonProfile ?: AddonProjectProfile.from(templateRoot)
                 ?: throw IOException("The template has no module for add-on installation.")
-            val buildFile = info.targetDir.resolve(TemplateEngine.render(profile.buildFile, binding))
+            val buildFile = resolveOutputFile(targetDir, TemplateEngine.render(profile.buildFile, binding))
+            checkedProjectOutput(targetDir, projectDir.resolve("gradlew.bat"))
             onStatus("Resolving add-on dependencies with the Gradle wrapper (this can take a few minutes)")
-            AddonInstaller.install(info, buildFile)
+            AddonInstaller.install(info, buildFile, addonJavaHome)
         }
 
+        checkedProjectOutput(targetDir, projectDir)
         installToolkit()
 
         if (info.createGitRepository) {
-            onStatus("Initializing the Git repository")
-            initGitRepository(info.projectDir)
+            if (targetHadFiles) {
+                onWarning("Skipping Git setup because $targetDir was not empty before generation.")
+            } else {
+                initGitRepository(checkedProjectOutput(targetDir, projectDir))
+            }
         }
     }
 
@@ -86,15 +110,14 @@ class ProjectGenerator(
         try {
             // Paths are Groovy templates too (e.g. src/main/java/${project_rootPath}/...).
             val relativePath = relativeSlashPath(file, templateRoot)
-            val processedName = TemplateEngine.render(relativePath, binding)
-            val targetFile = targetDir.resolve(processedName)
+            val targetFile = resolveOutputFile(targetDir, TemplateEngine.render(relativePath, binding))
             Files.createDirectories(targetFile.parent)
 
             if (isTemplateFile(relativePath)) {
                 val content = TemplateEngine.render(readUtf8(file), binding)
                 Files.writeString(targetFile, content)
             } else {
-                Files.copy(file, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                Files.copy(file, targetFile, REPLACE_EXISTING)
                 if (relativePath == GRADLEW) {
                     val text = TemplateEngine.convertLineSeparators(readUtf8(targetFile))
                     Files.writeString(targetFile, text)
@@ -107,19 +130,31 @@ class ProjectGenerator(
         }
     }
 
+    private fun resolveOutputFile(targetDir: Path, name: String): Path {
+        val relative = try {
+            targetDir.fileSystem.getPath(name)
+        } catch (e: InvalidPathException) {
+            throw IOException("Invalid generated file path: $name", e)
+        }
+        val output = targetDir.resolve(relative).normalize()
+        if (relative.root != null || output == targetDir) throw IOException("Invalid generated file path: $name")
+        return checkedProjectOutput(targetDir, output)
+    }
+
     /** Returns the number of locales whose messages file could not be generated. */
     private fun createLocaleMessages(
         allFiles: List<Path>,
         templateRoot: Path,
-        info: ProjectCreationInfo,
+        targetDir: Path,
+        locales: List<JmixLocale>,
         binding: MutableMap<String, Any?>,
     ): Int {
         val messagesTemplate = allFiles.lastOrNull {
             it.fileName.toString().startsWith(MESSAGES_PREFIX)
         } ?: return 0
-        return info.locales.count { locale ->
+        return locales.count { locale ->
             binding["current_locale"] = locale
-            !processFile(messagesTemplate, templateRoot, info.targetDir, binding)
+            !processFile(messagesTemplate, templateRoot, targetDir, binding)
         }
     }
 
@@ -133,8 +168,7 @@ class ProjectGenerator(
     private fun readUtf8(file: Path): String =
         String(Files.readAllBytes(file), StandardCharsets.UTF_8)
 
-    private fun setGradlewExecutable(projectDir: Path) {
-        val gradlew = projectDir.resolve(GRADLEW)
+    private fun setGradlewExecutable(gradlew: Path) {
         if (!Files.exists(gradlew)) {
             onWarning("$gradlew does not exist")
             return
@@ -150,6 +184,19 @@ class ProjectGenerator(
 
     private fun initGitRepository(projectDir: Path) {
         try {
+            if (generateSequence(projectDir.toRealPath()) { it.parent }
+                    .any { Files.exists(it.resolve(".git"), NOFOLLOW_LINKS) }
+            ) {
+                onWarning("Skipping Git setup because $projectDir is inside an existing Git repository.")
+                return
+            }
+            if (listOf("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY")
+                    .any { !System.getenv(it).isNullOrEmpty() }
+            ) {
+                onWarning("Skipping Git setup because the environment overrides the repository location.")
+                return
+            }
+            onStatus("Initializing the Git repository")
             for (command in listOf(listOf("git", "init"), listOf("git", "add", "--all"))) {
                 val process = ProcessBuilder(command)
                     .directory(projectDir.toFile())

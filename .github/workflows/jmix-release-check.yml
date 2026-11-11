@@ -17,7 +17,7 @@ jobs:
     env:
       JMIX_VERSION: ${{ inputs.jmix_version }}
     steps:
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: 25

@@ -14,26 +14,42 @@ complete option reference.
   Discover new releases from the selected repository's template metadata
   without requiring a CLI update. By default, select the newest stable version.
   The wizard offers the primary public repository, its backup, and a custom URL.
+  Enter an HTTP or HTTPS base URL with a host and optional port and path. Supply
+  the base URL without credentials, a query, or a fragment. The wizard and
+  `--repository` validate the URL before contacting the repository.
   Changing repositories invalidates the current template catalog.
-- Cache templates under `~/.jmix/templates/`, isolated by repository URL.
+- Cache templates under `~/.jmix/templates/sha256-<hash>/`, using the SHA-256 of
+  the repository URL with trailing slashes removed. The first request to each
+  repository after upgrading from the old cache format requires network access.
   Reuse valid Maven metadata for 12 hours. If a version specified with
   `--jmix-version` or entered under **Other** is missing from a fresh list,
   check the repository once before reporting it as unknown.
   Replace cached metadata only after validating the response. If a refresh
   fails, warn that the version list may be stale and use the last valid copy.
-  Refresh snapshots when online; use validated cached artifacts when offline.
-  Reject corrupt or partial downloads.
+  Metadata requests have a deadline for the complete response. JAR downloads
+  stop if the response body stalls and are limited to 1 GiB.
+  Validate JAR structure, entry sizes and checksums, and the presence of project
+  templates before caching and on reuse. Download a replacement for a corrupt
+  cached JAR. Refresh snapshots when online and keep the last valid copy when
+  the refresh fails, including when offline.
 - Evaluate `.globals` before rendering. Preserve Studio binding names and Groovy
   scriptlets in both paths and file contents. Copy excluded binary/static files
   unchanged, generate locale message files, and normalize the Gradle wrapper's
   line endings and executable permissions.
-- Non-interactive output defaults to `./<name>`. An existing non-empty target
-  requires interactive confirmation or `--force`; a file cannot be a target directory.
+- Each base package segment must be a Java identifier using lowercase letters,
+  digits, or underscores. Java keywords are rejected. The wizard validates
+  `--package`, manual input, and the package derived from the project name and
+  template defaults. If the automatic package is invalid, supply `--package`.
+- Non-interactive output defaults to `./<name>`. The wizard asks before
+  generating into a non-empty folder. Confirmation or `--force` allows
+  overwriting files at matching paths. Choose another folder to keep the
+  existing files. A file or symbolic link cannot be the output directory.
 - Install selected [add-ons](add-ons.md) and the
-  [Agent Toolkit](environment-and-toolkit.md) before optional `git init` and
-  `git add --all`, so Git stages Toolkit files alongside the rest of the project
-  according to its ignore rules. Generation does not create a commit.
-  `--no-git` skips Git setup.
+  [Agent Toolkit](environment-and-toolkit.md) before optional Git setup.
+  Git stages generated and Toolkit files according to its ignore rules in
+  new or empty destinations outside an existing Git worktree. Generation
+  skips Git setup for a non-empty destination and does not create a commit.
+  Use `--no-git` to skip Git setup explicitly.
 - Skip the Agent Toolkit when `--no-agents-toolkit` is passed or the wizard's
   setup entry is unchecked.
   Its failure produces a warning and does not discard the project.

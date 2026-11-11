@@ -3,8 +3,10 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $releaseDir = Join-Path $repoRoot "build\release"
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) ("jmix-cli-install-test-" + [guid]::NewGuid().ToString("N"))
-$installRoot = Join-Path $tempDir "install"
-$binDir = Join-Path $tempDir "bin"
+# Keep the script ASCII for Windows PowerShell 5.1 while exercising Cyrillic paths.
+$cyrillic = [string][char]0x0416
+$installRoot = Join-Path $tempDir "$cyrillic install"
+$binDir = Join-Path $tempDir "$cyrillic bin"
 
 try {
     New-Item -ItemType Directory -Path $tempDir | Out-Null
@@ -41,7 +43,7 @@ try {
     # Self-update reads this; never let the tests reach the real release feed.
     $env:JMIX_CLI_NO_AUTO_UPDATE = "1"
     $helpOutput = & $commandPath --help | Out-String
-    if ($helpOutput -notmatch "Jmix CLI") {
+    if ($LASTEXITCODE -ne 0 -or $helpOutput -notmatch "Jmix CLI") {
         throw "Installed CLI did not start."
     }
     # The account commands must be registered in the release image.
@@ -106,6 +108,31 @@ try {
         $startOutput -notmatch "(?m)^Usage: jmix ") {
         throw "Installer did not start the CLI."
     }
+
+    # A second checksum forces the updater to write a new jmix.cmd.
+    $updatedRelease = Join-Path $tempDir "updated-release"
+    New-Item -ItemType Directory -Path $updatedRelease | Out-Null
+    $updatedArchive = Join-Path $updatedRelease $archive.Name
+    Copy-Item -LiteralPath $archive.FullName -Destination $updatedArchive
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::Open($updatedArchive, [IO.Compression.ZipArchiveMode]::Update)
+    try {
+        $zip.CreateEntry("jmix/unicode-wrapper-update-test") | Out-Null
+    } finally {
+        $zip.Dispose()
+    }
+    $newChecksum = (Get-FileHash -LiteralPath $updatedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath "$updatedArchive.sha256" -Value "$newChecksum  $($archive.Name)" -Encoding Ascii
+    $env:JMIX_CLI_RELEASE_BASE_URL = $updatedRelease
+    $updateOutput = & $commandPath update *>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $updateOutput -notmatch "Updated Jmix CLI to the latest release") {
+        throw "CLI update through jmix.cmd failed: $updateOutput"
+    }
+    $afterUpdate = & $commandPath update *>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $afterUpdate -notmatch "already up to date") {
+        throw "Updated jmix.cmd did not launch the new release: $afterUpdate"
+    }
+    Remove-Item Env:\JMIX_CLI_RELEASE_BASE_URL
 
     $tamperedDir = Join-Path $tempDir "tampered-release"
     New-Item -ItemType Directory -Path $tamperedDir | Out-Null

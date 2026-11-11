@@ -10,19 +10,27 @@ import com.google.gson.JsonParser
 import io.jmix.cli.env.ProjectLauncher
 import io.jmix.cli.account.Session
 import io.jmix.cli.account.SessionStore
+import io.jmix.cli.account.TOKEN_PATH
 import io.jmix.cli.account.issuesTokens
 import io.jmix.cli.telemetry.UsageStatistics
 import io.jmix.cli.trial.TRIAL_ROOT
 import io.jmix.cli.trial.writeTrialZip
+import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE
+import java.nio.file.attribute.PosixFilePermission.OWNER_READ
 import java.time.LocalDate
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 /** Drives the command with Clikt's test(), whose terminal is neither interactive nor styled. */
 class TrialCommandTest {
@@ -32,6 +40,14 @@ class TrialCommandTest {
 
     private fun signedIn(server: FakeServer, dir: Path): SessionStore =
         SessionStore(dir.resolve("session.json")).also { it.save(Session("global", server.url, server.url, "r0")) }
+
+    private fun FakeServer.serveTrialZip(zip: Path) {
+        issuesTokens()
+        on("GET", "/app/rest/v3/subscriptions") {
+            FakeServer.json(200, """[{"endDate":"2026-11-24","trialDownloadUrl":"${url}/t.zip"}]""")
+        }
+        on("GET", "/t.zip") { FakeServer.Response(200, Files.readAllBytes(zip)) }
+    }
 
     @Test
     fun `without a session a non-interactive run asks for jmix login`(@TempDir dir: Path) {
@@ -43,15 +59,45 @@ class TrialCommandTest {
 
     @Test
     fun `starting a trial without consent fails plainly and starts nothing`(@TempDir dir: Path) {
+        val out = dir.resolve("out")
+        val stagingAtFirstRequest = AtomicReference(emptyList<Path>())
         FakeServer().use { server ->
-            server.issuesTokens()
+            server.on("POST", TOKEN_PATH) {
+                stagingAtFirstRequest.set(Files.list(out).use { it.toList() })
+                FakeServer.json(200, """{"access_token":"a1","refresh_token":"r1"}""")
+            }
             server.on("GET", "/app/rest/v3/subscriptions") { FakeServer.json(200, "[]") }
             server.on("GET", "/app/rest/v3/trial/addons/check") { FakeServer.json(200, """{"available":true}""") }
             val result = TrialCommand(signedIn(server, dir), { today })
-                .test(listOf("--non-interactive", "--path", dir.resolve("out").toString()))
+                .test(listOf("--non-interactive", "--path", out.toString()))
             assertEquals(1, result.statusCode)
             assertEquals("Starting the Enterprise+BPM trial needs confirmation. Re-run with --start-trial.\n", result.stderr)
             assertTrue(server.requests.none { it.path.endsWith("/generate") })
+            assertTrue(stagingAtFirstRequest.get().single().fileName.toString().startsWith(".jmix-trial-"))
+            assertEquals(emptyList<Path>(), Files.list(out).use { it.toList() })
+        }
+    }
+
+    @Test
+    fun `an existing unwritable directory blocks a trial before the first account request`(@TempDir dir: Path) {
+        val out = Files.createDirectory(dir.resolve("out"))
+        assumeTrue(Files.getFileStore(out).supportsFileAttributeView("posix"))
+        val permissions = Files.getPosixFilePermissions(out)
+        try {
+            Files.setPosixFilePermissions(out, setOf(OWNER_READ, OWNER_EXECUTE))
+            assumeTrue(!Files.isWritable(out))
+            FakeServer().use { server ->
+                server.issuesTokens()
+                server.on("GET", "/app/rest/v3/subscriptions") { FakeServer.json(200, "[]") }
+                server.on("GET", "/app/rest/v3/trial/addons/check") { FakeServer.json(200, """{"available":true}""") }
+                val result = TrialCommand(signedIn(server, dir), { today })
+                    .test(listOf("--non-interactive", "--start-trial", "--path", out.toString()))
+                assertEquals(1, result.statusCode)
+                assertTrue(result.stderr.startsWith("Cannot use $out as the trial directory:"), result.stderr)
+                assertTrue(server.requests.isEmpty())
+            }
+        } finally {
+            Files.setPosixFilePermissions(out, permissions)
         }
     }
 
@@ -121,6 +167,70 @@ class TrialCommandTest {
             assertTrue(Files.isDirectory(out.resolve("$TRIAL_ROOT/demo/bpm")))
             assertTrue(result.stdout.indexOf("Select project location") < result.stdout.indexOf("Checking your Enterprise+BPM trial"))
             assertTrue(result.stdout.contains("What's next?"), result.stdout)
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `trial chooses another directory without downloading again`(raw: Boolean, @TempDir dir: Path) {
+        val original = dir.resolve("original")
+        val marker = Files.createDirectories(original.resolve(TRIAL_ROOT)).resolve("mine.txt")
+        Files.writeString(marker, "keep")
+        val alternative = dir.resolve("New trial")
+        FakeServer().use { server ->
+            server.serveTrialZip(writeTrialZip(dir.resolve("t.zip")))
+            val command = TrialCommand(signedIn(server, dir), { today })
+            val args = listOf("--path", original.toString())
+            val result = if (raw) {
+                val events = listOf(KeyboardEvent("ArrowDown"), KeyboardEvent("Enter")) +
+                    List(3) { KeyboardEvent("ArrowDown") } + KeyboardEvent("Enter") +
+                    alternative.toString().map { KeyboardEvent(it.toString()) } + KeyboardEvent("Enter") + KeyboardEvent("q")
+                command.test(args, ansiLevel = AnsiLevel.TRUECOLOR, width = 160, height = 40, inputEvents = events)
+            } else {
+                val stdin = System.`in`
+                try {
+                    System.setIn(ByteArrayInputStream("y\n4\n$alternative\n".toByteArray()))
+                    command.test(args, inputInteractive = false, outputInteractive = false)
+                } finally {
+                    System.setIn(stdin)
+                }
+            }
+            assertEquals(0, result.statusCode, result.stderr)
+            assertTrue(result.stdout.contains("Choose another directory?"), result.stdout)
+            assertTrue(result.stdout.contains("${original.resolve(TRIAL_ROOT)} already exists."), result.stdout)
+            assertTrue(Files.isDirectory(alternative.resolve("$TRIAL_ROOT/demo/bpm")))
+            assertEquals("keep", Files.readString(marker))
+            assertEquals(listOf(original.resolve(TRIAL_ROOT)), Files.list(original).use { it.toList() })
+            assertEquals(listOf(alternative.resolve(TRIAL_ROOT)), Files.list(alternative).use { it.toList() })
+            assertEquals(1, server.requests.count { it.path == "/t.zip" })
+            assertEquals(1, server.requests.count { it.path == "/app/rest/v3/subscriptions" })
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `trial leaves an occupied destination alone when prompting is disabled or input ends`(
+        nonInteractive: Boolean,
+        @TempDir dir: Path,
+    ) {
+        val original = dir.resolve("original")
+        val project = Files.createDirectories(original.resolve(TRIAL_ROOT))
+        FakeServer().use { server ->
+            server.serveTrialZip(writeTrialZip(dir.resolve("t.zip")))
+            val args = listOf("--path", original.toString()) + if (nonInteractive) listOf("--non-interactive") else emptyList()
+            val stdin = System.`in`
+            try {
+                System.setIn(ByteArrayInputStream(byteArrayOf()))
+                val result = TrialCommand(signedIn(server, dir), { today })
+                    .test(args, inputInteractive = false, outputInteractive = false)
+                assertEquals(1, result.statusCode, result.stderr)
+                assertTrue(result.stderr.contains("Choose another directory with --path."), result.stderr)
+                assertEquals(!nonInteractive, result.stdout.contains("Choose another directory?"), result.stdout)
+                assertTrue(Files.list(project).use { it.findAny().isEmpty })
+                assertEquals(listOf(project), Files.list(original).use { it.toList() })
+            } finally {
+                System.setIn(stdin)
+            }
         }
     }
 

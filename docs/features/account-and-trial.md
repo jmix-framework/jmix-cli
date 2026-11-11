@@ -101,18 +101,18 @@ loopback redirect.
 ## Trial flow
 
 `--non-interactive` disables all prompts and automatic opening/running. Without it,
-the location and follow-up steps also support numbered/line-input consoles. EOF chooses
-the default location and skips follow-up actions. Automatic sign-in and trial-start
-consent require an interactive input terminal; scripts must sign in beforehand and
-use `--start-trial` when activation is needed.
+the location and follow-up steps also support numbered/line-input consoles. EOF in the
+initial location picker chooses the default location and skips follow-up actions.
+Automatic sign-in and trial-start consent require an interactive input terminal.
+Scripts must sign in beforehand and use `--start-trial` when activation is needed.
 
 1. **Directory.** Without `--path`, an interactive run uses the same location picker as
    `jmix new`: current directory, `./jmix-trial`, `~/IdeaProjects/jmix-trial`, or a custom
    path with completion. Esc (`<` in a text console) returns to the main menu before
-   any account request. `--path` skips the picker; non-interactive runs default to the
-   current directory. The selected parent directory is created before anything else,
-   so a bad path fails before a trial can be started. A file at that path is refused.
-   The directory stays, empty, when a later step fails before the download.
+   any account request. `--path` skips the initial picker; non-interactive runs default to the
+   current directory. The CLI creates the parent if needed and prepares a hidden
+   `.jmix-trial-*` directory inside it before contacting the account. This checks
+   write access before the trial can be started.
 2. **Session.** The saved session is used. With none, an interactive run signs in first
    as `jmix login` does, in the global region, and prints the same `Signed in ...` line.
    A browser that still has a Jmix session signs in without showing a page, so that line
@@ -178,20 +178,22 @@ and the archive has no `.gitignore`.
 - The download times out if the server takes too long to respond or stops sending data
   for a minute.
 - The zip goes to a temporary file in the system temp directory, so an interrupted or
-  failed download leaves nothing in `--path`.
-- Unpacking uses a hidden `.jmix-trial-*` staging folder inside `--path` and the zip-slip
-  guard of `JdkInstaller.unpackZip`. It requires a ZIP central directory and limits the
-  total extracted file content to 4 GiB, counting actual bytes across all entries.
+  failed download leaves no project in `--path`.
+- The CLI reuses the staging directory for unpacking. Declining the trial or a
+  failed download removes the staging directory and leaves the parent in place.
+- Unpacking uses the zip-slip guard of `JdkInstaller.unpackZip`. It requires a ZIP central
+  directory and limits the total extracted file content to 4 GiB, counting actual bytes across all entries.
   Directory entries must be empty and entry names cannot contain control characters.
   A malformed or oversized archive fails before any
   project is moved into place.
   The projects are the top folders that hold a
   `settings.gradle(.kts)` and a `trial_repository`; other entries are ignored, and an
   archive without a project is an error.
-- An existing `<path>/<folder>`, for example from an earlier run, is refused before anything
-  moves: `<path>/<folder> already exists. Remove it or choose another directory with --path`.
-  This includes dangling symbolic links. If a later move fails, the CLI attempts to roll
-  back the projects it moved and leaves replacement directories in place.
+- The CLI lists every occupied `<path>/<folder>` before moving any project. This includes
+  files, directories, and dangling symbolic links. Interactive runs can choose a different
+  parent and reuse the downloaded ZIP. Declining or running with `--non-interactive` ends
+  the command with a hint to use another `--path`. If a later move fails, the CLI attempts
+  to roll back the projects it moved and leaves replacement directories in place.
 - The archive stores no Unix permissions, so every `gradlew` is made executable. The folders
   then move into place and the staging folder goes away.
 
@@ -230,8 +232,8 @@ quoted for the current platform, including spaces and apostrophes.
 - After the trial ends, `jmix trial` reports it as expired and points to the contacts page,
   unless the store lets the account start another trial.
 - When a demo stops starting before the printed end date, download a fresh copy into another
-  directory with `jmix trial --path <directory>`. The old folder is refused, so keep it
-  elsewhere or delete it. A fresh copy helps only if the store has built a newer archive.
+  directory with `jmix trial --path <directory>`. A fresh copy helps only if the store has
+  built a newer archive.
 
 ## Limitations
 

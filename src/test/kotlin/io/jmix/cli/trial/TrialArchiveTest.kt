@@ -186,13 +186,20 @@ class TrialArchiveTest {
     }
 
     @Test
-    fun `unpack refuses an existing project folder and writes nothing`() {
+    fun `unpack reports all occupied project paths before publishing any project`() {
         val parent = dir.resolve("work")
         val marker = Files.createDirectories(parent.resolve(root)).resolve("mine.txt").also { Files.writeString(it, "keep") }
-        val error = assertThrows<IOException> { TrialArchive.unpack(trialZip(), parent) }
-        assertTrue(error.message!!.contains("already exists"), error.message)
+        val older = "jmix-commercial-addons-demo-2.8.0"
+        val file = Files.writeString(parent.resolve(older), "also keep")
+        val zip = trialZip(
+            "$older/settings.gradle" to "", "$older/trial_repository/x" to "x",
+            "zeta/settings.gradle" to "", "zeta/trial_repository/x" to "x",
+        )
+        val error = assertThrows<TrialDestinationConflict> { TrialArchive.unpack(zip, parent) }
+        assertEquals(listOf(file, parent.resolve(root)), error.paths)
         assertEquals("keep", Files.readString(marker))
-        assertEquals(listOf(root), Files.list(parent).use { s -> s.map { it.fileName.toString() }.toList() })
+        assertEquals("also keep", Files.readString(file))
+        assertEquals(setOf(parent.resolve(root), file), Files.list(parent).use { it.toList().toSet() })
     }
 
     @Test
@@ -201,7 +208,7 @@ class TrialArchiveTest {
         val parent = Files.createDirectories(dir.resolve("work"))
         val link = Files.createSymbolicLink(parent.resolve("zeta"), parent.resolve("missing"))
         val archive = trialZip("zeta/settings.gradle" to "", "zeta/trial_repository/x" to "x")
-        assertThrows<IOException> { TrialArchive.unpack(archive, parent) }
+        assertEquals(listOf(link), assertThrows<TrialDestinationConflict> { TrialArchive.unpack(archive, parent) }.paths)
         assertEquals(listOf(link), Files.list(parent).use { it.toList() })
         assertTrue(Files.isSymbolicLink(link))
     }

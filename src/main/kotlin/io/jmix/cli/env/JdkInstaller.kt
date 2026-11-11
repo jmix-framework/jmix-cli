@@ -2,7 +2,8 @@ package io.jmix.cli.env
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
-import io.jmix.cli.util.copyWithProgress
+import io.jmix.cli.util.Http
+import io.jmix.cli.util.copyHttpBody
 import io.jmix.cli.util.hostOf
 import java.io.IOException
 import java.net.URI
@@ -145,25 +146,28 @@ object JdkInstaller {
 
     private fun resolveAsset(majorVersion: Int): AdoptiumAsset {
         val url = assetsUrl(majorVersion)
-        val response = http.send(
+        val response = Http.sendBytes(
+            http,
             HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(30)).GET().build(),
-            HttpResponse.BodyHandlers.ofString(),
+            MAX_ASSET_METADATA_BYTES,
         )
         if (response.statusCode() != 200) {
             throw IOException("Failed to query the Adoptium API ($url): HTTP ${response.statusCode()}")
         }
-        return pickAsset(response.body())
+        return pickAsset(response.body().toString(Charsets.UTF_8))
     }
 
     private fun download(asset: AdoptiumAsset, target: Path, onProgress: (Long, Long) -> Unit) {
         val response = http.send(
-            HttpRequest.newBuilder(URI.create(asset.pkg.link)).timeout(Duration.ofSeconds(60)).GET().build(),
+            HttpRequest.newBuilder(URI.create(asset.pkg.link)).timeout(DOWNLOAD_TIMEOUT).GET().build(),
             HttpResponse.BodyHandlers.ofInputStream(),
         )
         if (response.statusCode() != 200) {
-            throw IOException("Failed to download JDK (${asset.pkg.link}): HTTP ${response.statusCode()}")
+            response.body().use {
+                throw IOException("Failed to download JDK (${asset.pkg.link}): HTTP ${response.statusCode()}")
+            }
         }
-        copyWithProgress(response.body(), target, asset.pkg.size, onProgress)
+        copyHttpBody(response.body(), target, asset.pkg.size, DOWNLOAD_TIMEOUT, onProgress)
     }
 
     private fun verifyChecksum(archive: Path, asset: AdoptiumAsset) {
@@ -257,6 +261,8 @@ object JdkInstaller {
         .build()
 
     private const val ADOPTIUM_API = "https://api.adoptium.net"
+    private val DOWNLOAD_TIMEOUT: Duration = Duration.ofSeconds(60)
+    private const val MAX_ASSET_METADATA_BYTES = 2 * 1024 * 1024
     private const val DOWNLOAD_BUFFER_SIZE = 64 * 1024
     private const val UNPACK_TIMEOUT_MINUTES = 5L
 }

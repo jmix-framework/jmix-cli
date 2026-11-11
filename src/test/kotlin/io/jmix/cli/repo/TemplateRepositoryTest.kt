@@ -1,14 +1,18 @@
 package io.jmix.cli.repo
 
-import com.sun.net.httpserver.HttpServer
 import io.jmix.cli.FakeServer
+import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 import java.time.Duration
 import java.time.Instant
+import java.util.zip.CRC32
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -24,11 +28,18 @@ class TemplateRepositoryTest {
     lateinit var cacheDir: Path
 
     private val unreachableUrl = "http://127.0.0.1:1/repo"
-    private val otherUnreachableUrl = "http://127.0.0.1:1/other-repo"
-    private val metadataPath = "/io/jmix/templates/studio/jmix-studio-templates/maven-metadata.xml"
+    private val artifactPath = "/io/jmix/templates/studio/jmix-studio-templates"
+    private val metadataPath = "$artifactPath/maven-metadata.xml"
+    private val sourceEntry = "project/application/source.txt"
+
+    private fun jarName(version: String) = "jmix-studio-templates-$version.jar"
+
+    private fun FakeServer.serveJar(version: String, body: ByteArray) {
+        on("GET", "$artifactPath/$version/${jarName(version)}") { FakeServer.Response(200, body) }
+    }
 
     private fun seedMetadata(repoUrl: String, versions: List<String>): Path {
-        val dir = cacheDir.resolve(repoUrl.replace(Regex("[^a-zA-Z0-9]"), ""))
+        val dir = TemplateRepository(repoUrl, cacheDir).repoCacheDir
         Files.createDirectories(dir)
         return Files.writeString(dir.resolve("maven-metadata.xml"), metadata(versions))
     }
@@ -156,17 +167,10 @@ class TemplateRepositoryTest {
 
     @Test
     fun `template jar download reports byte progress and is cached`() {
-        val body = ByteArray(200_000) { it.toByte() }.also { it[0] = 0x50; it[1] = 0x4B; it[2] = 3; it[3] = 4 }
-        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        var requests = 0
-        server.createContext("/repo") { exchange ->
-            requests++
-            exchange.sendResponseHeaders(200, body.size.toLong())
-            exchange.responseBody.use { it.write(body) }
-        }
-        server.start()
-        try {
-            val repo = TemplateRepository("http://127.0.0.1:${server.address.port}/repo", cacheDir)
+        val body = jarWithEntry("project/application/payload.bin", ByteArray(200_000) { it.toByte() })
+        FakeServer().use { server ->
+            server.serveJar("3.0.1", body)
+            val repo = TemplateRepository(server.url, cacheDir)
             val reported = mutableListOf<Pair<Long, Long>>()
 
             val jar = repo.templatesJar("3.0.1") { done, total -> reported += done to total }
@@ -178,10 +182,8 @@ class TemplateRepositoryTest {
 
             reported.clear()
             assertEquals(jar, repo.templatesJar("3.0.1") { done, total -> reported += done to total })
-            assertEquals(1, requests, "a cached jar is not downloaded again")
+            assertEquals(1, server.requests.size, "a cached jar is not downloaded again")
             assertTrue(reported.isEmpty(), "a cache hit reports no progress")
-        } finally {
-            server.stop(0)
         }
     }
 
@@ -196,34 +198,133 @@ class TemplateRepositoryTest {
     }
 
     @Test
-    fun `cache is keyed by repository url`() {
-        seedMetadata(unreachableUrl, listOf("3.0.1"))
-        // A different repository must NOT see the first repository's cache.
-        val other = TemplateRepository(otherUnreachableUrl, cacheDir)
-        assertThrows(IOException::class.java) { other.fetchVersions() }
+    fun `repositories with the same legacy key have independent offline caches`() {
+        val version = "3.0.1"
+        val jarName = jarName(version)
+        val jarPath = "$artifactPath/$version/$jarName"
+        val versionsByPath = mapOf(
+            "/repo-a" to listOf(version, "3.0.2"),
+            "/repoa" to listOf(version, "3.0.3"),
+        )
+
+        val serverUrl = FakeServer().use { server ->
+            val legacyKey = Regex("[^a-zA-Z0-9]")
+            val legacyDir = cacheDir.resolve(legacyKey.replace("${server.url}/repo-a", ""))
+            Files.createDirectories(legacyDir)
+            Files.writeString(legacyDir.resolve("maven-metadata.xml"), metadata(listOf("3.0.0")))
+            Files.write(legacyDir.resolve(jarName), jarWithSource("legacy"))
+
+            for ((path, versions) in versionsByPath) {
+                server.on("GET", "$path$metadataPath") { FakeServer.Response(200, metadata(versions).toByteArray()) }
+                server.on("GET", "$path$jarPath") { FakeServer.Response(200, jarWithSource(path)) }
+                val repo = TemplateRepository(server.url + path, cacheDir)
+                assertEquals(versions, repo.fetchVersions())
+                repo.templatesJar(version)
+                ageCache(repo.repoCacheDir.resolve("maven-metadata.xml"), 13)
+            }
+            assertEquals(
+                versionsByPath.keys.flatMap { listOf("$it$metadataPath", "$it$jarPath") },
+                server.requests.map { it.path },
+            )
+            server.url
+        }
+
+        for ((path, versions) in versionsByPath) {
+            val repo = TemplateRepository("$serverUrl$path/", cacheDir)
+            val catalog = repo.versionCatalog()
+            assertTrue(catalog.stale)
+            assertEquals(versions, catalog.versions)
+            ZipFile(repo.templatesJar(version).toFile()).use { jar ->
+                assertEquals(path, jar.getInputStream(jar.getEntry(sourceEntry)).bufferedReader().use { it.readText() })
+            }
+        }
+    }
+
+    private fun jarWithSource(source: String): ByteArray = jarWithEntry(sourceEntry, source.toByteArray())
+
+    private fun jarWithEntry(name: String, content: ByteArray): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        ZipOutputStream(bytes).use { zip ->
+            val entry = ZipEntry(name).apply {
+                method = ZipEntry.STORED
+                size = content.size.toLong()
+                crc = CRC32().apply { update(content) }.value
+            }
+            zip.putNextEntry(entry)
+            zip.write(content)
+        }
+        return bytes.toByteArray()
     }
 
     @Test
-    fun `corrupt cached jar is not returned`() {
-        val repoDir = cacheDir.resolve(unreachableUrl.replace(Regex("[^a-zA-Z0-9]"), ""))
-        Files.createDirectories(repoDir)
-        val jar = repoDir.resolve("jmix-studio-templates-3.0.1.jar")
-        Files.writeString(jar, "<html>captive portal</html>")
+    fun `a truncated cached jar is downloaded again`() {
+        val version = "3.0.1"
+        val valid = jarWithSource("recovered")
+        FakeServer().use { server ->
+            val repo = TemplateRepository(server.url, cacheDir)
+            Files.createDirectories(repo.repoCacheDir)
+            val jar = repo.repoCacheDir.resolve(jarName(version))
+            // Keep the local entry and central headers, but remove the end-of-central-directory record.
+            Files.write(jar, valid.copyOf(valid.size - 22))
+            assertThrows(IOException::class.java) { repo.templatesJar(version) }
 
-        val repo = TemplateRepository(unreachableUrl, cacheDir)
-        // Corrupt file must be discarded and a re-download attempted (which fails offline).
-        assertThrows(Exception::class.java) { repo.templatesJar("3.0.1") }
+            server.serveJar(version, valid)
+            assertEquals(jar, repo.templatesJar(version))
+            assertArrayEquals(valid, Files.readAllBytes(jar))
+            assertEquals(jar, repo.templatesJar(version))
+            assertEquals(2, server.requests.size)
+        }
     }
 
     @Test
-    fun `valid cached jar is returned without network`() {
-        val repoDir = cacheDir.resolve(unreachableUrl.replace(Regex("[^a-zA-Z0-9]"), ""))
-        Files.createDirectories(repoDir)
-        val jar = repoDir.resolve("jmix-studio-templates-3.0.1.jar")
-        // Minimal zip: empty archive starts with PK\x05\x06; use PK\x03\x04 local header.
-        Files.write(jar, byteArrayOf(0x50, 0x4B, 0x03, 0x04, 0, 0, 0, 0))
+    fun `a jar without project templates is rejected before caching`() {
+        val version = "3.0.1"
+        FakeServer().use { server ->
+            server.serveJar(version, jarWithEntry("README.txt", "No project templates".toByteArray()))
+            val repo = TemplateRepository(server.url, cacheDir)
 
+            assertThrows(IOException::class.java) { repo.templatesJar(version) }
+            Files.list(repo.repoCacheDir).use { assertEquals(0L, it.count()) }
+        }
+    }
+
+    @Test
+    fun `a corrupt snapshot refresh keeps the cached jar and can be retried`() {
+        val version = "3.1.0-SNAPSHOT"
+        val original = jarWithSource("original")
+        val updated = jarWithSource("updated")
+        val broken = jarWithSource("damaged")
+        // Change the stored payload while keeping the recorded CRC and ZIP structure.
+        val dataOffset = broken.toString(Charsets.ISO_8859_1).indexOf("damaged")
+        broken[dataOffset] = 'x'.code.toByte()
+        val repo = FakeServer().use { server ->
+            val repo = TemplateRepository(server.url, cacheDir)
+            server.serveJar(version, original)
+            val jar = repo.templatesJar(version)
+
+            server.serveJar(version, broken)
+            assertEquals(jar, repo.templatesJar(version))
+            assertArrayEquals(original, Files.readAllBytes(jar))
+            Files.list(repo.repoCacheDir).use { assertEquals(listOf(jar), it.toList()) }
+
+            server.serveJar(version, updated)
+            assertEquals(jar, repo.templatesJar(version))
+            assertArrayEquals(updated, Files.readAllBytes(jar))
+            assertEquals(3, server.requests.size)
+            repo
+        }
+
+        assertArrayEquals(updated, Files.readAllBytes(repo.templatesJar(version)))
+    }
+
+    @Test
+    fun `valid cached legacy jar is returned without network`() {
         val repo = TemplateRepository(unreachableUrl, cacheDir)
+        val repoDir = repo.repoCacheDir
+        Files.createDirectories(repoDir)
+        val jar = repoDir.resolve(jarName("3.0.1"))
+        Files.write(jar, jarWithEntry("project/single-module-application/template.description", "Legacy app".toByteArray()))
+
         assertEquals(jar, repo.templatesJar("3.0.1"))
     }
 }

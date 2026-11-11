@@ -1,5 +1,7 @@
 package io.jmix.cli.update
 
+import com.sun.net.httpserver.HttpServer
+import io.jmix.cli.util.describeIoError
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -7,16 +9,23 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.IOException
-import java.nio.channels.FileChannel
+import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.FileTime
 import java.security.MessageDigest
+import java.time.Duration
 import java.time.Instant
 import java.util.HexFormat
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit.SECONDS
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -88,6 +97,35 @@ class SelfUpdaterTest {
     }
 
     @Test
+    fun `Windows update preserves the Unicode wrapper target`() {
+        val root = tempDir.resolve("Установка %test% !")
+        val binDir = Files.createDirectories(tempDir.resolve("Команды"))
+        val installation = CliInstallation(root, oldChecksum, "windows", arch)
+        val oldLauncher = installation.launcher(oldChecksum)
+        writeLauncher(oldLauncher, "old-launcher")
+        Files.writeString(oldLauncher.resolveSibling(SelfUpdater.MARKER_NAME), "")
+        val command = binDir.resolve("jmix.cmd")
+        val oldPath = oldLauncher.toString().replace("%", "%%")
+        Files.writeString(
+            command, "${SelfUpdater.WRAPPER_MARKER}\r\nset \"_JMIX_LAUNCHER=$oldPath\"\r\n\"%_JMIX_LAUNCHER%\" %*\r\n",
+        )
+        val releaseDir = tempDir.resolve("release")
+        val checksum = prepareRelease(releaseDir, "new-launcher", installation)
+        val updater = updater(installation, releaseDir, binDir)
+
+        assertEquals(UpdateResult.Updated(checksum), updater.update())
+
+        val launcher = installation.launcher(checksum)
+        val target = launcher.toString().replace("%", "%%")
+        val wrapper = Files.readString(command)
+        assertTrue(wrapper.startsWith("${SelfUpdater.WRAPPER_MARKER}\r\n"))
+        assertTrue(wrapper.contains("chcp 65001 >nul 2>&1\r\nset \"_JMIX_LAUNCHER=$target\"\r\n"))
+        assertTrue(wrapper.endsWith("\"%_JMIX_LAUNCHER%\" %*\r\n"))
+        assertEquals("new-launcher", Files.readString(launcher))
+        assertEquals(UpdateResult.Updated(checksum), updater.update())
+    }
+
+    @Test
     fun `update reuses a release that is already installed and linked`() {
         // The running process is still the old image, so the caller must be
         // told to switch — but nothing needs downloading or relinking.
@@ -145,13 +183,13 @@ class SelfUpdaterTest {
         val error = assertThrows<IOException> {
             updater(installation, tempDir.resolve("missing-release"), binDir).update()
         }
-        assertFalse(SelfUpdater.describe(error).isBlank())
+        assertFalse(describeIoError(error).isBlank())
     }
 
     @Test
     fun `describe names the server that cannot be reached`() {
-        assertEquals("cannot reach the Jmix Store", SelfUpdater.describe(java.net.ConnectException("refused"), "the Jmix Store"))
-        assertEquals("cannot reach the release server", SelfUpdater.describe(java.net.ConnectException("refused")))
+        assertEquals("cannot reach the Jmix Store", describeIoError(java.net.ConnectException("refused"), "the Jmix Store"))
+        assertEquals("cannot reach the release server", describeIoError(java.net.ConnectException("refused")))
     }
 
     @Test
@@ -391,32 +429,54 @@ class SelfUpdaterTest {
         val installation = installation(root, oldChecksum)
         updater(installation, releaseDir, binDir).autoUpdate(Instant.now())
         Files.delete(installation.versionsDir.resolve(newChecksum).resolve(SelfUpdater.MARKER_NAME))
+        val lockFile = root.resolve(SelfUpdater.UPDATE_LOCK)
+        val checkTime = Files.readString(lockFile)
 
         val result = updater(installation, releaseDir, binDir).update()
 
         assertEquals(UpdateResult.Updated(newChecksum), result)
+        assertEquals(checkTime, Files.readString(lockFile))
     }
 
     @Test
-    fun `autoUpdate skips while another process holds the update lock`() {
+    fun `automatic update and cleanup skip while an explicit update holds the lock`() {
         val releaseDir = tempDir.resolve("release")
         val newChecksum = prepareRelease(releaseDir, "new-launcher")
-        val root = Files.createDirectories(tempDir.resolve("install"))
+        val root = tempDir.resolve("install")
         val binDir = tempDir.resolve("bin")
         linkCommand(binDir, installVersion(root, oldChecksum))
         val installation = installation(root, oldChecksum)
+        val unusedLauncher = installVersion(root, "1".repeat(64))
+        ageMarkers(installation)
 
-        FileChannel.open(
-            root.resolve(SelfUpdater.UPDATE_LOCK),
-            StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-        ).use { channel ->
-            channel.lock().use {
-                val result = updater(installation, releaseDir, binDir).autoUpdate()
-
-                assertTrue(result is UpdateResult.UpToDate)
-                assertFalse(Files.exists(installation.launcher(newChecksum)))
+        val downloading = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        val explicit = SelfUpdater(installation, releaseDir.toString(), binDir, onStatus = {
+            if (it.startsWith("Downloading ")) {
+                downloading.countDown()
+                check(resume.await(10, SECONDS))
             }
+        })
+        val maintenance = updater(installation, releaseDir, binDir)
+        Executors.newSingleThreadExecutor().use { executor ->
+            val result = executor.submit<UpdateResult> { explicit.update() }
+            try {
+                assertTrue(downloading.await(10, SECONDS), "manual update never reached the download")
+                assertEquals(UpdateResult.UpToDate, maintenance.autoUpdate())
+                maintenance.cleanupOldVersions()
+                assertFalse(Files.exists(installation.launcher(newChecksum)))
+                assertTrue(Files.exists(unusedLauncher))
+            } finally {
+                resume.countDown()
+            }
+            assertEquals(UpdateResult.Updated(newChecksum), result.get(10, SECONDS))
         }
+
+        assertEquals("", Files.readString(root.resolve(SelfUpdater.UPDATE_LOCK)))
+        maintenance.cleanupOldVersions()
+        assertFalse(Files.exists(unusedLauncher))
+        assertCommandPointsTo(binDir, installation.launcher(newChecksum))
+        assertTrue(Files.exists(installation.launcher(newChecksum)))
     }
 
     @Test
@@ -437,6 +497,53 @@ class SelfUpdaterTest {
             messages.any { it.contains("Could not update", ignoreCase = true) },
             "a failed check must be reported: $messages",
         )
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `autoUpdate keeps the current installation when the HTTP body stalls`(stallChecksum: Boolean) {
+        val root = tempDir.resolve("install")
+        val binDir = tempDir.resolve("bin")
+        val oldLauncher = installVersion(root, oldChecksum)
+        linkCommand(binDir, oldLauncher)
+        val installation = installation(root, oldChecksum)
+        val newChecksum = "1".repeat(64)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val bodyStarted = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        server.createContext("/") { exchange ->
+            exchange.use {
+                if (it.requestURI.path.endsWith(".sha256") && !stallChecksum) {
+                    val bytes = newChecksum.toByteArray()
+                    it.sendResponseHeaders(200, bytes.size.toLong())
+                    it.responseBody.write(bytes)
+                } else {
+                    it.sendResponseHeaders(200, 100)
+                    it.responseBody.write('1'.code)
+                    it.responseBody.flush()
+                    bodyStarted.countDown()
+                    release.await(10, SECONDS)
+                }
+            }
+        }
+        server.start()
+        try {
+            val messages = mutableListOf<String>()
+            val updater = SelfUpdater(
+                installation, "http://127.0.0.1:${server.address.port}", binDir,
+                requestTimeout = Duration.ofSeconds(1), autoUpdateEnabled = true, echo = { messages.add(it) },
+            )
+            assertTimeoutPreemptively(Duration.ofSeconds(5)) {
+                assertEquals(UpdateResult.UpToDate, updater.autoUpdate())
+            }
+            assertEquals(0L, bodyStarted.count)
+            assertTrue(messages.any { "Could not update" in it }, messages.toString())
+            assertCommandPointsTo(binDir, oldLauncher)
+            assertFalse(Files.exists(installation.launcher(newChecksum)))
+        } finally {
+            release.countDown()
+            server.stop(0)
+        }
     }
 
     @Test
@@ -612,15 +719,18 @@ class SelfUpdaterTest {
         CliInstallation(root.toAbsolutePath().normalize(), checksum, os, arch)
 
     /** Creates a fake release asset pair and returns the archive checksum. */
-    private fun prepareRelease(releaseDir: Path, launcherContent: String): String {
+    private fun prepareRelease(
+        releaseDir: Path,
+        launcherContent: String,
+        installation: CliInstallation = installation(tempDir, oldChecksum),
+    ): String {
         Files.createDirectories(releaseDir)
-        val installation = installation(tempDir, oldChecksum)
         val image = Files.createDirectories(
             Files.createTempDirectory(tempDir, "image").resolve(installation.imageName),
         )
         writeLauncher(image.resolve(installation.launcherRelativePath), launcherContent)
         val archive = releaseDir.resolve(installation.archiveName)
-        archive(image, archive)
+        archive(image, archive, windows = installation.os == "windows")
         val checksum = sha256(archive)
         Files.writeString(
             releaseDir.resolve("${installation.archiveName}.sha256"),
@@ -673,14 +783,18 @@ class SelfUpdaterTest {
         if (isWindows) {
             val content = Files.readString(binDir.resolve("jmix.cmd"))
             assertTrue(content.startsWith(SelfUpdater.WRAPPER_MARKER))
-            assertTrue(content.contains("\"$launcher\""), "the wrapper must call $launcher")
+            val escaped = launcher.toString().replace("%", "%%")
+            assertTrue(
+                content.lineSequence().any { it == "\"$launcher\" %*" || it == "set \"_JMIX_LAUNCHER=$escaped\"" },
+                "the wrapper must call $launcher",
+            )
         } else {
             assertEquals(launcher, Files.readSymbolicLink(binDir.resolve("jmix")))
         }
     }
 
-    private fun archive(imageDir: Path, destination: Path) {
-        if (isWindows) {
+    private fun archive(imageDir: Path, destination: Path, windows: Boolean) {
+        if (windows) {
             ZipOutputStream(Files.newOutputStream(destination)).use { zip ->
                 Files.walk(imageDir).use { paths ->
                     paths.filter { Files.isRegularFile(it) }.forEach { file ->

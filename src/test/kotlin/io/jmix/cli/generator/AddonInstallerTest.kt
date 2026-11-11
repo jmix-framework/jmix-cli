@@ -53,6 +53,16 @@ class AddonInstallerTest {
     }
 
     @Test
+    fun `a completed check with no compatible JDK keeps the add-on installation error`() {
+        val error = assertThrows(IOException::class.java) { AddonInstaller.requireJavaHome("3.0.1", null) }
+        assertEquals(
+            "Installing add-ons requires a development JDK compatible with Jmix 3.0.1. " +
+                "Install a supported JDK and set JAVA_HOME, or generate without --addons.",
+            error.message,
+        )
+    }
+
+    @Test
     fun `artifact metadata supplies custom module ID and changelog without class loading`() {
         val module = AddonInstaller.readModules(listOf(artifact())).single()
         assertEquals("custom.sample", module.id)

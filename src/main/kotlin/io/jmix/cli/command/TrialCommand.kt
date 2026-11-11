@@ -21,10 +21,12 @@ import io.jmix.cli.account.StoreClient
 import io.jmix.cli.telemetry.UsageEvent
 import io.jmix.cli.telemetry.UsageStatistics
 import io.jmix.cli.trial.TrialArchive
+import io.jmix.cli.trial.TrialDestinationConflict
 import io.jmix.cli.trial.TrialException
 import io.jmix.cli.trial.findOrStartTrial
 import io.jmix.cli.trial.trialSummary
 import io.jmix.cli.update.SelfUpdater
+import io.jmix.cli.util.describeIoError
 import io.jmix.cli.wizard.Answer
 import io.jmix.cli.wizard.Prompts
 import io.jmix.cli.wizard.StatusReporter
@@ -48,7 +50,7 @@ internal class TrialCommand(
     override fun help(context: Context) = "Download the Enterprise+BPM trial project of your Jmix account"
 
     private val path by option(
-        "--path", help = "Parent directory for the trial project (skips the location picker; non-interactive default: current directory)",
+        "--path", help = "Initial parent directory for the trial project (non-interactive default: current directory)",
     )
     private val startTrial by option(
         "--start-trial", help = "Start the trial without asking when the account has none yet",
@@ -73,17 +75,19 @@ internal class TrialCommand(
             lateinit var parent: Path
             if (!nonInteractive && path == null) prompts.useAlternateScreen { parent = trialDirectory(prompts) }
             else parent = trialDirectory(prompts)
-            val session = sessions.load() ?: signIn()
-            region = AccountRegion.of(session.region)
-            val store = StoreClient(
-                AccountEndpoints(session.ssoUrl, session.storeUrl).storeApiUrl,
-                AccessTokens(sessions, session),
-            )
-            terminal.println(gray("Checking your Enterprise+BPM trial..."))
-            // Not inside status.run: its spinner thread would draw over the consent prompt.
-            val trial = findOrStartTrial(store, today(), region, ::confirmStart)
             val status = StatusReporter(terminal)
-            val projects = downloadAndUnpack(trial.url, parent, status)
+            val (trial, projects) = prepareTrialDestination(parent).use { staging ->
+                val session = sessions.load() ?: signIn()
+                region = AccountRegion.of(session.region)
+                val store = StoreClient(
+                    AccountEndpoints(session.ssoUrl, session.storeUrl).storeApiUrl,
+                    AccessTokens(sessions, session),
+                )
+                terminal.println(gray("Checking your Enterprise+BPM trial..."))
+                // Not inside status.run: its spinner thread would draw over the consent prompt.
+                val trial = findOrStartTrial(store, today(), region, ::confirmStart)
+                trial to downloadAndUnpack(trial.url, staging, status, prompts)
+            }
             val versions = projects.associateWith(TrialArchive::jmixVersion)
             val knownVersions = versions.values.filterNotNull()
             knownVersions.forEach { reportJdkCheck(terminal, status, it) }
@@ -109,29 +113,29 @@ internal class TrialCommand(
             Thread.currentThread().interrupt()
             throw CliktError("Interrupted.")
         } catch (e: Exception) {
-            // Expected network and file failures must stay readable; describe() never quotes the download link.
+            // Trial download failures supply a readable cause without the download link.
             throw CliktError(
-                "Could not get the trial project: ${SelfUpdater.describe(e, "the Jmix Store")}. " +
+                "Could not get the trial project: ${describeIoError(e, "the Jmix Store")}. " +
                     "You can also download it from ${region.accountPageUrl}.",
             )
         }
     }
 
-    /** The --path directory, created before anything else so a bad path fails before a trial can be started. */
-    private fun trialDirectory(prompts: Prompts): Path {
-        val parent = path?.let(::toAbsolutePath) ?: if (!nonInteractive) {
+    private fun trialDirectory(prompts: Prompts): Path =
+        path?.let(::toAbsolutePath) ?: if (!nonInteractive) {
             when (val picked = chooseProjectLocation(prompts, "jmix-trial")) {
                 is Answer.Back -> throw ReturnToMainMenu()
                 is Answer.Value -> picked.value
             }
         } else Path.of("").toAbsolutePath()
+
+    private fun prepareTrialDestination(parent: Path): TrialArchive.Staging {
         if (Files.exists(parent) && !Files.isDirectory(parent)) throw CliktError("$parent is not a directory.")
         try {
-            Files.createDirectories(parent)
+            return TrialArchive.prepareDestination(parent)
         } catch (e: IOException) {
-            throw CliktError("Cannot use $parent as the trial directory: ${SelfUpdater.describe(e)}.")
+            throw CliktError("Cannot use $parent as the trial directory: ${describeIoError(e)}.")
         }
-        return parent
     }
 
     /** Signs in in the browser, as `jmix login` does, when a person is there to do it. */
@@ -150,17 +154,46 @@ internal class TrialCommand(
         else -> throw CliktError("Starting the Enterprise+BPM trial needs confirmation. Re-run with --start-trial.")
     }
 
-    /** Downloads into the system temp directory, so an interrupted run leaves nothing in [parent], then unpacks. */
-    private fun downloadAndUnpack(url: String, parent: Path, status: StatusReporter): List<Path> {
+    private fun downloadAndUnpack(
+        url: String,
+        initialStaging: TrialArchive.Staging,
+        status: StatusReporter,
+        prompts: Prompts,
+    ): List<Path> {
         val archive = Files.createTempFile("jmix-trial-", ".zip")
         // Ctrl+C ends the JVM without running the finally below; deleteOnExit still runs then.
         archive.toFile().deleteOnExit()
         try {
             status.run("Downloading the trial project") { p -> TrialArchive.download(url, archive, p::progress) }
-            return TrialArchive.unpack(archive, parent)
+            var staging = initialStaging
+            while (true) {
+                try {
+                    return staging.use { it.unpack(archive) }
+                } catch (e: TrialDestinationConflict) {
+                    staging = prepareTrialDestination(chooseAnotherTrialDirectory(prompts, e.paths))
+                }
+            }
         } finally {
             runCatching { Files.deleteIfExists(archive) }
         }
+    }
+
+    private fun chooseAnotherTrialDirectory(prompts: Prompts, occupied: List<Path>): Path {
+        val conflicts = occupied.joinToString("\n") { "$it already exists." }
+        val hint = "Choose another directory with --path."
+        if (nonInteractive || prompts.isInputExhausted) throw CliktError("$conflicts\n$hint")
+
+        val answer = prompts.askYesNo(
+            "Trial destination is occupied. Choose another directory?",
+            default = false,
+            allowBack = true,
+            legend = conflicts,
+        )
+        if (answer == Answer.Value(true)) {
+            val picked = chooseProjectLocation(prompts, "jmix-trial")
+            if (picked is Answer.Value && !prompts.isInputExhausted) return picked.value
+        }
+        throw CliktError("$conflicts\nThe trial project was not unpacked. $hint")
     }
 
     private fun printSummary(lines: List<String>) {

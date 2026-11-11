@@ -1,16 +1,17 @@
 package io.jmix.cli.wizard
 
+import java.net.URI
+import java.net.URISyntaxException
 import javax.lang.model.SourceVersion
 
 /**
- * Input validation ported from Studio (StudioRegex.java, MainSettingsStep.kt,
- * ProjectCreator.java). Regexes are verbatim — including the [A-z] ranges —
- * so the CLI accepts exactly what Studio accepts.
+ * Input validation for the project wizard. The project field patterns retain
+ * Studio's original ranges (StudioRegex.java, MainSettingsStep.kt, ProjectCreator.java).
  */
 object Validation {
 
     private val PROJECT_NAME_PATTERN = Regex("[A-z]+[A-z0-9_-]+")
-    private val PACKAGE_PATTERN = Regex("([a-z0-9_]+[.]?)+")
+    private val PACKAGE_PATTERN = Regex("[a-z0-9_.]+")
     private val PROJECT_ID_PATTERN = Regex("[A-z]+[A-z0-9]+$|^$")
     private val INVALID_NAMESPACE = Regex("[^a-z0-9]|(^\\d+)")
 
@@ -28,9 +29,9 @@ object Validation {
     fun validateRootPackage(value: String): String? = when {
         value.isBlank() -> "Root package cannot be empty"
         !PACKAGE_PATTERN.matches(value) ->
-            "Root package should contain only digits, lowercase letters or underscores"
-        value.substringAfterLast('.') != sanitizeJavaIdentifier(value.substringAfterLast('.')) ->
-            "Invalid java package name"
+            "Root package should contain only lowercase letters, digits, underscores, and dots."
+        !SourceVersion.isName(value) ->
+            "Invalid Java package name. Each segment must be a Java identifier without keywords."
         else -> null
     }
 
@@ -42,24 +43,29 @@ object Validation {
         else -> null
     }
 
-    /** Template repositories are fetched over HTTP; other schemes cannot work. */
-    fun validateRepositoryUrl(value: String): String? = when {
-        value.isBlank() -> "Repository URL cannot be empty."
-        !value.startsWith("http://") && !value.startsWith("https://") ->
-            "Repository URL must start with http:// or https://."
-        else -> null
+    /** Validates the base URL before appending Maven artifact paths. */
+    fun validateRepositoryUrl(value: String): String? {
+        if (value.isBlank()) return "Repository URL cannot be empty."
+        if (!value.startsWith("http://") && !value.startsWith("https://")) {
+            return "Repository URL must start with http:// or https://."
+        }
+        val uri = try {
+            URI(value)
+        } catch (_: URISyntaxException) {
+            null
+        }
+        return when {
+            uri?.host == null -> "Repository URL must be a valid HTTP(S) URL with a host."
+            uri.port != -1 && uri.port !in 1..65535 -> "Repository URL port must be between 1 and 65535."
+            uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null ->
+                "Use a repository base URL without credentials, a query, or a fragment."
+            else -> null
+        }
     }
 
     /** Studio's ProjectCreator.transformProjectNamespace. */
     fun transformProjectNamespace(src: String): String {
         val result = INVALID_NAMESPACE.replace(src.lowercase(), "")
         return result.ifBlank { "myproject" }
-    }
-
-    /** IntelliJ StringUtil.sanitizeJavaIdentifier equivalent. */
-    fun sanitizeJavaIdentifier(name: String): String {
-        val kept = name.filter { Character.isJavaIdentifierPart(it) }
-        if (kept.isEmpty()) return kept
-        return if (!Character.isJavaIdentifierStart(kept.first())) "_$kept" else kept
     }
 }
