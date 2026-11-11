@@ -1,6 +1,7 @@
 import io.jmix.cli.gradle.JlinkRuntimeTask
 import io.jmix.cli.gradle.JpackageAppImageTask
 import io.jmix.cli.gradle.Sha256Task
+import io.jmix.cli.gradle.findWindowsManifestTool
 import org.gradle.api.tasks.bundling.Compression
 import org.gradle.api.tasks.bundling.Tar
 import org.gradle.api.tasks.bundling.Zip
@@ -158,6 +159,10 @@ val jpackageAppImage = tasks.register<JpackageAppImageTask>("jpackageAppImage") 
         "-Dstderr.encoding=UTF-8",
         "-Dstdin.encoding=UTF-8",
     ))
+    if (releaseOs == "windows") {
+        windowsLauncherManifest.set(layout.projectDirectory.file("gradle/windows-launcher.manifest"))
+        manifestTool.fileProvider(providers.provider { findWindowsManifestTool(releaseArch) })
+    }
     outputDirectory.set(appImageDirectory)
 }
 

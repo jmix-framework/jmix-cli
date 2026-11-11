@@ -48,7 +48,9 @@ needed to use `jmix` immediately without restarting the current shell. Set
 `JMIX_CLI_SKIP_PATH_UPDATE=1` to keep shell profiles unchanged.
 
 On Windows, installation and updates write a Unicode-capable `jmix.cmd` for the
-selected install and bin directories. Rerun `install.ps1` to regenerate a
+selected install and bin directories. On Windows 10 version 1903 or later, the
+native launcher uses UTF-8 as its process code page to locate the bundled Java
+runtime in Unicode paths. Rerun `install.ps1` to regenerate a
 wrapper from an earlier installer if its launcher path was corrupted.
 
 The stable asset names allow installers to use GitHub's
@@ -113,7 +115,8 @@ Build and test the current platform's bundle:
 tests/test-install.sh
 ```
 
-On Windows:
+On Windows, install the Windows SDK with its Manifest Tool (`mt.exe`). The
+release build looks in the standard Windows Kits directory or on `PATH`.
 
 ```powershell
 ./gradlew clean build releaseBundle

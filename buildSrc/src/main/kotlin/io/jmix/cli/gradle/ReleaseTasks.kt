@@ -1,6 +1,7 @@
 package io.jmix.cli.gradle
 
 import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.file.RegularFileProperty
@@ -9,6 +10,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
@@ -16,6 +18,9 @@ import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import org.gradle.work.DisableCachingByDefault
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.DosFileAttributeView
 import java.security.MessageDigest
 import javax.inject.Inject
 
@@ -82,6 +87,16 @@ abstract class JpackageAppImageTask : DefaultTask() {
     @get:Input
     abstract val javaOptions: ListProperty<String>
 
+    @get:InputFile
+    @get:Optional
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val windowsLauncherManifest: RegularFileProperty
+
+    @get:InputFile
+    @get:Optional
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val manifestTool: RegularFileProperty
+
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
@@ -118,7 +133,36 @@ abstract class JpackageAppImageTask : DefaultTask() {
                 args("--java-options", option)
             }
         }
+
+        val manifest = windowsLauncherManifest.orNull?.asFile ?: return
+        val name = applicationName.get()
+        val launcher = outputDirectory.file("$name/$name.exe").get().asFile
+        // jpackage marks the launcher read-only after setting its executable resources.
+        val attributes = Files.getFileAttributeView(launcher.toPath(), DosFileAttributeView::class.java)
+        val wasReadOnly = attributes.readAttributes().isReadOnly
+        if (wasReadOnly) attributes.setReadOnly(false)
+        try {
+            execOperations.exec {
+                executable(manifestTool.get().asFile)
+                args("-nologo", "-manifest", manifest, "-updateresource:$launcher;#1")
+            }
+        } finally {
+            if (wasReadOnly) attributes.setReadOnly(true)
+        }
     }
+}
+
+fun findWindowsManifestTool(architecture: String): File {
+    val sdk = sequenceOf(System.getenv("ProgramFiles(x86)"), System.getenv("ProgramFiles"))
+        .filterNotNull()
+        .flatMap { File(it, "Windows Kits/10/bin").listFiles().orEmpty().sortedByDescending(File::getName) }
+        .map { File(it, "$architecture/mt.exe") }
+        .firstOrNull(File::isFile)
+    return sdk ?: System.getenv("PATH").orEmpty().splitToSequence(File.pathSeparatorChar)
+        .filter(String::isNotBlank)
+        .map { File(it.trim('"'), "mt.exe") }
+        .firstOrNull(File::isFile)
+        ?: throw GradleException("Install the Windows SDK or put its mt.exe on PATH to build the Windows release.")
 }
 
 @DisableCachingByDefault(because = "computing the checksum is inexpensive")
