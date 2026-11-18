@@ -48,6 +48,29 @@ See [wizard controls](docs/features/wizard.md),
 [project generation](docs/features/project-generation.md), and
 [commercial add-on setup](docs/features/add-ons.md#commercial-add-ons).
 
+## Agent Toolkit
+
+Run `jmix ai-toolkit` in an existing Jmix project to add or update the
+[Jmix Agent Toolkit](https://github.com/jmix-framework/jmix-agent-toolkit).
+Choose an action in the menu or pass it as an argument:
+
+- `all` — run the three actions below with the toolkit's defaults.
+- `skills` — install or update the agent skills.
+- `guidelines` — add or update the Jmix guidelines in `AGENTS.md`.
+- `mcp` — configure MCP servers for the selected AI agents.
+
+From a script, `--non-interactive` runs `all` without prompts:
+
+```shell
+cd demo
+jmix ai-toolkit --non-interactive
+```
+
+The command lists the changed files and the toolkit's notes. Run
+`jmix ai-toolkit --help` for the options and the MCP servers and AI agents the
+toolkit currently offers. See the
+[Agent Toolkit guide](docs/features/environment-and-toolkit.md#toolkit-command).
+
 ## Jmix account and trial
 
 Sign in to download the Enterprise+BPM trial project.

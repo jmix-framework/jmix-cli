@@ -149,17 +149,21 @@ internal object TrialArchive {
 
     /**
      * The Jmix version of [projectDir]: the first `bomVersion` in its root build file, then in the build files of
-     * the builds under `demo/` by name. A `.trial` suffix is dropped. Null when there is none or it does not look
-     * like a version. Trials run on the newest Jmix, so only the shape is checked: the template-version filter
-     * would reject it.
+     * the builds under `demo/` by name. Only when no file has a literal one, the first `io.jmix` plugin version over
+     * the same files: generated projects set `bomVersion = version`. A `.trial` suffix is dropped, and a value
+     * that does not look like a version, such as an interpolated one, is skipped. Null when nothing is left.
+     * Trials run on the newest Jmix, so only the shape is checked: the template-version filter would reject it.
      */
     fun jmixVersion(projectDir: Path): String? {
-        val bomVersion = (listOf(projectDir) + demoDirs(projectDir))
-            .flatMap { dir -> BUILD_FILES.map(dir::resolve) }
-            .firstNotNullOfOrNull { file ->
-                ProjectLauncher.readProjectMetadata(file)?.let { BOM_VERSION.find(it)?.groupValues?.get(1) }
+        val buildFiles = (listOf(projectDir) + demoDirs(projectDir)).flatMap { dir -> BUILD_FILES.map(dir::resolve) }
+        return listOf(BOM_VERSION, PLUGIN_VERSION).firstNotNullOfOrNull { pattern ->
+            buildFiles.firstNotNullOfOrNull { file ->
+                ProjectLauncher.readProjectMetadata(file)?.let { text ->
+                    pattern.findAll(text).map { it.groupValues[1].removeSuffix(".trial") }
+                        .firstOrNull(TemplateRepository.VERSION_SHAPE::matches)
+                }
             }
-        return bomVersion?.removeSuffix(".trial")?.takeIf { TemplateRepository.VERSION_SHAPE.matches(it) }
+        }
     }
 
     /** The builds under `demo/` that have a Gradle wrapper, by name; [projectDir] itself when there are none. */
@@ -232,6 +236,9 @@ internal object TrialArchive {
     private val BUILD_FILES = listOf("build.gradle", "build.gradle.kts")
     private val SETTINGS_FILES = listOf("settings.gradle", "settings.gradle.kts")
     private val BOM_VERSION = Regex("""bomVersion\s*=\s*['"]([^'"]+)['"]""")
+    // One whitespace run per gap: two optional runs in a row backtrack quadratically on a long run of spaces.
+    private val PLUGIN_VERSION =
+        Regex("""\bid\s*(?:\(\s*)?['"]io\.jmix['"]\s*(?:\)\s*)?version\s*(?:\(\s*)?['"]([^'"]+)['"]""")
     private val EXECUTE_BITS = setOf(OWNER_EXECUTE, GROUP_EXECUTE, OTHERS_EXECUTE)
     private val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
     private const val MAX_REDIRECTS = 5

@@ -7,6 +7,7 @@ import io.jmix.cli.command.LoginCommand
 import io.jmix.cli.command.LogoutCommand
 import io.jmix.cli.command.NewCommand
 import io.jmix.cli.command.ReturnToMainMenu
+import io.jmix.cli.command.ToolkitCommand
 import io.jmix.cli.command.TrialCommand
 import io.jmix.cli.command.UpdateCommand
 import io.jmix.cli.repo.TemplateRepository
@@ -22,6 +23,7 @@ fun main(args: Array<String>) {
     val cli = JmixCli().subcommands(
         NewCommand(TemplateRepository.defaultCacheDir(), usageStatistics),
         TrialCommand(usageStatistics = usageStatistics),
+        ToolkitCommand(),
         LoginCommand(usageStatistics),
         LogoutCommand(),
         UpdateCommand(),

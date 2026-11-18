@@ -2,12 +2,16 @@ package io.jmix.cli.env
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.time.Duration
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
@@ -28,7 +32,9 @@ class AgentToolkitInstallerIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = ["2.8.3", "3.0.1"])
     fun `installs guidelines skills and MCP into the project`(jmixVersion: String) {
-        AgentToolkitInstaller.install(tempDir, jmixVersion)
+        // The lists are given, not taken from the live metadata: the expectations below are fixed.
+        val result = AgentToolkitInstaller.install(tempDir, jmixVersion, servers = mcpServers, agents = mcpAgents)
+        assertProjectRelative(result.changes)
 
         assertTrue(Files.isRegularFile(tempDir.resolve("CLAUDE.md")), "Claude guidelines must exist")
         assertEquals("@AGENTS.md\n", Files.readString(tempDir.resolve("CLAUDE.md")))
@@ -85,6 +91,89 @@ class AgentToolkitInstallerIntegrationTest {
         assertTrue(codex.contains(docsUrl))
         assertTrue(codex.contains(jetBrainsUrl))
         if (jetBrainsUrl.endsWith("/sse")) assertTrue(codex.contains("mcp-remote"))
+    }
+
+    @Test
+    fun `the MCP step takes its servers and agents from the toolkit metadata by default`() {
+        val result = AgentToolkitInstaller.install(tempDir, "3.0.1", steps = setOf(ToolkitStep.MCP))
+        assertProjectRelative(result.changes)
+    }
+
+    @Test
+    fun `a failed step stops the run with the installer's error`() {
+        Files.createDirectory(tempDir.resolve("AGENTS.md"))
+        val error = assertThrows(IOException::class.java) {
+            AgentToolkitInstaller.install(
+                tempDir, "3.0.1", steps = setOf(ToolkitStep.GUIDELINES, ToolkitStep.MCP), servers = mcpServers, agents = mcpAgents,
+            )
+        }
+        val message = error.message.orEmpty()
+        assertTrue(message.startsWith("Agent Toolkit guidelines step failed: error: "), message)
+        assertEquals(listOf("AGENTS.md"), Files.list(tempDir).use { files -> files.map { it.fileName.toString() }.toList() })
+    }
+
+    @Test
+    fun `runs only the selected step, keeps own guidelines and reports the changes`() {
+        Files.writeString(tempDir.resolve("AGENTS.md"), "# Own rules\n")
+        val result = AgentToolkitInstaller.install(tempDir, "3.0.1", steps = setOf(ToolkitStep.GUIDELINES))
+        assertEquals(
+            listOf("backed-up" to "AGENTS.md.bak", "updated" to "AGENTS.md", "created" to "CLAUDE.md"),
+            result.changes.map { it.action to it.path },
+        )
+        assertTrue(Files.readString(tempDir.resolve("AGENTS.md")).contains("# Own rules"))
+        assertFalse(Files.exists(tempDir.resolve(".agents"), NOFOLLOW_LINKS))
+        assertFalse(Files.exists(tempDir.resolve(".mcp.json"), NOFOLLOW_LINKS))
+        assertEquals(emptyList<ToolkitChange>(), AgentToolkitInstaller.install(tempDir, "3.0.1", steps = setOf(ToolkitStep.GUIDELINES)).changes)
+    }
+
+    @Test
+    fun `configures only the selected MCP servers and agents and relays the toolkit's notes`() {
+        val options = AgentToolkitMetadata.mcpOptions("v3")
+        val server = options.servers.last().value
+        val agent = options.agents.first().value
+        val result = AgentToolkitInstaller.install(tempDir, "3.0.1", steps = setOf(ToolkitStep.MCP), servers = listOf(server), agents = listOf(agent))
+        val written = result.changes.single()
+        assertEquals("created", written.action)
+        assertTrue(Files.readString(tempDir.resolve(written.path)).contains(server))
+        assertEquals(listOf(written.path), Files.list(tempDir).use { files -> files.map { it.fileName.toString() }.toList() })
+        assertTrue(result.notes.isNotEmpty())
+        assertTrue(result.notes.none { it.isBlank() || it.startsWith("[") || it.startsWith("@@") || it != it.trim() })
+    }
+
+    @Test
+    fun `a fresh install is up to date against the toolkit's own files`() {
+        // More patient than the production limit of a hint, which a slow runner would turn into a null state.
+        val fetch = { path: String -> AgentToolkitMetadata.fetch("v3", path, Duration.ofSeconds(30)) }
+        assertEquals(
+            AgentToolkitStatus.Status(AgentToolkitStatus.State.NOT_INSTALLED, AgentToolkitStatus.State.NOT_INSTALLED),
+            AgentToolkitStatus.detect(tempDir, "v3", fetch),
+        )
+        val result = AgentToolkitInstaller.install(tempDir, "3.0.1", steps = setOf(ToolkitStep.SKILLS, ToolkitStep.GUIDELINES))
+        assertEquals(
+            listOf("created" to ".agents/skills", "created" to ".claude/skills", "created" to "AGENTS.md", "created" to "CLAUDE.md"),
+            result.changes.map { it.action to it.path },
+        )
+        assertEquals(
+            AgentToolkitStatus.Status(AgentToolkitStatus.State.UP_TO_DATE, AgentToolkitStatus.State.UP_TO_DATE),
+            AgentToolkitStatus.detect(tempDir, "v3", fetch),
+        )
+    }
+
+    @Test
+    fun `a Jmix major without a toolkit branch fails with its name`() {
+        val error = assertThrows(IOException::class.java) { AgentToolkitInstaller.install(tempDir, "99.0.0") }
+        assertEquals("the toolkit has no v99 branch for Jmix 99 yet", error.message)
+    }
+
+    private val mcpServers = listOf("jetbrains", "jmix-docs", "playwright")
+    private val mcpAgents = listOf("claude", "codex", "opencode", "junie")
+
+    private fun assertProjectRelative(changes: List<ToolkitChange>) {
+        assertTrue(changes.isNotEmpty())
+        for (change in changes) {
+            assertFalse(Path.of(change.path).isAbsolute, change.path)
+            assertTrue(Files.exists(tempDir.resolve(change.path), NOFOLLOW_LINKS), change.path)
+        }
     }
 
     private fun servers(config: String, key: String): JsonObject =
