@@ -148,17 +148,22 @@ text and search containing `q` and `й`, selection retention, template-included 
 omitted, and narrow/resized terminals.
 
 The README GIF is rendered from a film page kept outside the repository. It
-recreates a real CLI session in an 80×21 terminal with the CLI's own strings,
-colors, clipping, and step order: the command menu, every wizard stage with the
-filled answers, add-on search, the setup checklist, the generation progress,
-and the printed summary with the reproducible command. The session is
-condensed, and the paths are illustrative. Keep pauses long enough to read;
-keep search and keyboard hints in place. Show the purple `[$]` badges and the
-secondary `[$] - commercial add-on` legend below the picker heading in the catalog.
+shows two features, each opened by a title card with the command and one line
+about it. `jmix new` recreates a real session in an 80×21 terminal with the
+CLI's own strings, colors, clipping, and step order: the command menu, the
+wizard's name, version, add-on search, and setup checklist (the other answers
+stay in the history), the generation progress, and the printed summary with the
+reproducible command. `jmix agent-toolkit` recreates the menu, the project
+list, the steps checklist with each step's state, the MCP lists, and the
+toolkit's report in an existing project. The sessions are condensed, and the
+paths are illustrative. Keep pauses long enough to read; keep search and
+keyboard hints in place. Show the purple `[$]` badges and the secondary
+`[$] - commercial add-on` legend below the picker heading in the catalog.
 
-When the wizard's screens change, capture them again in an 80×21 terminal (from
-21 rows the command menu keeps its banner), update the film's texts, and render
+When these screens change, capture them again in an 80×21 terminal (from 21
+rows the command menu keeps its banner), update the film's texts, and render
 every frame at 800 px wide and 25 fps.
 Build the GIF with one FFmpeg palette and Bayer dithering, optimize it with
-`gifsicle -O3`, and inspect it at the README's displayed width. The last frames
-fade back into the first, so the loop has no seam.
+`gifsicle -O3` (lossy compression grains the background glow), and inspect it at
+the README's displayed width. The last frames fade back into the first title
+card, so the loop has no seam.
