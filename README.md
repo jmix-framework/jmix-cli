@@ -7,7 +7,7 @@ Create [Jmix](https://www.jmix.io/) projects from the same templates as Jmix Stu
 
 Use the interactive wizard or run the CLI from a script or an AI agent.
 
-<img src="docs/demo.gif" alt="Jmix CLI command menu and wizard: add-on search, Agent Toolkit setup, and project generation" width="800">
+<img src="docs/demo.gif" alt="Jmix CLI demo: jmix new creates a project in a guided wizard, and jmix agent-toolkit sets up skills, guidelines, and MCP servers for AI agents" width="800">
 
 ## Install
 
@@ -47,6 +47,32 @@ Run `jmix new --help` for options such as `--jmix-version`, `--template`, and
 See [wizard controls](docs/features/wizard.md),
 [project generation](docs/features/project-generation.md), and
 [commercial add-on setup](docs/features/add-ons.md#commercial-add-ons).
+
+## Agent Toolkit
+
+Run `jmix agent-toolkit` to add or update the
+[Jmix Agent Toolkit](https://github.com/jmix-framework/jmix-agent-toolkit) in an
+existing Jmix project. Choose the project (or pass `--path`), then check the
+steps to run, or pass them as arguments:
+
+- `skills` — install or update the agent skills.
+- `guidelines` — add or update the Jmix guidelines in `AGENTS.md`.
+- `mcp` — configure MCP servers for the selected AI agents.
+
+The checklist shows the state of each step and leaves the up-to-date ones
+unchecked. From a script, `--non-interactive` runs the named steps, or all
+three when none are named, without prompts:
+
+```shell
+cd demo
+jmix agent-toolkit --non-interactive
+jmix agent-toolkit skills guidelines --non-interactive
+```
+
+The command lists the changed files and the toolkit's notes. Run
+`jmix agent-toolkit --help` for the options and the MCP servers and AI agents the
+toolkit currently offers. See the
+[Agent Toolkit guide](docs/features/environment-and-toolkit.md#toolkit-command).
 
 ## Jmix account and trial
 

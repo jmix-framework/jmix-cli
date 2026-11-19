@@ -953,13 +953,13 @@ class NewCommand internal constructor(
     private fun installAgentToolkit(info: ProjectCreationInfo, progress: StatusReporter.Handle) {
         try {
             progress.relabel("Installing the Jmix Agent Toolkit")
-            AgentToolkitInstaller.install(info.projectDir, info.jmixVersion, progress::relabel)
+            AgentToolkitInstaller.install(info.projectDir, info.jmixVersion, onStatus = progress::relabel)
             progress.println(
                 brightGreen("✓ ") + "Agent Toolkit:" + cyan(" local skills, shared guidelines, and project MCP setup"),
             )
         } catch (e: Exception) {
             progress.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
-            progress.println(brightYellow("Install it later: https://github.com/jmix-framework/jmix-agent-toolkit"))
+            progress.println(brightYellow("Install it later: run `jmix agent-toolkit` in the project."))
         }
     }
 

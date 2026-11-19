@@ -284,6 +284,59 @@ class TrialArchiveTest {
     }
 
     @Test
+    fun `jmix version falls back to the io_jmix plugin version`() {
+        val groovy = Files.createDirectories(dir.resolve("groovy"))
+        Files.writeString(groovy.resolve("build.gradle"), "plugins {\n    id 'io.jmix' version '3.1.0'\n}\njmix {\n    bomVersion = version\n}\n")
+        assertEquals("3.1.0", TrialArchive.jmixVersion(groovy))
+        val kotlin = Files.createDirectories(dir.resolve("kotlin"))
+        Files.writeString(kotlin.resolve("build.gradle.kts"), "plugins {\n    id(\"io.jmix\") version \"2.8.3\"\n}\n")
+        assertEquals("2.8.3", TrialArchive.jmixVersion(kotlin))
+        val unsafe = Files.createDirectories(dir.resolve("unsafe"))
+        Files.writeString(unsafe.resolve("build.gradle"), "plugins { id 'io.jmix' version '\$(touch x)' }")
+        assertNull(TrialArchive.jmixVersion(unsafe))
+    }
+
+    @Test
+    fun `a value that is not a version is skipped`() {
+        val project = Files.createDirectories(dir.resolve("interpolated"))
+        Files.writeString(project.resolve("build.gradle"), "plugins {\n    id 'io.jmix' version '3.1.0'\n}\njmix {\n    bomVersion = \"\${jmixVersion}\"\n}\n")
+        assertEquals("3.1.0", TrialArchive.jmixVersion(project))
+        Files.writeString(project.resolve("build.gradle"), "jmix { bomVersion = \"\${v}\" }\next { bomVersion = '3.2.0' }\n")
+        assertEquals("3.2.0", TrialArchive.jmixVersion(project))
+        Files.writeString(project.resolve("build.gradle"), "plugins { id 'io.jmix' version '3.1.0.trial' }")
+        assertEquals("3.1.0", TrialArchive.jmixVersion(project))
+        Files.writeString(project.resolve("build.gradle"), "plugins { rapid 'io.jmix' version '3.1.0' }")
+        assertNull(TrialArchive.jmixVersion(project))
+    }
+
+    @Test
+    fun `version detection is not slowed down by a hostile build file`() {
+        val project = Files.createDirectories(dir.resolve("hostile"))
+        Files.writeString(project.resolve("build.gradle"), ("id" + " ".repeat(40_000) + "x\n").repeat(20))
+        assertNull(assertTimeoutPreemptively(Duration.ofSeconds(2)) { TrialArchive.jmixVersion(project) })
+    }
+
+    @Test
+    fun `a build file that is not a regular file is not opened`() {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        val project = Files.createDirectories(dir.resolve("pipe"))
+        // Opening a pipe for reading waits for a writer that never comes.
+        assumeTrue(runCatching { ProcessBuilder("mkfifo", project.resolve("build.gradle").toString()).start().waitFor() == 0 }.getOrDefault(false))
+        Files.writeString(project.resolve("build.gradle.kts"), "plugins { id(\"io.jmix\") version \"2.8.3\" }")
+        assertEquals("2.8.3", assertTimeoutPreemptively(Duration.ofSeconds(2)) { TrialArchive.jmixVersion(project) })
+    }
+
+    @Test
+    fun `a literal bomVersion wins over a plugin version, also from a later build file`() {
+        val project = Files.createDirectories(dir.resolve("both"))
+        Files.writeString(project.resolve("build.gradle"), "plugins { id 'io.jmix' version '3.0.0' }\njmix { bomVersion = '3.1.0' }")
+        assertEquals("3.1.0", TrialArchive.jmixVersion(project))
+        val composite = TrialArchive.unpack(trialZip(), dir.resolve("work")).single()
+        Files.writeString(composite.resolve("build.gradle"), "plugins { id 'io.jmix' version '3.0.0' }")
+        assertEquals("3.1.0", TrialArchive.jmixVersion(composite))
+    }
+
+    @Test
     fun `runnable apps are the demos, or the project itself without demos`() {
         val project = TrialArchive.unpack(trialZip(), dir.resolve("work")).single()
         assertEquals(listOf(project.resolve("demo/bpm"), project.resolve("demo/webdav")), TrialArchive.runnableApps(project))
