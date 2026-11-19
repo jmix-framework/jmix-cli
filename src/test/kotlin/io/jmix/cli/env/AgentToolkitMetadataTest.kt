@@ -53,6 +53,33 @@ class AgentToolkitMetadataTest {
         assertEquals(listOf("JetBrains", "Jmix Docs", "Playwright"), options.servers.map { it.label })
         assertEquals(listOf("claude", "codex", "opencode", "junie"), options.agents.map { it.value })
         assertEquals(listOf("Claude Code", "Codex", "OpenCode", "Junie"), options.agents.map { it.label })
+        assertEquals(listOf(".mcp.json", ".codex/config.toml", "opencode.json", ".junie/mcp/mcp.json"), options.agents.map { it.projectConfig })
+        assertEquals(listOf(emptyList(), emptyList(), emptyList(), listOf("jetbrains")), options.agents.map { it.skipServers })
+    }
+
+    @Test
+    fun `an agent's skipped servers are the strings of its skipServers array`() {
+        fun agent(value: String, skip: String) = """{"value":"$value","default":true,"skipServers":$skip}"""
+        val agents = listOf(agent("list", """["jetbrains", 5, null, "x"]"""), agent("text", "\"jetbrains\""), """{"value":"none","default":true}""")
+        val servers = """{"id":"mcpServers","type":"options","choices":[{"value":"s","default":true}]}"""
+        val json = """{"install-flow":{"steps":[{"id":"mcp","inputs":[$servers,{"id":"mcpAgents","type":"options","choices":[${agents.joinToString(",")}]}]}]}}"""
+        val skips = AgentToolkitMetadata.parseMcpOptions(json).agents.associate { it.value to it.skipServers }
+        assertEquals(mapOf("list" to listOf("jetbrains", "x"), "text" to emptyList(), "none" to emptyList()), skips)
+    }
+
+    @Test
+    fun `an agent's project config is kept only as a plain relative path`() {
+        fun agent(value: String, config: String) = """{"value":"$value","default":true,"projectConfig":$config}"""
+        val agents = listOf(
+            agent("plain", "\".mcp.json\""), agent("nested", "\".junie/mcp/mcp.json\""), """{"value":"none","default":true}""",
+            agent("absolute", "\"/etc/mcp.json\""), agent("parent", "\"a/../../mcp.json\""), agent("dot", "\"./mcp.json\""),
+            agent("backslash", "\"a\\\\b.json\""), agent("empty", "\"\""), agent("number", "5"),
+        )
+        val servers = """{"id":"mcpServers","type":"options","choices":[{"value":"s","default":true}]}"""
+        val json = """{"install-flow":{"steps":[{"id":"mcp","inputs":[$servers,{"id":"mcpAgents","type":"options","choices":[${agents.joinToString(",")}]}]}]}}"""
+        val configs = AgentToolkitMetadata.parseMcpOptions(json).agents.associate { it.value to it.projectConfig }
+        assertEquals(mapOf("plain" to ".mcp.json", "nested" to ".junie/mcp/mcp.json"), configs.filterValues { it != null })
+        assertEquals(9, configs.size)
     }
 
     @ParameterizedTest

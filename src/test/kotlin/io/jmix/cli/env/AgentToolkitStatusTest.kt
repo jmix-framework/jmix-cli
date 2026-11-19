@@ -5,8 +5,14 @@ import java.io.RandomAccessFile
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -35,14 +41,28 @@ class AgentToolkitStatusTest {
         skill("jmix-b", "SKILL.md" to "b\n", "ref/x.txt" to "x")
     }
 
-    private fun detect(manifest: String? = manifest(), block: String? = this.block): AgentToolkitStatus.Status {
-        val asked = mutableListOf<String>()
+    private val metadataPath = ".studio/studio-meta-data.json"
+    private val metadataV3 = checkNotNull(javaClass.getResource("/toolkit/studio-meta-data-v3.json")).readText()
+
+    private fun detect(
+        manifest: String? = manifest(),
+        block: String? = this.block,
+        metadata: String? = metadataV3,
+    ): AgentToolkitStatus.Status {
+        // The files are fetched at once, from several threads.
+        val asked = ConcurrentLinkedQueue<String>()
         val status = AgentToolkitStatus.detect(dir, "v3") { path ->
             asked += path
-            when (path) { manifestPath -> manifest; blockPath -> block; else -> error(path) }
+            when (path) { manifestPath -> manifest; blockPath -> block; metadataPath -> metadata; else -> error(path) }
         }
-        assertEquals(setOf(manifestPath, blockPath), asked.toSet())
+        assertEquals(setOf(manifestPath, blockPath, metadataPath), asked.toSet())
         return status
+    }
+
+    private fun config(path: String, text: String) {
+        val file = dir.resolve(path)
+        Files.createDirectories(file.parent)
+        Files.writeString(file, text)
     }
 
     private fun agentsMd(text: String) = Files.writeString(dir.resolve("AGENTS.md"), text)
@@ -75,10 +95,117 @@ class AgentToolkitStatusTest {
     }
 
     @Test
+    fun `MCP is set up when one agent's project config names every offered server`() {
+        assertEquals(AgentToolkitStatus.State.NOT_INSTALLED, detect().mcp)
+        // A config of the project's own, with no server of the toolkit.
+        config(".mcp.json", """{"mcpServers":{"mine":{"url":"http://mine"}}}""")
+        assertEquals(AgentToolkitStatus.State.NOT_INSTALLED, detect().mcp)
+        // Two of the three servers, one of them only as a value.
+        config(".mcp.json", """{"mcpServers":{"jetbrains":{},"jmix-docs":{"url":"playwright"}}}""")
+        assertEquals(AgentToolkitStatus.State.UPDATE_AVAILABLE, detect().mcp)
+        // The third one in another agent's config: together they name all three, but each agent misses one.
+        config("opencode.json", """{"mcp":{"playwright":{}}}""")
+        assertEquals(AgentToolkitStatus.State.UPDATE_AVAILABLE, detect().mcp)
+        // A TOML config that names all three.
+        config(".codex/config.toml", "[mcp_servers.jetbrains]\n[mcp_servers.\"jmix-docs\"]\n  [mcp_servers.playwright]\ncommand = \"npx\"\n")
+        assertEquals(AgentToolkitStatus.State.UP_TO_DATE, detect().mcp)
+        // The JSON config alone, once complete.
+        Files.delete(dir.resolve(".codex/config.toml"))
+        config(".mcp.json", """{"mcpServers":{"jetbrains":{},"jmix-docs":{},"playwright" : {}}}""")
+        assertEquals(AgentToolkitStatus.State.UP_TO_DATE, detect().mcp)
+    }
+
+    @Test
+    fun `a Junie config is complete without the servers the toolkit never gives Junie`() {
+        config(".junie/mcp/mcp.json", """{"mcpServers":{"jmix-docs":{}}}""")
+        assertEquals(AgentToolkitStatus.State.UPDATE_AVAILABLE, detect().mcp)
+        // What the installers write for Junie: every server but JetBrains.
+        config(".junie/mcp/mcp.json", """{"mcpServers":{"jmix-docs":{},"playwright":{}}}""")
+        assertEquals(AgentToolkitStatus.State.UP_TO_DATE, detect().mcp)
+        // Without the toolkit's exception, the JetBrains server would be missing.
+        assertEquals(AgentToolkitStatus.State.UPDATE_AVAILABLE, detect(metadata = metadataV3.replace("skipServers", "otherKey")).mcp)
+    }
+
+    @Test
+    fun `TOML table headers count as the installers read them`() {
+        config(".codex/config.toml", "﻿[mcp_servers.jetbrains]\n[ mcp_servers . 'jmix-docs' ]\r\n[\"mcp_servers\".\"playwright\"]\n")
+        assertEquals(AgentToolkitStatus.State.UP_TO_DATE, detect().mcp)
+        // A commented-out table is not a server.
+        config(".codex/config.toml", "[mcp_servers.jetbrains]\n[mcp_servers.jmix-docs]\n# [mcp_servers.playwright]\n")
+        assertEquals(AgentToolkitStatus.State.UPDATE_AVAILABLE, detect().mcp)
+    }
+
+    @Test
+    fun `MCP has no state without agent project configs or with unreadable metadata`() {
+        config(".mcp.json", """{"mcpServers":{"jetbrains":{},"jmix-docs":{},"playwright":{}}}""")
+        assertNull(detect(metadata = metadataV3.replace("projectConfig", "otherKey")).mcp)
+        assertNull(detect(metadata = "not json").mcp)
+        assertNull(detect(metadata = null).mcp)
+    }
+
+    @Test
+    fun `the three files are requested at once`() {
+        val started = CountDownLatch(3)
+        val waitedAlone = AtomicBoolean(false)
+        AgentToolkitStatus.detect(dir, "v3") { path ->
+            started.countDown()
+            // One request after another, each would wait here alone.
+            if (!started.await(5, TimeUnit.SECONDS)) waitedAlone.set(true)
+            when (path) { manifestPath -> manifest(); blockPath -> block; else -> metadataV3 }
+        }
+        assertFalse(waitedAlone.get())
+    }
+
+    @Test
+    fun `the MCP choices come with the status`() {
+        assertEquals(AgentToolkitMetadata.parseMcpOptions(metadataV3), detect().mcpOptions)
+        assertNull(detect(metadata = "not json").mcpOptions)
+    }
+
+    @Test
+    fun `a config that is not UTF-8 is still read`() {
+        val names = """{"mcpServers":{"jetbrains":{},"jmix-docs":{},"playwright":{}},"note":""""
+        Files.write(dir.resolve(".mcp.json"), names.toByteArray() + byteArrayOf(0xC3.toByte(), 0x28) + "\"}".toByteArray())
+        assertEquals(AgentToolkitStatus.State.UP_TO_DATE, detect().mcp)
+    }
+
+    @Test
+    fun `a config that cannot be read leaves the state to the others`() {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        val locked = dir.resolve(".mcp.json")
+        Files.writeString(locked, """{"mcpServers":{"jetbrains":{}}}""")
+        Files.setPosixFilePermissions(locked, emptySet())
+        assumeFalse(Files.isReadable(locked), "this user reads every file")
+        assertNull(detect().mcp)
+        config("opencode.json", """{"mcp":{"jetbrains":{}}}""")
+        assertEquals(AgentToolkitStatus.State.UPDATE_AVAILABLE, detect().mcp)
+        config("opencode.json", """{"mcp":{"jetbrains":{},"jmix-docs":{},"playwright":{}}}""")
+        assertEquals(AgentToolkitStatus.State.UP_TO_DATE, detect().mcp)
+    }
+
+    @Test
+    fun `an MCP config over the size limit is not read`() {
+        config(".mcp.json", """{"mcpServers":{"jetbrains":{},"jmix-docs":{},"playwright":{}}}""")
+        // Sparse: the length is set without writing 4 MiB.
+        RandomAccessFile(dir.resolve(".mcp.json").toFile(), "rw").use { it.setLength(4L * 1024 * 1024 + 1) }
+        assertNull(detect().mcp)
+        RandomAccessFile(dir.resolve(".mcp.json").toFile(), "rw").use { it.setLength(4L * 1024 * 1024) }
+        assertEquals(AgentToolkitStatus.State.UP_TO_DATE, detect().mcp)
+    }
+
+    @Test
+    fun `an MCP config linked outside the project is not read`(@TempDir outside: Path) {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        val target = Files.writeString(outside.resolve("mcp.json"), """{"jetbrains":{},"jmix-docs":{},"playwright":{}}""")
+        Files.createSymbolicLink(dir.resolve(".mcp.json"), target)
+        assertEquals(AgentToolkitStatus.State.NOT_INSTALLED, detect().mcp)
+    }
+
+    @Test
     fun `hints are omitted when the toolkit cannot be read`() {
         fixture()
-        assertEquals(AgentToolkitStatus.Status(null, null), detect(manifest = null, block = null))
-        assertEquals(AgentToolkitStatus.Status(null, null), detect(manifest = "not json", block = " \n"))
+        assertEquals(AgentToolkitStatus.Status(null, null), detect(manifest = null, block = null, metadata = null))
+        assertEquals(AgentToolkitStatus.Status(null, null), detect(manifest = "not json", block = " \n", metadata = "{}"))
         assertNull(detect(manifest = """{"sha256":"$sha","skills":"jmix","store":{"local":"store/skills"}}""").skills)
         assertEquals(
             AgentToolkitStatus.Status(null, null),

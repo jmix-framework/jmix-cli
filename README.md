@@ -52,19 +52,21 @@ See [wizard controls](docs/features/wizard.md),
 
 Run `jmix ai-toolkit` to add or update the
 [Jmix Agent Toolkit](https://github.com/jmix-framework/jmix-agent-toolkit) in an
-existing Jmix project. Choose the project (or pass `--path`), then an action in
-the menu, or pass the action as an argument:
+existing Jmix project. Choose the project (or pass `--path`), then check the
+steps to run, or pass them as arguments:
 
-- `all` — run the three actions below with the toolkit's defaults.
 - `skills` — install or update the agent skills.
 - `guidelines` — add or update the Jmix guidelines in `AGENTS.md`.
 - `mcp` — configure MCP servers for the selected AI agents.
 
-From a script, `--non-interactive` runs `all` without prompts:
+The checklist shows the state of each step and leaves the up-to-date ones
+unchecked. From a script, `--non-interactive` runs the named steps, or all
+three when none are named, without prompts:
 
 ```shell
 cd demo
 jmix ai-toolkit --non-interactive
+jmix ai-toolkit skills guidelines --non-interactive
 ```
 
 The command lists the changed files and the toolkit's notes. Run

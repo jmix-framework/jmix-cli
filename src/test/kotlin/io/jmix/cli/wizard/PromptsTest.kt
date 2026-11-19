@@ -977,6 +977,22 @@ class PromptsTest {
         assertTrue(recorder.output().contains("IdeaProjects  IdeaSettings"))
     }
 
+    @Test
+    fun `with exitOnEof Ctrl+D in a numbered checklist aborts, and the end of piped input fails`() {
+        for (interactive in listOf(true, false)) withEmptyStdin {
+            val recorder = TerminalRecorder(width = 80, height = 20, inputInteractive = interactive)
+            // An IDE console when interactive: keyboard input, but no raw mode.
+            val console = object : TerminalInterface by recorder {
+                override fun enterRawMode(mouseTracking: MouseTracking): AutoCloseable = throw IllegalStateException("no raw mode")
+            }
+            val prompts = Prompts(Terminal(terminalInterface = console), exitOnEof = true, eofError = "No input.")
+            val error = assertThrows(CliktError::class.java) {
+                prompts.chooseMany("Steps", listOf(SelectList.Entry("skills")), filterTexts = listOf("skills"))
+            }
+            assertEquals(if (interactive) "Aborted." else "No input.", error.message)
+        }
+    }
+
     private fun withEmptyStdin(block: () -> Unit) = withStdin("", block)
 
     private fun withStdin(input: String, block: () -> Unit) {

@@ -146,19 +146,19 @@ class AgentToolkitInstallerIntegrationTest {
     fun `a fresh install is up to date against the toolkit's own files`() {
         // More patient than the production limit of a hint, which a slow runner would turn into a null state.
         val fetch = { path: String -> AgentToolkitMetadata.fetch("v3", path, Duration.ofSeconds(30)) }
-        assertEquals(
-            AgentToolkitStatus.Status(AgentToolkitStatus.State.NOT_INSTALLED, AgentToolkitStatus.State.NOT_INSTALLED),
-            AgentToolkitStatus.detect(tempDir, "v3", fetch),
-        )
+        val missing = AgentToolkitStatus.State.NOT_INSTALLED
+        val current = AgentToolkitStatus.State.UP_TO_DATE
+        fun states() = AgentToolkitStatus.detect(tempDir, "v3", fetch).let { listOf(it.skills, it.guidelines, it.mcp) }
+        assertEquals(listOf(missing, missing, missing), states())
         val result = AgentToolkitInstaller.install(tempDir, "3.0.1", steps = setOf(ToolkitStep.SKILLS, ToolkitStep.GUIDELINES))
         assertEquals(
             listOf("created" to ".agents/skills", "created" to ".claude/skills", "created" to "AGENTS.md", "created" to "CLAUDE.md"),
             result.changes.map { it.action to it.path },
         )
-        assertEquals(
-            AgentToolkitStatus.Status(AgentToolkitStatus.State.UP_TO_DATE, AgentToolkitStatus.State.UP_TO_DATE),
-            AgentToolkitStatus.detect(tempDir, "v3", fetch),
-        )
+        assertEquals(listOf(current, current, missing), states())
+        // Junie alone: the toolkit gives it every server but JetBrains, and no user-level config is read.
+        AgentToolkitInstaller.install(tempDir, "3.0.1", steps = setOf(ToolkitStep.MCP), agents = listOf("junie"))
+        assertEquals(listOf(current, current, current), states())
     }
 
     @Test

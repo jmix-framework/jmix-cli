@@ -15,7 +15,17 @@ import java.io.IOException
 import java.time.Duration
 import kotlin.text.Charsets.UTF_8
 
-data class ToolkitChoice(val value: String, val label: String)
+/**
+ * A server or an agent the toolkit offers. For an agent, [projectConfig] is the project MCP config file the
+ * toolkit writes for it, relative to the project root (null when the toolkit names none), and [skipServers]
+ * are the servers the toolkit never configures for it.
+ */
+data class ToolkitChoice(
+    val value: String,
+    val label: String,
+    val projectConfig: String? = null,
+    val skipServers: List<String> = emptyList(),
+)
 
 /** The MCP servers and AI agents the CLI offers, in the toolkit's order. */
 data class ToolkitMcpOptions(val servers: List<ToolkitChoice>, val agents: List<ToolkitChoice>)
@@ -84,8 +94,15 @@ object AgentToolkitMetadata {
             val isDefault = (choice.get("default") as? JsonPrimitive)?.takeIf { it.isBoolean }?.asBoolean == true
             if (!isDefault) return@mapNotNull null
             val label = choice.string("label")?.filterNot(Char::isISOControl)?.takeIf { it.isNotBlank() }
-            ToolkitChoice(value, label ?: value)
+            // Only compared with server ids, never passed on: any text will do.
+            val skipServers = (choice.get("skipServers") as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.asString }.orEmpty()
+            ToolkitChoice(value, label ?: value, choice.string("projectConfig")?.takeIf(::isProjectPath), skipServers)
         }
+
+    /** A path the toolkit may name inside a project: relative, plain elements, no `.` or `..`. */
+    private fun isProjectPath(path: String): Boolean =
+        PROJECT_PATH.matches(path) && path.split('/').none { it == "." || it == ".." }
 
     /** [element] as an array of objects; anything else is not the toolkit's format. */
     private fun objects(element: JsonElement?): List<JsonObject> =
@@ -94,7 +111,7 @@ object AgentToolkitMetadata {
     // Gson's own message is dropped: it quotes the document.
     private fun unexpectedFormat() = IOException("Unexpected Agent Toolkit metadata format.")
 
-    private const val METADATA_PATH = ".studio/studio-meta-data.json"
+    internal const val METADATA_PATH = ".studio/studio-meta-data.json"
     private const val MCP_STEP = "mcp"
     private const val SERVERS_INPUT = "mcpServers"
     private const val AGENTS_INPUT = "mcpAgents"
@@ -103,4 +120,5 @@ object AgentToolkitMetadata {
 
     // Safe as one element of a comma-separated installer argument, and never an option.
     private val CHOICE_VALUE = Regex("[A-Za-z0-9][A-Za-z0-9._-]*")
+    private val PROJECT_PATH = Regex("[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*")
 }

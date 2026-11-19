@@ -9,13 +9,14 @@ import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.output.HelpFormatter
 import com.github.ajalt.clikt.output.MordantHelpFormatter
 import com.github.ajalt.clikt.parameters.arguments.argument
-import com.github.ajalt.clikt.parameters.arguments.optional
+import com.github.ajalt.clikt.parameters.arguments.multiple
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.mordant.rendering.TextColors.brightGreen
 import com.github.ajalt.mordant.rendering.TextColors.brightRed
 import com.github.ajalt.mordant.rendering.TextColors.cyan
+import com.github.ajalt.mordant.rendering.TextColors.gray
 import com.github.ajalt.mordant.rendering.TextColors.green
 import com.github.ajalt.mordant.rendering.TextColors.yellow
 import com.github.ajalt.mordant.rendering.TextStyle
@@ -89,9 +90,9 @@ class ToolkitCommand internal constructor(
 
     override fun help(context: Context) = "Add or update AI Agent Toolkit: skills, guidelines, MCP servers"
 
-    private val action by argument(
-        help = "What to set up: all, skills, guidelines or mcp (default: ask; all with --non-interactive)",
-    ).choice(*ACTIONS.keys.toTypedArray()).optional()
+    private val stepArgs by argument(
+        "steps", help = "Steps to run: skills, guidelines, mcp (default: ask; all three with --non-interactive)",
+    ).choice(STEP_IDS).multiple()
     private val path by option("--path", help = "Project directory (default: ask; current directory with --non-interactive)")
     private val jmixVersion by option(
         "--jmix-version", help = "Jmix version of the project (default: detected from the build file)",
@@ -109,21 +110,21 @@ class ToolkitCommand internal constructor(
     private val noUpdate by option(SelfUpdater.NO_UPDATE_FLAG, help = "Skip the startup update check").flag()
 
     /** In the order they are resolved; a later one depends on the earlier ones. */
-    private enum class Step { DIRECTORY, VERSION, ACTION, SERVERS, AGENTS }
+    private enum class Step { DIRECTORY, VERSION, STEPS, SERVERS, AGENTS }
 
     /** ASK: the step has a question, and questions are not open yet (see [asking]). */
     private enum class Outcome { PROMPTED, AUTO, BACK, ASK }
 
     /**
-     * What the steps resolved so far. [hints] are the status hints of [dir] and [branch], detected once;
-     * [options] is the metadata of [branch]; the two lists are set for the MCP step only.
+     * What the steps resolved so far. [status] is the state of [dir] for [branch], detected once;
+     * [options] is the metadata of [branch]; the two lists are set when [steps] has the MCP step.
      */
     private data class Answers(
         val dir: Path? = null,
         val version: String? = null,
         val branch: String? = null,
-        val hints: Map<String, String>? = null,
-        val action: String? = null,
+        val status: AgentToolkitStatus.Status? = null,
+        val steps: Set<ToolkitStep>? = null,
         val options: ToolkitMcpOptions? = null,
         val servers: List<String>? = null,
         val agents: List<String>? = null,
@@ -152,7 +153,7 @@ class ToolkitCommand internal constructor(
         reporter = StatusReporter(terminal)
         // A script or an agent without --non-interactive must not end with exit code 0 and nothing done.
         prompts = Prompts(terminal, exitOnEof = true, eofError = NO_INPUT) { WizardUiState(choices()) }
-        action?.let(::rejectMcpOptionsWithout)
+        rejectMcpOptionsWithout(stepArgs.toSet())
         val result = try {
             // Resolved before anything is written: the installer gets explicit, offered ids for the MCP step.
             // The alternate screen opens for the first question; a run that asks nothing stays on the main one.
@@ -163,13 +164,15 @@ class ToolkitCommand internal constructor(
             }
             // The frames lived on the alternate screen, which the terminal has just discarded.
             if (restate) choices().forEach(::printChoice) else printProject()
-            if (asked.isNotEmpty()) terminal.println()
             val setup = answers
+            val steps = checkNotNull(setup.steps)
+            if (steps.isEmpty()) {
+                terminal.println(NOTHING_SELECTED)
+                return
+            }
+            if (asked.isNotEmpty()) terminal.println()
             reporter.run("Setting up the Agent Toolkit") { progress ->
-                install(
-                    checkNotNull(setup.dir), checkNotNull(setup.version), ACTIONS.getValue(checkNotNull(setup.action)),
-                    setup.servers, setup.agents, progress::relabel,
-                )
+                install(checkNotNull(setup.dir), checkNotNull(setup.version), steps, setup.servers, setup.agents, progress::relabel)
             }
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -195,7 +198,7 @@ class ToolkitCommand internal constructor(
             val outcome = when (step) {
                 Step.DIRECTORY -> stepDirectory()
                 Step.VERSION -> stepVersion()
-                Step.ACTION -> stepAction()
+                Step.STEPS -> stepSteps()
                 Step.SERVERS -> stepServers()
                 Step.AGENTS -> stepAgents()
             }
@@ -341,29 +344,68 @@ class ToolkitCommand internal constructor(
         }
     }
 
-    private fun stepAction(): Outcome {
-        val given = action ?: ALL.takeIf { nonInteractive }
+    /** The steps the arguments name, else all of them in a scripted run; an interactive run asks. */
+    private fun stepSteps(): Outcome {
+        val given = stepArgs.toSet().ifEmpty { null } ?: ToolkitStep.entries.toSet().takeIf { nonInteractive }
         val chosen = given ?: run {
             if (!asking) return Outcome.ASK
             printProject()
-            val hints = answers.hints ?: statusHints().also { answers = answers.copy(hints = it) }
-            val picked = prompts.choose(
-                "What would you like to set up?", ACTIONS.keys.toList(), { it },
-                { ACTION_HELP.getValue(it) + hints[it].orEmpty() }, allowBack = true,
-            )
-            when (picked) {
+            when (val picked = askSteps()) {
                 is Answer.Back -> return Outcome.BACK
-                is Answer.Value -> picked.value.also(::rejectMcpOptionsWithout)
+                is Answer.Value -> picked.value
             }
         }
-        // Also drops the lists that an earlier choice of the MCP action left behind.
-        answers = answers.copy(action = chosen, servers = null, agents = null)
+        // Also drops the lists that an earlier choice of the MCP step left behind.
+        answers = answers.copy(steps = chosen, servers = null, agents = null)
         return if (given == null) Outcome.PROMPTED else Outcome.AUTO
+    }
+
+    /**
+     * A checklist of the steps with the state of each. A step that is up to date starts unchecked, one whose
+     * state is unknown starts checked, and Back to it keeps the earlier choice. MCP stays checked when
+     * `--servers` or `--agents` is given. An empty choice is allowed: it runs nothing.
+     */
+    private fun askSteps(): Answer<Set<ToolkitStep>> {
+        // The MCP questions reuse the metadata the status was found with.
+        val status = answers.status ?: detectStatus().also { answers = answers.copy(status = it, options = it.mcpOptions) }
+        val states = mapOf(ToolkitStep.SKILLS to status.skills, ToolkitStep.GUIDELINES to status.guidelines, ToolkitStep.MCP to status.mcp)
+        val steps = ToolkitStep.entries
+        val ids = steps.map(::stepId)
+        val width = ids.maxOf { it.length }
+        val locked = setOfNotNull(steps.indexOf(ToolkitStep.MCP).takeIf { servers != null || agents != null })
+        val entries = steps.mapIndexed { index, step ->
+            val state = states[step]
+            val hint = state?.let { " · " + STATUS_HINTS.getValue(it) }.orEmpty()
+            val selected = index in locked || (answers.steps?.let { step in it } ?: (state != AgentToolkitStatus.State.UP_TO_DATE))
+            SelectList.Entry(ids[index].padEnd(width) + gray(" — " + STEP_HELP.getValue(step) + hint), selected = selected)
+        }
+        val legend = ALL_UP_TO_DATE.takeIf { entries.none { it.selected } }
+        val picked = prompts.chooseMany(STEPS_QUESTION, entries, allowBack = true, lockedIndices = locked, values = ids, legend = legend)
+            // Without raw mode only a searchable list falls back to a numbered checklist.
+            ?: checkNotNull(prompts.chooseMany(
+                STEPS_QUESTION, entries, allowBack = true, filterTexts = ids, lockedIndices = locked, values = ids, legend = legend,
+            ))
+        return when (picked) {
+            is Answer.Back -> Answer.Back
+            is Answer.Value -> Answer.Value(steps.filter { stepId(it) in picked.value }.toSet())
+        }
+    }
+
+    /** The state of each step in the project; unknown when the toolkit gives no answer. */
+    private fun detectStatus(): AgentToolkitStatus.Status {
+        val dir = checkNotNull(answers.dir)
+        val branch = checkNotNull(answers.branch)
+        return try {
+            reporter.run("Checking the Agent Toolkit") { status(dir, branch) }
+        } catch (e: Exception) {
+            if (e is InterruptedException) Thread.currentThread().interrupt()
+            null
+        } ?: UNKNOWN_STATUS
     }
 
     private fun stepServers(): Outcome {
         val setup = answers
-        if (ToolkitStep.MCP !in ACTIONS.getValue(checkNotNull(setup.action))) return Outcome.AUTO
+        if (ToolkitStep.MCP !in checkNotNull(setup.steps)) return Outcome.AUTO
         val options = setup.options ?: loadMcpOptions(checkNotNull(setup.branch), checkNotNull(setup.version))
         answers = setup.copy(options = options)
         return stepSelection(servers, options.servers, "MCP server") { answers = answers.copy(servers = it) }
@@ -371,13 +413,13 @@ class ToolkitCommand internal constructor(
 
     private fun stepAgents(): Outcome {
         val setup = answers
-        if (ToolkitStep.MCP !in ACTIONS.getValue(checkNotNull(setup.action))) return Outcome.AUTO
+        if (ToolkitStep.MCP !in checkNotNull(setup.steps)) return Outcome.AUTO
         return stepSelection(agents, checkNotNull(setup.options).agents, "AI agent") { answers = answers.copy(agents = it) }
     }
 
-    /** One MCP list: what its option names, else every offered id; only the MCP action asks. */
+    /** One MCP list: what its option names, else every offered id in a scripted run; an interactive run asks. */
     private fun stepSelection(raw: String?, offered: List<ToolkitChoice>, kind: String, store: (List<String>) -> Unit): Outcome {
-        if (raw != null || nonInteractive || answers.action != MCP) {
+        if (raw != null || nonInteractive) {
             store(selection(raw, offered, kind))
             return Outcome.AUTO
         }
@@ -415,24 +457,9 @@ class ToolkitCommand internal constructor(
         }
     }
 
-    /** What the action menu appends to a description; nothing for a state that could not be detected. */
-    private fun statusHints(): Map<String, String> {
-        val dir = checkNotNull(answers.dir)
-        val branch = checkNotNull(answers.branch)
-        val detected = try {
-            reporter.run("Checking the Agent Toolkit") { status(dir, branch) }
-        } catch (e: Exception) {
-            if (e is InterruptedException) Thread.currentThread().interrupt()
-            null
-        }
-        return listOf(SKILLS to detected?.skills, GUIDELINES to detected?.guidelines)
-            .mapNotNull { (action, state) -> state?.let { action to " · " + STATUS_HINTS.getValue(it) } }
-            .toMap()
-    }
-
-    private fun rejectMcpOptionsWithout(action: String) {
-        if (ToolkitStep.MCP !in ACTIONS.getValue(action) && (servers != null || agents != null)) {
-            throw CliktError("--servers and --agents apply only to the mcp and all actions.")
+    private fun rejectMcpOptionsWithout(steps: Set<ToolkitStep>) {
+        if (steps.isNotEmpty() && ToolkitStep.MCP !in steps && (servers != null || agents != null)) {
+            throw CliktError("--servers and --agents apply only to the mcp step.")
         }
     }
 
@@ -480,7 +507,7 @@ class ToolkitCommand internal constructor(
     /** The summary line of a question; the directory and the version are in the project line. */
     private fun answer(step: Step): WizardChoice? = when (step) {
         Step.DIRECTORY, Step.VERSION -> null
-        Step.ACTION -> answers.action?.let { WizardChoice("Action", it) }
+        Step.STEPS -> answers.steps?.ifEmpty { null }?.let { WizardChoice("Steps", it.sorted().joinToString(", ", transform = ::stepId)) }
         Step.SERVERS -> answers.servers?.let { WizardChoice("MCP servers", it.joinToString(", ")) }
         Step.AGENTS -> answers.agents?.let { WizardChoice("AI agents", it.joinToString(", ")) }
     }
@@ -529,22 +556,16 @@ class ToolkitCommand internal constructor(
     }
 
     private companion object {
-        const val ALL = "all"
-        const val SKILLS = "skills"
-        const val GUIDELINES = "guidelines"
-        const val MCP = "mcp"
-        val ACTIONS = mapOf(
-            ALL to ToolkitStep.entries.toSet(),
-            SKILLS to setOf(ToolkitStep.SKILLS),
-            GUIDELINES to setOf(ToolkitStep.GUIDELINES),
-            MCP to setOf(ToolkitStep.MCP),
+        val STEP_IDS: Map<String, ToolkitStep> = ToolkitStep.entries.associateBy(::stepId)
+        val STEP_HELP = mapOf(
+            ToolkitStep.SKILLS to "Update agent skills",
+            ToolkitStep.GUIDELINES to "Generate AGENTS.md guidelines",
+            ToolkitStep.MCP to "Configure MCP servers",
         )
-        val ACTION_HELP = mapOf(
-            ALL to "Install or update everything",
-            SKILLS to "Update agent skills",
-            GUIDELINES to "Generate AGENTS.md guidelines",
-            MCP to "Configure MCP servers",
-        )
+        const val STEPS_QUESTION = "What would you like to set up?"
+        const val ALL_UP_TO_DATE = "Everything is up to date. Select a step to run it anyway."
+        const val NOTHING_SELECTED = "Nothing selected, so nothing was changed."
+        val UNKNOWN_STATUS = AgentToolkitStatus.Status(null, null, null)
         val STATUS_HINTS = mapOf(
             AgentToolkitStatus.State.NOT_INSTALLED to "not installed",
             AgentToolkitStatus.State.UP_TO_DATE to green("up to date"),
@@ -557,11 +578,14 @@ class ToolkitCommand internal constructor(
         const val CURRENT_DIRECTORY = "Current directory"
         const val OTHER_CHOICE = "Other..."
         const val NO_INPUT = "No input to answer the questions, so nothing was set up. " +
-            "Use --non-interactive, or pass --path and an action."
+            "Use --non-interactive, or pass the answers as arguments and options."
         val METADATA_TIMEOUT: Duration = Duration.ofSeconds(15)
         val HELP_TIMEOUT: Duration = Duration.ofSeconds(3)
     }
 }
+
+/** The word for [step] on the command line and in the summary. */
+private fun stepId(step: ToolkitStep): String = step.name.lowercase()
 
 /** The values of [valid] that [raw] names, in the order of [valid]. */
 private fun parseSelection(raw: String, valid: List<String>): List<String> {

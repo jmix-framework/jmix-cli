@@ -24,14 +24,15 @@ version. Do not report the private bundled runtime as an installed development J
 - Install Jmix Agent Toolkit from the branch matching the Jmix major version
   unless the user opts out (`--no-agents-toolkit` or the wizard's setup checklist).
   `jmix new` runs the skills, guidelines, and MCP steps with every MCP server
-  and AI agent the toolkit offers, as `jmix ai-toolkit all` does. A missing
+  and AI agent the toolkit offers, as `jmix ai-toolkit --non-interactive` does. A missing
   `v<major>` branch fails the setup; there is no fallback to the default branch.
 - Single source of truth: keep no copy of the toolkit's reference data in code,
   help texts, or guides. That covers server and agent ids, labels and defaults,
   per-agent config files, skill names, the skills folder, and the guidelines
   text. Read it at run time from the project's toolkit branch:
   - MCP servers and AI agents: `.studio/studio-meta-data.json`, step `mcp`,
-    inputs `mcpServers` and `mcpAgents`.
+    inputs `mcpServers` and `mcpAgents`; each agent's project MCP config file
+    is its `projectConfig`, and the servers it never gets are its `skipServers`.
   - Skill names, the project skills folder, and the content hash:
     `.studio/skills-manifest.json` (`skills`, `store.local`, `sha256`).
   - The current guidelines block: `content/guidelines-block.md`.
@@ -71,15 +72,17 @@ version. Do not report the private bundled runtime as an installed development J
 `jmix ai-toolkit` adds or updates the toolkit in an existing project:
 
 ```text
-jmix ai-toolkit [all|skills|guidelines|mcp]
+jmix ai-toolkit [skills] [guidelines] [mcp]
                 [--path DIR] [--jmix-version VERSION]
                 [--servers CSV] [--agents CSV] [--non-interactive]
 ```
 
-- One action runs per call; the command prints the result and exits. Without an
-  action the interactive command opens the action menu, and `--non-interactive`
-  runs `all`. See the [wizard guide](wizard.md) for the menu, Back, and the
-  line-input fallback.
+- The steps named as arguments run, each once and in the order of the table
+  below; the command prints the result and exits. Without steps the interactive
+  command asks with the steps checklist, and `--non-interactive` runs all three.
+  An empty choice in the checklist runs nothing and ends with
+  `Nothing selected, so nothing was changed.` (exit code 0). See the
+  [wizard guide](wizard.md) for the checklist, Back, and the line-input fallback.
 - Project: a directory with `build.gradle`, `build.gradle.kts`,
   `settings.gradle`, or `settings.gradle.kts`. `--path` names it; otherwise a
   scripted run uses the current directory, and the interactive command first
@@ -111,12 +114,12 @@ jmix ai-toolkit [all|skills|guidelines|mcp]
   `Unexpected Agent Toolkit metadata format.`
 - `--servers` and `--agents` take offered ids, comma-separated and without case,
   and default to all of them. An unknown id fails and names the valid values; an
-  empty list fails too. Both apply to `mcp` and `all` only; with `skills` or
-  `guidelines` they fail. `all` never asks the MCP questions. `mcp` asks for each
-  list that its option does not decide.
-- Steps, in this order for `all`:
+  empty list fails too. Both apply to the `mcp` step only: steps named without
+  `mcp` make them fail, and in the checklist they keep `mcp` checked. An
+  interactive run with `mcp` asks for each list that its option does not decide.
+- Steps, in this order:
 
-  | Action       | Toolkit call                               | Writes                                    |
+  | Step         | Toolkit call                               | Writes                                    |
   |--------------|--------------------------------------------|-------------------------------------------|
   | `skills`     | `skills --scope local`                     | The project skills folder and its links   |
   | `guidelines` | `agents-md`                                | The Jmix block in `AGENTS.md`             |
@@ -142,18 +145,37 @@ jmix ai-toolkit [all|skills|guidelines|mcp]
   and in the MCP step also every line that starts at column 0 and is neither a
   `[…]` heading nor a marker. The CLI writes no guidance of its own. Notes are
   written for the toolkit's installer and can name its flags.
-- Status hints: the interactive action menu appends `not installed`,
-  `up to date`, or `update available` to `skills` and `guidelines`. Each hint
-  needs one request with a 3 second limit and is omitted without an answer.
-  The status is detected once for the project of a run: Back to the menu does
-  not ask again.
-  Skills compare the hash of the manifest's skills in its `store.local` folder
-  with `sha256`. Guidelines compare `AGENTS.md` with the published block: it
-  contains the whole block, else it has a line equal to the block's first line.
-- Limits of the hints: `mcp` has none, because the toolkit publishes no list of
-  the files it writes per agent. A checkout with converted line endings (Git
-  `autocrlf`) hashes differently, so its skills hint stays `update available`.
-  Scripted runs and runs with an action argument show no hints.
+- States: the checklist appends `not installed`, `up to date`, or
+  `update available` to each step. A step starts checked unless it is up to
+  date, so a step whose state is unknown starts checked too. When no step
+  starts checked (every step up to date, and neither `--servers` nor
+  `--agents` given), the checklist says
+  `Everything is up to date. Select a step to run it anyway.` The states need
+  three requests, sent at once with a 3 second limit each; a state is unknown
+  without its answer. The MCP questions reuse the metadata of this check. Back
+  to the checklist keeps the earlier choice and does not detect the states
+  again; choosing the project or the version again does.
+  - Skills compare the hash of the manifest's skills in its `store.local`
+    folder with `sha256`.
+  - Guidelines compare `AGENTS.md` with the published block: it contains the
+    whole block, else it has a line equal to the block's first line.
+  - MCP reads the `projectConfig` file of each `mcpAgents` choice. It is
+    `up to date` when one of them names every offered server its agent gets
+    (all but the agent's `skipServers`), `not installed` when none of them
+    exists or names an offered server, and `update available` otherwise. Only
+    names count: a JSON key (`"id":`) or the last key of a TOML table header
+    (`[mcp_servers.id]`), read as the installers read it (spaces, quotes, and a
+    BOM do not count).
+- Limits of the states: a checkout with converted line endings (Git `autocrlf`)
+  hashes differently, so its skills state stays `update available`. MCP
+  compares names only, so a server with an outdated definition counts as set
+  up, and a server the user left out keeps MCP at `update available`. A
+  `projectConfig` that is not a plain relative path is ignored, and MCP has no
+  state when no agent has one. `AGENTS.md` over 4 MiB is not read, nor is a
+  skills store that a link leads out of the project. An MCP config that a link
+  leads out of the project counts as missing; one over 4 MiB, like one that
+  cannot be read, leaves the state to the others, or makes it unknown. Scripted
+  runs and runs with step arguments show no states.
 - Help: `jmix ai-toolkit --help` ends with the offered server and agent ids,
   loaded with a 3 second limit from the branch of the Jmix version detected in
   the current directory (`--path` is not used), or from the toolkit's default
@@ -177,7 +199,7 @@ jmix ai-toolkit [all|skills|guidelines|mcp]
 - [ProjectInteraction.kt](../../src/main/kotlin/io/jmix/cli/command/ProjectInteraction.kt) — shared follow-up prompts and JDK setup.
 - [AgentToolkitInstaller.kt](../../src/main/kotlin/io/jmix/cli/env/AgentToolkitInstaller.kt) — toolkit steps, change markers, and notes.
 - [AgentToolkitMetadata.kt](../../src/main/kotlin/io/jmix/cli/env/AgentToolkitMetadata.kt) — toolkit files and the offered MCP servers and AI agents.
-- [AgentToolkitStatus.kt](../../src/main/kotlin/io/jmix/cli/env/AgentToolkitStatus.kt) — skills and guidelines status hints.
+- [AgentToolkitStatus.kt](../../src/main/kotlin/io/jmix/cli/env/AgentToolkitStatus.kt) — the state of each step in a project.
 - [ToolkitCommand.kt](../../src/main/kotlin/io/jmix/cli/command/ToolkitCommand.kt) — the `ai-toolkit` command.
 
 ## Verification
@@ -193,5 +215,5 @@ The MCP integration tests read the user's Codex config (`$CODEX_HOME` or
 name and another transport fails them.
 Inspect the generated guidelines, skills, and MCP configs, and cover Windows
 command construction. For command changes, also run `jmix ai-toolkit --help`,
-a scripted run in a generated project, and the action menu in a raw terminal
+a scripted run in a generated project, and the steps checklist in a raw terminal
 and a line-input console, including Back and quit.

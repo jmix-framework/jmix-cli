@@ -98,31 +98,33 @@ draft; templates opened during a cancelled run are closed before returning home.
   location is the parent for the archive's project folder. The run action also asks
   which demo module to start; Back returns to the checklist. `--path` skips location
   selection, and non-interactive trial runs skip both interactive steps.
-- `jmix ai-toolkit` asks only what its argument and options leave open, in this
+- `jmix ai-toolkit` asks only what its arguments and options leave open, in this
   order: the project directory (unless `--path` is given), the Jmix version when
-  it is not detected, the action, and for `mcp` the MCP servers and the AI
+  it is not detected, the steps, and with `mcp` the MCP servers and the AI
   agents. The project list starts with the current directory when it is a
   Gradle project, then lists the Jmix projects one level below it and in
   `~/IdeaProjects`, and ends with `Other...`; going back to it keeps the chosen
   project selected. Back from a typed directory shows the list again with
   `Other...` selected; when `Other...` is the only entry, the list is skipped
-  and Back leaves the question. The action menu is a single-choice list of
-  `all`, `skills`, `guidelines`, and `mcp`, with `all` as the default; `skills` and `guidelines`
-  can carry a status hint. The two MCP checklists show the toolkit's labels with
-  every entry checked. Confirming an empty checklist repeats the question with
-  the reason.
+  and Back leaves the question. The steps checklist lists `skills`,
+  `guidelines`, and `mcp` with the state of each; the steps that are up to date
+  start unchecked, and `--servers` or `--agents` keep `mcp` checked. Confirming
+  it empty runs nothing. The two MCP checklists show the toolkit's labels with
+  every entry checked. Confirming an empty MCP checklist repeats the question
+  with the reason.
 - In `jmix ai-toolkit`, Back (Esc, or `<` in line-input consoles) returns to the
   previous question that was asked, and from the first one to the command menu.
   This works for both a menu-launched and a direct `jmix ai-toolkit`. `q` quits
   from a list. Text questions use Ctrl+Q in raw terminals and have no quit key
   in line-input consoles. When the input ends before the questions are
   answered, nothing is set up and the command fails with
-  `No input to answer the questions, so nothing was set up. Use --non-interactive, or pass --path and an action.`
+  `No input to answer the questions, so nothing was set up. Use --non-interactive, or pass the answers as arguments and options.`
   The project line (the directory alone until its version is known)
   and the answers stay above the current question; raw terminals print them
   again above the result. A run that asks nothing does not open the alternate
   screen.
-- Without raw mode the `ai-toolkit` project list and action menu are numbered lists, and each MCP
+- Without raw mode the `ai-toolkit` project list is a numbered list, the steps
+  checklist is a numbered checklist (numbers toggle, Enter confirms), and each MCP
   checklist becomes one text question in the syntax of `--servers` and
   `--agents`, not one yes/no question per entry. Enter keeps every offered id,
   an unknown id repeats the question with the valid values, and `<` goes back.
