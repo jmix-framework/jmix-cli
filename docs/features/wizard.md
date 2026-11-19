@@ -4,7 +4,7 @@ Running `jmix` without a command opens the command menu, in this order:
 
 1. `new` — create a new project.
 2. `trial` — download the Enterprise+BPM trial project.
-3. `ai-toolkit` — add or update the AI Agent Toolkit in an existing project.
+3. `agent-toolkit` — add or update the AI Agent Toolkit in an existing project.
 4. `login` — sign in, or `logout` — sign out when a local session is saved.
 5. `update` — update the CLI.
 
@@ -98,7 +98,7 @@ draft; templates opened during a cancelled run are closed before returning home.
   location is the parent for the archive's project folder. The run action also asks
   which demo module to start; Back returns to the checklist. `--path` skips location
   selection, and non-interactive trial runs skip both interactive steps.
-- `jmix ai-toolkit` asks only what its arguments and options leave open, in this
+- `jmix agent-toolkit` asks only what its arguments and options leave open, in this
   order: the project directory (unless `--path` is given), the Jmix version when
   it is not detected, the steps, and with `mcp` the MCP servers and the AI
   agents. The project list starts with the current directory when it is a
@@ -112,9 +112,9 @@ draft; templates opened during a cancelled run are closed before returning home.
   it empty runs nothing. The two MCP checklists show the toolkit's labels with
   every entry checked. Confirming an empty MCP checklist repeats the question
   with the reason.
-- In `jmix ai-toolkit`, Back (Esc, or `<` in line-input consoles) returns to the
+- In `jmix agent-toolkit`, Back (Esc, or `<` in line-input consoles) returns to the
   previous question that was asked, and from the first one to the command menu.
-  This works for both a menu-launched and a direct `jmix ai-toolkit`. `q` quits
+  This works for both a menu-launched and a direct `jmix agent-toolkit`. `q` quits
   from a list. Text questions use Ctrl+Q in raw terminals and have no quit key
   in line-input consoles. When the input ends before the questions are
   answered, nothing is set up and the command fails with
@@ -123,7 +123,7 @@ draft; templates opened during a cancelled run are closed before returning home.
   and the answers stay above the current question; raw terminals print them
   again above the result. A run that asks nothing does not open the alternate
   screen.
-- Without raw mode the `ai-toolkit` project list is a numbered list, the steps
+- Without raw mode the `agent-toolkit` project list is a numbered list, the steps
   checklist is a numbered checklist (numbers toggle, Enter confirms), and each MCP
   checklist becomes one text question in the syntax of `--servers` and
   `--agents`, not one yes/no question per entry. Enter keeps every offered id,
@@ -135,7 +135,7 @@ draft; templates opened during a cancelled run are closed before returning home.
 - [JmixCli.kt](../../src/main/kotlin/io/jmix/cli/command/JmixCli.kt) — root command and command menu.
 - [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/command/NewCommand.kt) — step state and transitions.
 - [ProjectInteraction.kt](../../src/main/kotlin/io/jmix/cli/command/ProjectInteraction.kt) — shared location, next steps, opening, and running.
-- [ToolkitCommand.kt](../../src/main/kotlin/io/jmix/cli/command/ToolkitCommand.kt) — `ai-toolkit` questions and Back.
+- [ToolkitCommand.kt](../../src/main/kotlin/io/jmix/cli/command/ToolkitCommand.kt) — `agent-toolkit` questions and Back.
 - [Prompts.kt](../../src/main/kotlin/io/jmix/cli/wizard/Prompts.kt) — rendering, input, and fallbacks.
 - [StatusReporter.kt](../../src/main/kotlin/io/jmix/cli/wizard/StatusReporter.kt) — activity indicator for slow steps.
 - [wizard](../../src/main/kotlin/io/jmix/cli/wizard) — banner, validation, and path completion.

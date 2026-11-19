@@ -63,7 +63,7 @@ class ToolkitCommand internal constructor(
     private val status: ToolkitStatusCheck,
     private val currentDir: () -> Path = { Path.of("").toAbsolutePath().normalize() },
     private val homeDir: () -> Path = { Path.of(System.getProperty("user.home")) },
-) : CliktCommand(name = "ai-toolkit") {
+) : CliktCommand(name = "agent-toolkit") {
 
     constructor() : this(
         AgentToolkitInstaller::install, AgentToolkitMetadata::mcpOptions, { dir, ref -> AgentToolkitStatus.detect(dir, ref) },
@@ -467,7 +467,7 @@ class ToolkitCommand internal constructor(
 
     /** [dir] can be text that is no path at all; it is printed without its control characters. */
     private fun noProject(dir: String) =
-        CliktError("No Gradle project found in ${shown(dir)}. Run `jmix ai-toolkit` from the project root or pass --path.")
+        CliktError("No Gradle project found in ${shown(dir)}. Run `jmix agent-toolkit` from the project root or pass --path.")
 
     /** The directory that typed text names; null when it is no path at all. */
     private fun typedDir(raw: String): Path? = try {

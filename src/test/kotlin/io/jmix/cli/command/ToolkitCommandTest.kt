@@ -180,7 +180,7 @@ class ToolkitCommandTest {
         val empty = Files.createDirectories(dir.resolve("empty"))
         val run = command(cwd = empty).test(listOf("skills", "--non-interactive"))
         assertEquals(1, run.statusCode)
-        assertTrue(flat(run.stderr).contains("No Gradle project found in $empty. Run `jmix ai-toolkit` from the project root or pass --path."))
+        assertTrue(flat(run.stderr).contains("No Gradle project found in $empty. Run `jmix agent-toolkit` from the project root or pass --path."))
         assertTrue(calls.isEmpty())
     }
 
@@ -282,7 +282,7 @@ class ToolkitCommandTest {
         for (run in runs) {
             assertEquals(1, run.statusCode)
             assertEquals(
-                "No Gradle project found in nopath. Run `jmix ai-toolkit` from the project root or pass --path.",
+                "No Gradle project found in nopath. Run `jmix agent-toolkit` from the project root or pass --path.",
                 flat(run.stderr).trim(),
             )
         }
@@ -345,7 +345,7 @@ class ToolkitCommandTest {
         metadataFailure = IOException("offline")
         val help = command(cwd = project()).test(listOf("--help"))
         assertEquals(0, help.statusCode)
-        assertTrue(flat(help.output).contains("Usage: ai-toolkit"))
+        assertTrue(flat(help.output).contains("Usage: agent-toolkit"))
         assertTrue(flat(help.output).contains("The current MCP servers and AI agents are listed when the Agent Toolkit is reachable."))
     }
 
@@ -488,7 +488,7 @@ class ToolkitCommandTest {
         val empty = Files.createDirectories(dir.resolve("empty"))
         val run = lines("2\n", "--path", empty.toString())
         assertEquals(1, run.statusCode)
-        assertTrue(flat(run.stderr).contains("No Gradle project found in $empty. Run `jmix ai-toolkit` from the project root or pass --path."))
+        assertTrue(flat(run.stderr).contains("No Gradle project found in $empty. Run `jmix agent-toolkit` from the project root or pass --path."))
         assertTrue(calls.isEmpty())
     }
 

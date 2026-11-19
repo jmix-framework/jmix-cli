@@ -50,7 +50,7 @@ See [wizard controls](docs/features/wizard.md),
 
 ## Agent Toolkit
 
-Run `jmix ai-toolkit` to add or update the
+Run `jmix agent-toolkit` to add or update the
 [Jmix Agent Toolkit](https://github.com/jmix-framework/jmix-agent-toolkit) in an
 existing Jmix project. Choose the project (or pass `--path`), then check the
 steps to run, or pass them as arguments:
@@ -65,12 +65,12 @@ three when none are named, without prompts:
 
 ```shell
 cd demo
-jmix ai-toolkit --non-interactive
-jmix ai-toolkit skills guidelines --non-interactive
+jmix agent-toolkit --non-interactive
+jmix agent-toolkit skills guidelines --non-interactive
 ```
 
 The command lists the changed files and the toolkit's notes. Run
-`jmix ai-toolkit --help` for the options and the MCP servers and AI agents the
+`jmix agent-toolkit --help` for the options and the MCP servers and AI agents the
 toolkit currently offers. See the
 [Agent Toolkit guide](docs/features/environment-and-toolkit.md#toolkit-command).
 

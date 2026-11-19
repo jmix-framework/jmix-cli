@@ -12,6 +12,6 @@ class MainTest {
     fun `the command menu lists the commands in their order`(@TempDir dir: Path) {
         val names = rootCommand(UsageStatistics(file = dir.resolve("installation-id")))
             .registeredSubcommands().map { it.commandName }
-        assertEquals(listOf("new", "trial", "ai-toolkit", "login", "logout", "update"), names)
+        assertEquals(listOf("new", "trial", "agent-toolkit", "login", "logout", "update"), names)
     }
 }

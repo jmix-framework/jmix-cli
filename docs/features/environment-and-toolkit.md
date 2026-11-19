@@ -24,7 +24,7 @@ version. Do not report the private bundled runtime as an installed development J
 - Install Jmix Agent Toolkit from the branch matching the Jmix major version
   unless the user opts out (`--no-agents-toolkit` or the wizard's setup checklist).
   `jmix new` runs the skills, guidelines, and MCP steps with every MCP server
-  and AI agent the toolkit offers, as `jmix ai-toolkit --non-interactive` does. A missing
+  and AI agent the toolkit offers, as `jmix agent-toolkit --non-interactive` does. A missing
   `v<major>` branch fails the setup; there is no fallback to the default branch.
 - Single source of truth: keep no copy of the toolkit's reference data in code,
   help texts, or guides. That covers server and agent ids, labels and defaults,
@@ -40,7 +40,7 @@ version. Do not report the private bundled runtime as an installed development J
   - What to do after a run: the installer's own notes.
 
   The [toolkit's README](https://github.com/jmix-framework/jmix-agent-toolkit)
-  describes what it installs; `jmix ai-toolkit --help` lists the current servers
+  describes what it installs; `jmix agent-toolkit --help` lists the current servers
   and agents.
 - Only the installer's calling contract stays in code: the script names, the
   `skills`, `agents-md`, and `mcp` subcommands with their flags, the three file
@@ -65,14 +65,14 @@ version. Do not report the private bundled runtime as an installed development J
   leading `~` becomes the user's home). Keep setup
   local to the project: never pass the global scope, a flag that turns an agent
   off, or a server or agent the toolkit metadata does not offer. `jmix new`
-  reports installer failures as warnings that name `jmix ai-toolkit`.
+  reports installer failures as warnings that name `jmix agent-toolkit`.
 
 ## Toolkit command
 
-`jmix ai-toolkit` adds or updates the toolkit in an existing project:
+`jmix agent-toolkit` adds or updates the toolkit in an existing project:
 
 ```text
-jmix ai-toolkit [skills] [guidelines] [mcp]
+jmix agent-toolkit [skills] [guidelines] [mcp]
                 [--path DIR] [--jmix-version VERSION]
                 [--servers CSV] [--agents CSV] [--non-interactive]
 ```
@@ -93,7 +93,7 @@ jmix ai-toolkit [skills] [guidelines] [mcp]
   not look into the home directory's own folders: on macOS that asks for access
   to Desktop, Documents, and Downloads. A scripted run, and any run whose explicit
   `--path` is not a project, fails
-  with ``No Gradle project found in <dir>. Run `jmix ai-toolkit` from the project root or pass --path.``
+  with ``No Gradle project found in <dir>. Run `jmix agent-toolkit` from the project root or pass --path.``
 - Jmix version: `--jmix-version`, else the first literal `bomVersion` in the root
   or `demo/*` build files, else the first `io.jmix` Gradle plugin version in
   the same files. A value that does not look like a version is
@@ -176,7 +176,7 @@ jmix ai-toolkit [skills] [guidelines] [mcp]
   leads out of the project counts as missing; one over 4 MiB, like one that
   cannot be read, leaves the state to the others, or makes it unknown. Scripted
   runs and runs with step arguments show no states.
-- Help: `jmix ai-toolkit --help` ends with the offered server and agent ids,
+- Help: `jmix agent-toolkit --help` ends with the offered server and agent ids,
   loaded with a 3 second limit from the branch of the Jmix version detected in
   the current directory (`--path` is not used), or from the toolkit's default
   branch when none is detected. Without an answer it ends
@@ -200,7 +200,7 @@ jmix ai-toolkit [skills] [guidelines] [mcp]
 - [AgentToolkitInstaller.kt](../../src/main/kotlin/io/jmix/cli/env/AgentToolkitInstaller.kt) — toolkit steps, change markers, and notes.
 - [AgentToolkitMetadata.kt](../../src/main/kotlin/io/jmix/cli/env/AgentToolkitMetadata.kt) — toolkit files and the offered MCP servers and AI agents.
 - [AgentToolkitStatus.kt](../../src/main/kotlin/io/jmix/cli/env/AgentToolkitStatus.kt) — the state of each step in a project.
-- [ToolkitCommand.kt](../../src/main/kotlin/io/jmix/cli/command/ToolkitCommand.kt) — the `ai-toolkit` command.
+- [ToolkitCommand.kt](../../src/main/kotlin/io/jmix/cli/command/ToolkitCommand.kt) — the `agent-toolkit` command.
 
 ## Verification
 
@@ -214,6 +214,6 @@ The MCP integration tests read the user's Codex config (`$CODEX_HOME` or
 `~/.codex/config.toml`), as the installer does: a global server with the same
 name and another transport fails them.
 Inspect the generated guidelines, skills, and MCP configs, and cover Windows
-command construction. For command changes, also run `jmix ai-toolkit --help`,
+command construction. For command changes, also run `jmix agent-toolkit --help`,
 a scripted run in a generated project, and the steps checklist in a raw terminal
 and a line-input console, including Back and quit.

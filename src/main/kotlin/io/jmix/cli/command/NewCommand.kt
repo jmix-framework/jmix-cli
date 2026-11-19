@@ -959,7 +959,7 @@ class NewCommand internal constructor(
             )
         } catch (e: Exception) {
             progress.println(brightYellow("Warning: Agent Toolkit installation failed: ${e.message}"))
-            progress.println(brightYellow("Install it later: run `jmix ai-toolkit` in the project."))
+            progress.println(brightYellow("Install it later: run `jmix agent-toolkit` in the project."))
         }
     }
 
