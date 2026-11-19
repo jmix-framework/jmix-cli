@@ -40,6 +40,7 @@ import io.jmix.cli.wizard.WizardChoice
 import io.jmix.cli.wizard.WizardUiState
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.io.UncheckedIOException
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -52,13 +53,15 @@ internal typealias ToolkitStatusCheck = (projectDir: Path, ref: String) -> Agent
 /**
  * Adds or updates the Jmix Agent Toolkit in an existing project. The servers and agents it accepts and lists
  * are the ones the toolkit publishes for the project's branch; none are named here. [install], [mcpOptions],
- * [status] and [currentDir] let tests run it without the network, the installer or the real working directory.
+ * [status], [currentDir] and [homeDir] let tests run it without the network, the installer or the real
+ * working and home directories.
  */
 class ToolkitCommand internal constructor(
     private val install: ToolkitInstall,
     private val mcpOptions: ToolkitMcpLoader,
     private val status: ToolkitStatusCheck,
     private val currentDir: () -> Path = { Path.of("").toAbsolutePath().normalize() },
+    private val homeDir: () -> Path = { Path.of(System.getProperty("user.home")) },
 ) : CliktCommand(name = "ai-toolkit") {
 
     constructor() : this(
@@ -89,7 +92,7 @@ class ToolkitCommand internal constructor(
     private val action by argument(
         help = "What to set up: all, skills, guidelines or mcp (default: ask; all with --non-interactive)",
     ).choice(*ACTIONS.keys.toTypedArray()).optional()
-    private val path by option("--path", help = "Project directory (default: current directory)")
+    private val path by option("--path", help = "Project directory (default: ask; current directory with --non-interactive)")
     private val jmixVersion by option(
         "--jmix-version", help = "Jmix version of the project (default: detected from the build file)",
     )
@@ -137,13 +140,18 @@ class ToolkitCommand internal constructor(
     private var asked = emptyList<Step>()
     private var printedProject: WizardChoice? = null
 
+    /** The projects found nearby, looked for once per run. */
+    private var projectList: List<ProjectOption>? = null
+
     override fun run() {
         answers = Answers()
         asking = false
         asked = emptyList()
         printedProject = null
+        projectList = null
         reporter = StatusReporter(terminal)
-        prompts = Prompts(terminal, exitOnEof = true) { WizardUiState(choices()) }
+        // A script or an agent without --non-interactive must not end with exit code 0 and nothing done.
+        prompts = Prompts(terminal, exitOnEof = true, eofError = NO_INPUT) { WizardUiState(choices()) }
         action?.let(::rejectMcpOptionsWithout)
         val result = try {
             // Resolved before anything is written: the installer gets explicit, offered ids for the MCP step.
@@ -205,27 +213,104 @@ class ToolkitCommand internal constructor(
         return index
     }
 
+    /** `--path`, else the current directory in a scripted run; an interactive run always asks which project. */
     private fun stepDirectory(): Outcome {
+        val previous = answers.dir
         answers = Answers()
         // Text that is no path is no project either; it is printed without its control characters.
-        val given = path?.let { typedDir(it) ?: throw noProject(it.filterNot(Char::isISOControl)) } ?: currentDir()
-        if (isGradleProject(given)) {
+        val given = path?.let { typedDir(it) ?: throw noProject(it) } ?: currentDir().takeIf { nonInteractive }
+        if (given != null) {
+            if (!isGradleProject(given)) throw noProject("$given")
             answers = answers.copy(dir = given)
             return Outcome.AUTO
         }
-        if (path != null || nonInteractive) throw noProject(given)
         if (!asking) return Outcome.ASK
-        val typed = prompts.ask("Jmix project directory", allowBack = true, complete = { PathCompleter.complete(it) }) {
-            val dir = typedDir(it)
-            if (dir != null && isGradleProject(dir)) null else "No Gradle project found in ${dir ?: it}."
-        }
-        return when (typed) {
-            is Answer.Back -> Outcome.BACK
-            is Answer.Value -> {
-                answers = answers.copy(dir = typedDir(typed.value))
-                Outcome.PROMPTED
+        answers = answers.copy(dir = chooseProjectDir(previous) ?: return Outcome.BACK)
+        return Outcome.PROMPTED
+    }
+
+    /**
+     * The current directory when it is a Gradle project, the Jmix projects one level below it and in
+     * ~/IdeaProjects, or a typed directory; [previous] is preselected. Null for Back. Back from the typed
+     * directory shows the list again with Other... selected, unless Other... is the only entry: then the
+     * list was never shown, and Back leaves the question.
+     */
+    private fun chooseProjectDir(previous: Path?): Path? {
+        val found = projectList ?: reporter.run("Looking for Jmix projects") { projectOptions() }.also { projectList = it }
+        val options = found + ProjectOption(OTHER_CHOICE, null)
+        val listed = options.indexOfFirst { previous != null && it.dir == previous }
+        val typedBefore = previous?.takeIf { listed < 0 }
+        var defaultIndex = if (typedBefore != null) options.lastIndex else listed.coerceAtLeast(0)
+        while (true) {
+            val option = when (val picked = prompts.choose(
+                "Select project directory", options, { it.title }, { it.description }, defaultIndex, allowBack = true,
+            )) {
+                is Answer.Back -> return null
+                is Answer.Value -> picked.value
+            }
+            option.dir?.let { return it }
+            val typed = prompts.ask(
+                "Enter project directory", typedBefore?.toString(), allowBack = true, complete = { PathCompleter.complete(it) },
+            ) {
+                val dir = typedDir(it)
+                when {
+                    it.isBlank() -> "Path cannot be empty."
+                    dir != null && isGradleProject(dir) -> null
+                    else -> "No Gradle project found in ${shown(dir ?: it)}."
+                }
+            }
+            when (typed) {
+                is Answer.Value -> return typedDir(typed.value)
+                is Answer.Back -> if (options.size == 1) return null else defaultIndex = options.lastIndex
             }
         }
+    }
+
+    private fun projectOptions(): List<ProjectOption> {
+        val cwd = currentDir()
+        val home = homeDir()
+        val current = listOfNotNull(cwd.takeIf(::isGradleProject)?.let { ProjectOption(CURRENT_DIRECTORY, it, versionOrNull(it)) })
+        // Not the folders of the home directory itself: on macOS, looking into Desktop or Documents asks for access.
+        val parents = listOfNotNull(cwd.takeIf { realOrSelf(it) != realOrSelf(home) }, home.resolve(IDEA_PROJECTS_DIR))
+        val nearby = parents
+            .flatMap(::childProjects)
+            .distinctBy(::realOrSelf)
+            .filter { realOrSelf(it) != realOrSelf(cwd) }
+            .mapNotNull { dir -> versionOrNull(dir)?.let { ProjectOption(dir.fileName.toString(), dir, it) } }
+            .sortedBy { it.title.lowercase() }
+        return current + nearby
+    }
+
+    /** The Gradle projects directly inside [parent], hidden folders and odd names aside; none when it cannot be listed. */
+    private fun childProjects(parent: Path): List<Path> = try {
+        Files.list(parent).use { entries ->
+            entries.filter { child ->
+                val name = child.fileName.toString()
+                !name.startsWith(".") && name.none(Char::isISOControl) && Files.isDirectory(child) && isGradleProject(child)
+            }.toList()
+        }
+    } catch (e: IOException) {
+        emptyList()
+    } catch (e: UncheckedIOException) {
+        emptyList()
+    }
+
+    /** A folder the list cannot read is listed without a version, or not at all when only the version admits it. */
+    private fun versionOrNull(dir: Path): String? = try {
+        detectedVersion(dir)
+    } catch (e: IOException) {
+        null
+    }
+
+    private fun realOrSelf(path: Path): Path = try {
+        path.toRealPath()
+    } catch (e: IOException) {
+        path
+    }
+
+    /** An entry of the project list; [dir] is null for Other.... */
+    private class ProjectOption(val title: String, val dir: Path?, version: String? = null) {
+        val description: String? = dir?.let { shown(it) + version?.let { v -> " (Jmix $v)" }.orEmpty() }
     }
 
     private fun stepVersion(): Outcome {
@@ -243,6 +328,7 @@ class ToolkitCommand internal constructor(
         }
         if (nonInteractive) throw CliktError("Cannot detect the Jmix version in $dir. Pass --jmix-version.")
         if (!asking) return Outcome.ASK
+        printProject()
         val typed = prompts.ask("Jmix version of the project", allowBack = true) {
             if (branchOrNull(it) == null) "Enter a Jmix version such as 3.1.0." else null
         }
@@ -352,8 +438,9 @@ class ToolkitCommand internal constructor(
 
     private fun isGradleProject(dir: Path) = GRADLE_FILES.any { Files.isRegularFile(dir.resolve(it)) }
 
-    private fun noProject(dir: Any) =
-        CliktError("No Gradle project found in $dir. Run `jmix ai-toolkit` from the project root or pass --path.")
+    /** [dir] can be text that is no path at all; it is printed without its control characters. */
+    private fun noProject(dir: String) =
+        CliktError("No Gradle project found in ${shown(dir)}. Run `jmix ai-toolkit` from the project root or pass --path.")
 
     /** The directory that typed text names; null when it is no path at all. */
     private fun typedDir(raw: String): Path? = try {
@@ -385,8 +472,9 @@ class ToolkitCommand internal constructor(
         return parseSelection(raw, valid)
     }
 
+    /** The project with its version and branch once they are known; before that the directory alone. */
     private fun project(): WizardChoice? = with(answers) {
-        branch?.let { WizardChoice("Project", "$dir (Jmix $version, toolkit $it)") }
+        dir?.let { WizardChoice("Project", shown(it) + branch?.let { b -> " (Jmix $version, toolkit $b)" }.orEmpty()) }
     }
 
     /** The summary line of a question; the directory and the version are in the project line. */
@@ -466,6 +554,10 @@ class ToolkitCommand internal constructor(
         val ACTION_STYLES = mapOf<String, TextStyle>("created" to green, "updated" to cyan, "backed-up" to yellow)
         val MIN_ACTION_WIDTH = ACTION_STYLES.keys.maxOf { it.length }
         const val DEFAULT_REF = "HEAD"
+        const val CURRENT_DIRECTORY = "Current directory"
+        const val OTHER_CHOICE = "Other..."
+        const val NO_INPUT = "No input to answer the questions, so nothing was set up. " +
+            "Use --non-interactive, or pass --path and an action."
         val METADATA_TIMEOUT: Duration = Duration.ofSeconds(15)
         val HELP_TIMEOUT: Duration = Duration.ofSeconds(3)
     }
@@ -486,3 +578,6 @@ private fun selectionError(raw: String, valid: List<String>, kind: String): Stri
 }
 
 private fun selectionValues(raw: String): List<String> = raw.split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+
+/** Paths and names from the disk or the command line, printed without their control characters. */
+private fun shown(text: Any): String = "$text".filterNot(Char::isISOControl)

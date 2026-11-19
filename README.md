@@ -50,9 +50,10 @@ See [wizard controls](docs/features/wizard.md),
 
 ## Agent Toolkit
 
-Run `jmix ai-toolkit` in an existing Jmix project to add or update the
-[Jmix Agent Toolkit](https://github.com/jmix-framework/jmix-agent-toolkit).
-Choose an action in the menu or pass it as an argument:
+Run `jmix ai-toolkit` to add or update the
+[Jmix Agent Toolkit](https://github.com/jmix-framework/jmix-agent-toolkit) in an
+existing Jmix project. Choose the project (or pass `--path`), then an action in
+the menu, or pass the action as an argument:
 
 - `all` — run the three actions below with the toolkit's defaults.
 - `skills` — install or update the agent skills.

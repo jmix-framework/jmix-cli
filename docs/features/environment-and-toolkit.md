@@ -58,7 +58,10 @@ version. Do not report the private bundled runtime as an installed development J
   MCP) through `onStatus`/`onProgress` callbacks so the CLI can show a progress
   indicator.
 - Toolkit setup runs its downloaded installer as a file with a complete argument
-  list, never through a shell string, so the installer never prompts. Keep setup
+  list, never through a shell string, so the installer never prompts. Steps run
+  in the project, so the shell (`bash`, or Windows PowerShell) is started by its
+  absolute path, and each step gets a PATH without empty or relative entries (a
+  leading `~` becomes the user's home). Keep setup
   local to the project: never pass the global scope, a flag that turns an agent
   off, or a server or agent the toolkit metadata does not offer. `jmix new`
   reports installer failures as warnings that name `jmix ai-toolkit`.
@@ -77,10 +80,16 @@ jmix ai-toolkit [all|skills|guidelines|mcp]
   action the interactive command opens the action menu, and `--non-interactive`
   runs `all`. See the [wizard guide](wizard.md) for the menu, Back, and the
   line-input fallback.
-- Project: `--path` or the current directory. It must contain `build.gradle`,
-  `build.gradle.kts`, `settings.gradle`, or `settings.gradle.kts`. Outside a
-  project the interactive command asks for the directory, with Tab completion.
-  A scripted run, and any run whose explicit `--path` is not a project, fails
+- Project: a directory with `build.gradle`, `build.gradle.kts`,
+  `settings.gradle`, or `settings.gradle.kts`. `--path` names it; otherwise a
+  scripted run uses the current directory, and the interactive command first
+  asks which project to use. The list offers the current directory when it is a
+  Gradle project, then the Jmix projects one level below it and in
+  `~/IdeaProjects` (by name, hidden folders aside), then `Other...` for a typed
+  directory with Tab completion. Started in the home directory, the list does
+  not look into the home directory's own folders: on macOS that asks for access
+  to Desktop, Documents, and Downloads. A scripted run, and any run whose explicit
+  `--path` is not a project, fails
   with ``No Gradle project found in <dir>. Run `jmix ai-toolkit` from the project root or pass --path.``
 - Jmix version: `--jmix-version`, else the first literal `bomVersion` in the root
   or `demo/*` build files, else the first `io.jmix` Gradle plugin version in
@@ -179,6 +188,9 @@ self-contained CLI image so its bundled runtime cannot mask missing JDKs.
 For toolkit changes, run
 `./gradlew test --tests 'io.jmix.cli.env.AgentToolkit*' --tests 'io.jmix.cli.command.ToolkitCommandTest'`
 and `JMIX_CLI_IT=true ./gradlew test --tests 'io.jmix.cli.env.AgentToolkitInstallerIntegrationTest'`.
+The MCP integration tests read the user's Codex config (`$CODEX_HOME` or
+`~/.codex/config.toml`), as the installer does: a global server with the same
+name and another transport fails them.
 Inspect the generated guidelines, skills, and MCP configs, and cover Windows
 command construction. For command changes, also run `jmix ai-toolkit --help`,
 a scripted run in a generated project, and the action menu in a raw terminal

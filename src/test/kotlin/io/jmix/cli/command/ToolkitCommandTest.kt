@@ -14,12 +14,14 @@ import io.jmix.cli.wizard.ANSI_SEQUENCE
 import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.assertTimeoutPreemptively
@@ -66,10 +68,19 @@ class ToolkitCommandTest {
             status
         },
         currentDir = { cwd },
+        homeDir = { home },
     )
+
+    /** An empty home, so the project list never looks into the real ~/IdeaProjects. */
+    private val home: Path get() = dir.resolve("home")
 
     private fun project(build: String = "plugins { id 'io.jmix' version '3.1.0' }"): Path =
         Files.createDirectories(dir.resolve("demo")).also { Files.writeString(it.resolve("build.gradle"), build) }
+
+    private fun jmixProject(parent: Path, name: String, version: String = "3.1.0"): Path =
+        Files.createDirectories(parent.resolve(name)).also {
+            Files.writeString(it.resolve("build.gradle"), "plugins { id 'io.jmix' version '$version' }")
+        }
 
     private fun run(vararg args: String) = command().test(args.toList() + "--non-interactive")
 
@@ -90,8 +101,8 @@ class ToolkitCommandTest {
     }
 
     /** A raw terminal; a question that runs out of [keys] would wait forever, hence the timeout. */
-    private fun raw(vararg args: String, keys: List<String>) = assertTimeoutPreemptively(Duration.ofSeconds(10)) {
-        command().test(
+    private fun raw(vararg args: String, keys: List<String>, cwd: Path = dir) = assertTimeoutPreemptively(Duration.ofSeconds(10)) {
+        command(cwd).test(
             args.toList(), ansiLevel = AnsiLevel.TRUECOLOR, width = 100, height = 30, inputEvents = keys.map { KeyboardEvent(it) },
         )
     }
@@ -377,29 +388,90 @@ class ToolkitCommandTest {
     }
 
     @Test
-    fun `quit and end of input run nothing`() {
+    fun `q quits and the end of input fails, both with nothing run`() {
         assertEquals(0, lines("q\n", "--path", project().toString()).statusCode)
-        assertEquals(0, lines("", "--path", project().toString()).statusCode)
+        val noInput = "No input to answer the questions, so nothing was set up. Use --non-interactive, or pass --path and an action."
+        for (eof in listOf(lines("", "--path", project().toString()), lines("", "skills", cwd = project()))) {
+            assertEquals(1, eof.statusCode)
+            assertTrue(flat(eof.stderr).contains(noInput), eof.stderr)
+        }
         assertTrue(calls.isEmpty())
     }
 
     @Test
-    fun `outside a project the directory is asked for until it is a Gradle project`() {
+    fun `the project list offers the current directory, nearby Jmix projects and Other`() {
+        val work = jmixProject(dir, "work", "2.8.3")
+        val inner = jmixProject(work, "inner")
+        jmixProject(work, ".hidden")
+        Files.createDirectories(work.resolve("plain")).also { Files.writeString(it.resolve("settings.gradle"), "") }
+        val alpha = jmixProject(home.resolve("IdeaProjects"), "alpha")
+        val out = flat(lines("q\n", cwd = work).output)
+        val rows = listOf(
+            "1) Current directory — $work (Jmix 2.8.3)", "2) alpha — $alpha (Jmix 3.1.0)", "3) inner — $inner (Jmix 3.1.0)", "4) Other...",
+        ).map(out::indexOf)
+        assertTrue(rows.all { it >= 0 } && rows == rows.sorted(), out)
+        assertFalse(out.contains(".hidden"))
+        assertFalse(out.contains("${work.resolve("plain")}"))
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test
+    fun `with nothing to list the directory is typed until it is a Gradle project`() {
         val project = project()
         val empty = Files.createDirectories(dir.resolve("empty"))
-        val run = lines("$empty\n$project\n2\n", cwd = empty)
+        val run = lines("\n$empty\n$project\n2\n", cwd = empty)
+        assertTrue(run.output.contains("Path cannot be empty."))
         assertTrue(flat(run.output).contains("No Gradle project found in $empty."))
         assertEquals(project, calls.single().dir)
     }
 
     @Test
-    fun `the project line follows the directory chosen after going back`() {
-        val project = project()
-        val bare = Files.createDirectories(dir.resolve("bare")).also { Files.writeString(it.resolve("settings.gradle"), "") }
-        val run = lines("$bare\n2.8.3\n<\n<\n$project\n2\n", cwd = Files.createDirectories(dir.resolve("empty")))
-        assertTrue(flat(run.output).contains("Project: $bare (Jmix 2.8.3, toolkit v2)"))
-        assertTrue(flat(run.output).contains("Project: $project (Jmix 3.1.0, toolkit v3)"))
-        assertEquals(project, calls.single().dir)
+    fun `Back from a typed directory shows the list again, and Back from the list leaves the command`() {
+        val work = Files.createDirectories(dir.resolve("work"))
+        val alpha = jmixProject(work, "alpha")
+        // Other..., Back to the list, alpha, then skills.
+        lines("2\n<\n1\n2\n", cwd = work)
+        assertEquals(alpha, calls.single().dir)
+        assertThrows<ReturnToMainMenu> { lines("<\n", cwd = work) }
+        assertEquals(1, calls.size)
+    }
+
+    @Test
+    fun `the project line follows the project chosen after going back`() {
+        val work = Files.createDirectories(dir.resolve("work"))
+        val alpha = jmixProject(work, "alpha")
+        val beta = jmixProject(work, "beta", "2.8.3")
+        val run = lines("1\n<\n2\n2\n", cwd = work)
+        assertTrue(flat(run.output).contains("Project: $alpha (Jmix 3.1.0, toolkit v3)"))
+        assertTrue(flat(run.output).contains("Project: $beta (Jmix 2.8.3, toolkit v2)"))
+        assertEquals(beta, calls.single().dir)
+    }
+
+    @Test
+    fun `going back to the project list keeps the chosen project selected`() {
+        val work = Files.createDirectories(dir.resolve("work"))
+        jmixProject(work, "alpha")
+        val beta = jmixProject(work, "beta")
+        val typed = project()
+        // beta, Back from the action menu, Enter keeps beta, then skills; the folders are looked into once.
+        val run = lines("2\n<\n\n2\n", cwd = work)
+        assertEquals(1, Regex("Looking for Jmix projects").findAll(run.output).count(), run.output)
+        // A typed directory comes back as the answer prefilled under Other....
+        lines("3\n$typed\n<\n\n\n2\n", cwd = work)
+        assertEquals(listOf(beta, typed), calls.map { it.dir })
+    }
+
+    @Test
+    fun `raw project list picks a nearby project and Esc leaves the command`() {
+        val work = Files.createDirectories(dir.resolve("work"))
+        jmixProject(work, "alpha")
+        val beta = jmixProject(work, "beta")
+        val run = raw(keys = listOf("ArrowDown", "Enter", "ArrowDown", "Enter"), cwd = work)
+        assertEquals(0, run.statusCode, run.stderr)
+        assertTrue(run.output.contains("Select project directory"))
+        assertEquals(beta to setOf(ToolkitStep.SKILLS), calls.single().let { it.dir to it.steps })
+        assertThrows<ReturnToMainMenu> { raw(keys = listOf("Escape"), cwd = work) }
+        assertEquals(1, calls.size)
     }
 
     @Test
@@ -425,6 +497,75 @@ class ToolkitCommandTest {
         val run = lines("latest\n3.1.0\n2\n", "--path", bare.toString())
         assertTrue(run.output.contains("Enter a Jmix version such as 3.1.0."))
         assertEquals("3.1.0", calls.single().version)
+        // The directory is named above the question, before its version is known.
+        val out = flat(run.output)
+        assertTrue(out.indexOf("✓ Project: $bare") in 0 until out.indexOf("Jmix version of the project"), out)
+    }
+
+    @Test
+    fun `after Back from a typed directory the list keeps Other selected`() {
+        val work = Files.createDirectories(dir.resolve("work"))
+        jmixProject(work, "alpha")
+        val typed = project()
+        // Other..., Back to the list, Enter keeps Other..., the directory, then skills.
+        lines("2\n<\n\n$typed\n2\n", cwd = work)
+        assertEquals(typed, calls.single().dir)
+    }
+
+    @Test
+    fun `Back from the version question returns to the project list`() {
+        val work = Files.createDirectories(dir.resolve("work"))
+        val alpha = jmixProject(work, "alpha")
+        val bare = Files.createDirectories(dir.resolve("bare")).also { Files.writeString(it.resolve("settings.gradle"), "") }
+        // Other..., the project without a version, Back from its version question, then alpha and skills.
+        val run = lines("2\n$bare\n<\n1\n2\n", cwd = work)
+        assertTrue(run.output.contains("Jmix version of the project"))
+        assertEquals(alpha, calls.single().dir)
+    }
+
+    @Test
+    fun `a project below the current directory and in IdeaProjects is listed once`() {
+        val ideaProjects = home.resolve("IdeaProjects")
+        jmixProject(ideaProjects, "alpha")
+        val out = flat(lines("q\n", cwd = ideaProjects).output)
+        assertEquals(1, Regex("""\d\) alpha —""").findAll(out).count(), out)
+    }
+
+    @Test
+    fun `the current directory is not listed again among the projects next to it`() {
+        val ideaProjects = home.resolve("IdeaProjects")
+        val demo = jmixProject(ideaProjects, "demo")
+        jmixProject(ideaProjects, "alpha")
+        val out = flat(lines("q\n", cwd = demo).output)
+        assertTrue(out.contains("1) Current directory — $demo (Jmix 3.1.0)"), out)
+        assertFalse(out.contains("demo — "), out)
+        assertTrue(out.contains("2) alpha — "), out)
+    }
+
+    @Test
+    fun `with Other the only entry Back leaves the command`() {
+        assertThrows<ReturnToMainMenu> { lines("<\n", cwd = Files.createDirectories(dir.resolve("empty"))) }
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test
+    fun `started in the home directory the list does not look into its folders`() {
+        jmixProject(home, "pet")
+        val alpha = jmixProject(home.resolve("IdeaProjects"), "alpha")
+        val out = flat(lines("q\n", cwd = home).output)
+        assertTrue(out.contains("alpha — $alpha"), out)
+        assertFalse(out.contains("pet —"), out)
+    }
+
+    @Test
+    fun `a folder whose name has a control character is not listed`() {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        val work = Files.createDirectories(dir.resolve("work"))
+        jmixProject(work, "bell\u0007")
+        jmixProject(work, "alpha")
+        val out = lines("q\n", cwd = work).output
+        assertTrue(out.contains("alpha"))
+        assertFalse(out.contains("bell"))
     }
 
     @Test

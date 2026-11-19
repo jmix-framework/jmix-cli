@@ -1,5 +1,6 @@
 package io.jmix.cli.env
 
+import java.io.File
 import java.io.IOException
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -55,13 +56,27 @@ class AgentToolkitInstallerTest {
     }
 
     @Test
+    fun `steps get a PATH without empty or relative entries`(@TempDir dir: Path) {
+        val absolute = dir.toAbsolutePath().toString()
+        val path = listOf(absolute, "", ".", "bin", absolute).joinToString(File.pathSeparator)
+        assertEquals(listOf(absolute, absolute).joinToString(File.pathSeparator), AgentToolkitInstaller.trustedPath(path))
+        assertEquals("", AgentToolkitInstaller.trustedPath(null))
+        val home = System.getProperty("user.home")
+        assertEquals("$home/bin", AgentToolkitInstaller.trustedPath("~/bin"))
+        // Windows names the variable Path, and the environment map of a process is case-sensitive.
+        val environment = mutableMapOf("Path" to listOf(absolute, ".").joinToString(File.pathSeparator), "OTHER" to ".")
+        AgentToolkitInstaller.trustPathVariable(environment)
+        assertEquals(mapOf("Path" to absolute, "OTHER" to "."), environment)
+    }
+
+    @Test
     fun `runs the downloaded script as a file argument, never through a shell string`() {
         val script = Path.of("tmp", "toolkit.sh")
         val powershell = "${System.getenv("SystemRoot") ?: "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-        assertEquals(
-            listOf("bash", script.toString(), "agents-md"),
-            AgentToolkitInstaller.command(script, AgentToolkitInstaller.guidelinesArgs(), os = "Linux"),
-        )
+        val unix = AgentToolkitInstaller.command(script, AgentToolkitInstaller.guidelinesArgs(), os = "Linux")
+        // Never the bare name either: the JVM looks it up in PATH entries that can resolve inside the project.
+        assertTrue(unix.first() != "bash" && unix.first().endsWith("bash"), unix.first())
+        assertEquals(listOf(script.toString(), "agents-md"), unix.drop(1))
         assertEquals(
             listOf(powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString()) +
                 AgentToolkitInstaller.skillsArgs(os = "Windows 11"),

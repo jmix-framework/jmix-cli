@@ -20,7 +20,9 @@ import org.junit.jupiter.params.provider.ValueSource
 /**
  * Downloads the real Agent Toolkit installer and runs its non-interactive
  * subcommands against a temporary project directory. Everything it writes is
- * project-local, so the test never touches global agent directories.
+ * project-local, so the test never touches global agent directories. The installer's MCP
+ * step still reads the user's Codex config ($CODEX_HOME or ~/.codex/config.toml): a global
+ * server with the same name and another transport fails the MCP tests on that machine.
  * Needs network; enable with JMIX_CLI_IT=true (set in CI).
  */
 @EnabledIfEnvironmentVariable(named = "JMIX_CLI_IT", matches = "true")

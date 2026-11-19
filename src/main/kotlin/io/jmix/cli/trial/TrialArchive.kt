@@ -11,6 +11,7 @@ import io.jmix.cli.util.isSecureOrLoopback
 import io.jmix.cli.util.isZip
 import java.io.IOException
 import java.io.InputStream
+import java.io.UncheckedIOException
 import java.net.URI
 import java.net.http.HttpResponse
 import java.net.http.HttpTimeoutException
@@ -155,16 +156,18 @@ internal object TrialArchive {
      * Trials run on the newest Jmix, so only the shape is checked: the template-version filter would reject it.
      */
     fun jmixVersion(projectDir: Path): String? {
-        val buildFiles = (listOf(projectDir) + demoDirs(projectDir)).flatMap { dir -> BUILD_FILES.map(dir::resolve) }
-        return listOf(BOM_VERSION, PLUGIN_VERSION).firstNotNullOfOrNull { pattern ->
-            buildFiles.firstNotNullOfOrNull { file ->
-                ProjectLauncher.readProjectMetadata(file)?.let { text ->
-                    pattern.findAll(text).map { it.groupValues[1].removeSuffix(".trial") }
-                        .firstOrNull(TemplateRepository.VERSION_SHAPE::matches)
-                }
-            }
+        // One pass, one file in memory at a time: a bomVersion returns at once, a plugin version waits for the end.
+        var pluginVersion: String? = null
+        for (file in (listOf(projectDir) + demoDirs(projectDir)).flatMap { dir -> BUILD_FILES.map(dir::resolve) }) {
+            val text = ProjectLauncher.readProjectMetadata(file) ?: continue
+            usableVersion(BOM_VERSION, text)?.let { return it }
+            if (pluginVersion == null) pluginVersion = usableVersion(PLUGIN_VERSION, text)
         }
+        return pluginVersion
     }
+
+    private fun usableVersion(pattern: Regex, text: String): String? =
+        pattern.findAll(text).map { it.groupValues[1].removeSuffix(".trial") }.firstOrNull(TemplateRepository.VERSION_SHAPE::matches)
 
     /** The builds under `demo/` that have a Gradle wrapper, by name; [projectDir] itself when there are none. */
     fun runnableApps(projectDir: Path): List<Path> =
@@ -229,8 +232,13 @@ internal object TrialArchive {
     private fun demoDirs(projectDir: Path): List<Path> {
         val demo = projectDir.resolve("demo")
         if (!Files.isDirectory(demo)) return emptyList()
-        return Files.list(demo).use { entries -> entries.filter { Files.isDirectory(it) }.toList() }
-            .sortedBy { it.fileName.toString() }
+        val dirs = try {
+            Files.list(demo).use { entries -> entries.filter { Files.isDirectory(it) }.toList() }
+        } catch (e: UncheckedIOException) {
+            // A folder that fails while it is listed fails like one that cannot be opened.
+            throw e.cause ?: e
+        }
+        return dirs.sortedBy { it.fileName.toString() }
     }
 
     private val BUILD_FILES = listOf("build.gradle", "build.gradle.kts")

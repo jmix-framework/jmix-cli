@@ -2,6 +2,7 @@ package io.jmix.cli.env
 
 import io.jmix.cli.util.Http
 import io.jmix.cli.util.hostOf
+import java.io.File
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
@@ -70,8 +71,33 @@ object AgentToolkitInstaller {
             val powershell = "${System.getenv("SystemRoot") ?: "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
             listOf(powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptFile.toString()) + args
         } else {
-            listOf("bash", scriptFile.toString()) + args
+            listOf(bash, scriptFile.toString()) + args
         }
+
+    /**
+     * PATH without empty or relative entries. Steps run in the project, so such entries would let the
+     * project's own files stand in for the programs the installer calls.
+     */
+    internal fun trustedPath(path: String?): String =
+        path.orEmpty().split(File.pathSeparator)
+            // bash expands a leading ~ in a PATH entry; the real home keeps such an entry working.
+            .map { entry -> if (entry == "~" || entry.startsWith("~/")) System.getProperty("user.home") + entry.drop(1) else entry }
+            .filter { entry -> entry.isNotEmpty() && runCatching { Path.of(entry).isAbsolute }.getOrDefault(false) }
+            .joinToString(File.pathSeparator)
+
+    /** Applies [trustedPath] to the PATH variable in any letter case: Windows names it Path, and the map is case-sensitive. */
+    internal fun trustPathVariable(environment: MutableMap<String, String>) {
+        environment.keys.filter { it.equals("PATH", ignoreCase = true) }
+            .forEach { key -> environment[key] = trustedPath(environment[key]) }
+    }
+
+    /** bash by its absolute path: the JVM looks a bare name up in PATH entries that resolve inside the project. */
+    private val bash: String by lazy {
+        trustedPath(System.getenv("PATH")).split(File.pathSeparator).filter { it.isNotEmpty() }
+            .map { Path.of(it, "bash") }
+            .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
+            ?.toString() ?: "/bin/bash"
+    }
 
     /**
      * Runs the selected [steps] of the Toolkit in [projectDir], in the order skills, guidelines, MCP.
@@ -256,6 +282,7 @@ object AgentToolkitInstaller {
             // autoloading (Get-FileHash etc.); let the shell rebuild its own.
             builder.environment().remove("PSModulePath")
             builder.environment()["JMIX_EMIT_CHANGE_MARKERS"] = "1"
+            trustPathVariable(builder.environment())
             if (mcpProfile != null) isolateClaudeDesktop(builder.environment(), mcpProfile)
             val process = builder.start()
             if (!process.waitFor(STEP_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {

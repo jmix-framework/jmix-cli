@@ -198,6 +198,8 @@ class Prompts(
     private val compactHeader: (Int) -> List<String> = { emptyList() },
     private val headerAnimationDuration: Duration = Duration.ZERO,
     private val exitOnEof: Boolean = false,
+    /** With [exitOnEof]: the end of piped input fails with this message instead of quitting with exit code 0. */
+    private val eofError: String? = null,
     // Trailing position keeps `Prompts(terminal) { state }` working.
     private val wizardUiState: () -> WizardUiState = { WizardUiState() },
 ) {
@@ -987,7 +989,14 @@ class Prompts(
             if (line == null) {
                 // Ctrl+D on a real terminal is a deliberate abort, like Ctrl+C.
                 if (terminal.terminalInfo.inputInteractive) abort()
-                if (exitOnEof) quit()
+                if (exitOnEof) {
+                    eofError?.let {
+                        // The key bar above ends without a line break; the error starts on its own line.
+                        terminal.println()
+                        throw CliktError(it)
+                    }
+                    quit()
+                }
                 // EOF on piped stdin. Fall back to defaults for this and all
                 // remaining prompts instead of aborting a half-finished wizard.
                 isInputExhausted = true
