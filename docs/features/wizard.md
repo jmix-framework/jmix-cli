@@ -4,10 +4,12 @@ Running `jmix` without a command opens the command menu, in this order:
 
 1. `new` — create a new project.
 2. `trial` — download the Enterprise+BPM trial project.
-3. `login` — sign in, or `logout` — sign out when a local session is saved.
-4. `update` — update the CLI.
+3. `agent-toolkit` — add or update the AI Agent Toolkit in an existing project.
+4. `login` — sign in, or `logout` — sign out when a local session is saved.
+5. `update` — update the CLI.
 
-Descriptions come from the commands' help text. The menu checks only the saved
+Descriptions come from the commands' help text, short enough that every row,
+numbered ones included, fits an 80-column terminal. The menu checks only the saved
 session; it makes no account request. An expired session can therefore still show
 `logout` until a command detects the expiry and clears it. Direct command calls
 and `--help` bypass the menu, and both `login` and `logout` remain available directly.
@@ -97,12 +99,47 @@ draft; templates opened during a cancelled run are closed before returning home.
   location is the parent for the archive's project folder. The run action also asks
   which demo module to start; Back returns to the checklist. `--path` skips location
   selection, and non-interactive trial runs skip both interactive steps.
+- `jmix agent-toolkit` asks only what its arguments and options leave open, in this
+  order: the project directory (unless `--path` is given), the Jmix version when
+  it is not detected, the steps, and with `mcp` the MCP servers and the AI
+  agents. The project list starts with the current directory when it is a
+  Gradle project, then lists the Jmix projects one level below it and in
+  `~/IdeaProjects`, and ends with `Other...`; going back to it keeps the chosen
+  project selected. Back from a typed directory shows the list again with
+  `Other...` selected; when `Other...` is the only entry, the list is skipped
+  and Back leaves the question. The steps checklist lists `skills`,
+  `guidelines`, and `mcp` with the state of each; the steps that are up to date
+  start unchecked, and `--servers` or `--agents` keep `mcp` checked. Confirming
+  it empty runs nothing. The two MCP checklists show the toolkit's labels with
+  every entry checked. Confirming an empty MCP checklist repeats the question
+  with the reason. Back to the version question offers the version typed
+  before. The MCP lists keep their earlier choice after Back, through the steps
+  checklist too while `mcp` stays checked.
+- In `jmix agent-toolkit`, Back (Esc, or `<` in line-input consoles) returns to the
+  previous question that was asked, and from the first one to the command menu.
+  This works for both a menu-launched and a direct `jmix agent-toolkit`. `q` quits
+  from a list. Text questions use Ctrl+Q in raw terminals and have no quit key
+  in line-input consoles. When the input ends before the questions are
+  answered, nothing is set up and the command fails with
+  `No input to answer the questions, so nothing was set up. Use --non-interactive, or pass the answers as arguments and options.`
+  The project line (the directory alone until its version is known)
+  and the answers stay above the current question; raw terminals print them
+  again above the result. A run that asks nothing does not open the alternate
+  screen.
+- Without raw mode the `agent-toolkit` project list is a numbered list, the steps
+  checklist is a numbered checklist (numbers toggle, Enter confirms), and each MCP
+  checklist becomes one text question in the syntax of `--servers` and
+  `--agents`, not one yes/no question per entry. Enter keeps the ids shown (every
+  offered id, or the earlier answer after Back), an unknown id repeats the
+  question with the valid values, and `<` goes back.
+  See the [toolkit command](environment-and-toolkit.md#toolkit-command).
 
 ## Code
 
 - [JmixCli.kt](../../src/main/kotlin/io/jmix/cli/command/JmixCli.kt) — root command and command menu.
 - [NewCommand.kt](../../src/main/kotlin/io/jmix/cli/command/NewCommand.kt) — step state and transitions.
 - [ProjectInteraction.kt](../../src/main/kotlin/io/jmix/cli/command/ProjectInteraction.kt) — shared location, next steps, opening, and running.
+- [ToolkitCommand.kt](../../src/main/kotlin/io/jmix/cli/command/ToolkitCommand.kt) — `agent-toolkit` questions and Back.
 - [Prompts.kt](../../src/main/kotlin/io/jmix/cli/wizard/Prompts.kt) — rendering, input, and fallbacks.
 - [StatusReporter.kt](../../src/main/kotlin/io/jmix/cli/wizard/StatusReporter.kt) — activity indicator for slow steps.
 - [wizard](../../src/main/kotlin/io/jmix/cli/wizard) — banner, validation, and path completion.
@@ -115,16 +152,22 @@ text and search containing `q` and `й`, selection retention, template-included 
 omitted, and narrow/resized terminals.
 
 The README GIF is rendered from a film page kept outside the repository. It
-recreates a real CLI session in an 80×20 terminal with the CLI's own strings,
-colors, clipping, and step order: the command menu, every wizard stage with the
-filled answers, add-on search, the setup checklist, the generation progress,
-and the printed summary with the reproducible command. The session is
-condensed, and the paths are illustrative. Keep pauses long enough to read;
-keep search and keyboard hints in place. Show the purple `[$]` badges and the
-secondary `[$] - commercial add-on` legend below the picker heading in the catalog.
+opens on the install card, then shows two features, each opened by a title card
+with the command and one line about it. `jmix new` recreates a real session in an 80×21 terminal with the
+CLI's own strings, colors, clipping, and step order: the command menu, the
+wizard's name, version, add-on search, and setup checklist (the other answers
+stay in the history), the generation progress, and the printed summary with the
+reproducible command. `jmix agent-toolkit` recreates the menu, the project
+list, the steps checklist with each step's state, the MCP lists, and the
+toolkit's report in an existing project. The sessions are condensed, and the
+paths are illustrative. Keep pauses long enough to read; keep search and
+keyboard hints in place. Show the purple `[$]` badges and the secondary
+`[$] - commercial add-on` legend below the picker heading in the catalog.
 
-When the wizard's screens change, capture them again in an 80×20 terminal,
-update the film's texts, and render every frame at 800 px wide and 25 fps.
+When these screens change, capture them again in an 80×21 terminal (from 21
+rows the command menu keeps its banner), update the film's texts, and render
+every frame at 800 px wide and 25 fps.
 Build the GIF with one FFmpeg palette and Bayer dithering, optimize it with
-`gifsicle -O3`, and inspect it at the README's displayed width. The last frames
-fade back into the first, so the loop has no seam.
+`gifsicle -O3` (lossy compression grains the background glow), and inspect it at
+the README's displayed width. At the end the install card builds again, so the
+last frames equal the first one and the loop has no seam.

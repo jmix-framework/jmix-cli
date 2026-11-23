@@ -307,7 +307,7 @@ class TrialCommandTest {
     @Test
     fun `trial help lists its options and the update flag`() {
         val help = TrialCommand().test("--help", width = 200).stdout
-        assertTrue(help.contains("Download the Enterprise+BPM trial project of your Jmix account"), help)
+        assertTrue(help.contains("Download the Enterprise+BPM trial of your Jmix account"), help)
         for (option in listOf("--path", "--start-trial", "--non-interactive", "--no-update")) {
             assertTrue(help.contains(option), help)
         }

@@ -197,7 +197,8 @@ and the archive has no `.gitignore`.
 - The archive stores no Unix permissions, so every `gradlew` is made executable. The folders
   then move into place and the staging folder goes away.
 
-The report reads `bomVersion` from the root or `demo/*` build files (a `.trial` suffix is
+The report reads `bomVersion` from the root or `demo/*` build files, else the `io.jmix`
+plugin version from the same files (a `.trial` suffix is
 dropped; only the shape is checked, because trials run on the newest Jmix) and runs the same
 JDK check as `jmix new`, which reports and never fails the command. Then it prints the
 location, the end date, a general module run command with one real example and its URL,

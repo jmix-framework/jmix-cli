@@ -17,11 +17,14 @@ import io.jmix.cli.wizard.StatusReporter
 import io.jmix.cli.wizard.requireValue
 import java.nio.file.Path
 
+/** The folder under the home directory where the location pickers place and look for projects. */
+internal const val IDEA_PROJECTS_DIR = "IdeaProjects"
+
 internal fun projectLocationOptions(projectName: String, currentDir: Path, homeDir: Path): List<Pair<String, Path>> =
     listOf(
         "Current directory" to currentDir,
         "Subdirectory" to currentDir.resolve(projectName).normalize(),
-        "IdeaProjects" to homeDir.resolve("IdeaProjects").resolve(projectName).normalize(),
+        "IdeaProjects" to homeDir.resolve(IDEA_PROJECTS_DIR).resolve(projectName).normalize(),
     )
 
 internal fun chooseProjectLocation(

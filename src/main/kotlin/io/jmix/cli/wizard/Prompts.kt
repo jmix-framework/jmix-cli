@@ -198,6 +198,8 @@ class Prompts(
     private val compactHeader: (Int) -> List<String> = { emptyList() },
     private val headerAnimationDuration: Duration = Duration.ZERO,
     private val exitOnEof: Boolean = false,
+    /** With [exitOnEof]: the end of piped input fails with this message instead of quitting with exit code 0. */
+    private val eofError: String? = null,
     // Trailing position keeps `Prompts(terminal) { state }` working.
     private val wizardUiState: () -> WizardUiState = { WizardUiState() },
 ) {
@@ -482,6 +484,7 @@ class Prompts(
 
             val line = readlnOrNull()
             if (line == null) {
+                endInputIfRequested()
                 isInputExhausted = true
                 terminal.println()
                 terminal.println(gray("No more input — using defaults for the remaining steps."))
@@ -987,7 +990,7 @@ class Prompts(
             if (line == null) {
                 // Ctrl+D on a real terminal is a deliberate abort, like Ctrl+C.
                 if (terminal.terminalInfo.inputInteractive) abort()
-                if (exitOnEof) quit()
+                endInputIfRequested()
                 // EOF on piped stdin. Fall back to defaults for this and all
                 // remaining prompts instead of aborting a half-finished wizard.
                 isInputExhausted = true
@@ -1146,6 +1149,21 @@ class Prompts(
         input.equals(QUIT_INPUT, ignoreCase = true) || input.equals("й", ignoreCase = true)
 
     private fun abort(): Nothing = throw CliktError("Aborted.")
+
+    /**
+     * With [exitOnEof], Ctrl+D on a real terminal aborts, and the end of piped input quits, or fails with
+     * [eofError] when there is one.
+     */
+    private fun endInputIfRequested() {
+        if (!exitOnEof) return
+        if (terminal.terminalInfo.inputInteractive) abort()
+        eofError?.let {
+            // The prompt or key bar above ends without a line break; the error starts on its own line.
+            terminal.println()
+            throw CliktError(it)
+        }
+        quit()
+    }
 
     private fun quit(): Nothing = throw ProgramResult(0)
 

@@ -15,7 +15,7 @@ import io.jmix.cli.wizard.StatusReporter
 
 class UpdateCommand : CliktCommand(name = "update") {
 
-    override fun help(context: Context) = "Update Jmix CLI to the latest release and remove old versions"
+    override fun help(context: Context) = "Update Jmix CLI and remove old versions"
 
     // Accepted for symmetry with the other commands; `jmix update` never runs
     // the startup check anyway.

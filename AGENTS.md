@@ -13,7 +13,7 @@ Read the guide relevant to the change; update it when behavior changes.
 | [Project generation](docs/features/project-generation.md)                 | Templates, repository cache, rendering, locales, Git                 |
 | [Wizard](docs/features/wizard.md)                                         | Steps, navigation, terminal fallbacks, demo recording                |
 | [Add-ons](docs/features/add-ons.md)                                       | Studio catalog, compatibility, selection, translations, installation |
-| [Environment and Agent Toolkit](docs/features/environment-and-toolkit.md) | Development JDKs, project launching, AI agent setup                  |
+| [Environment and Agent Toolkit](docs/features/environment-and-toolkit.md) | Development JDKs, project launching, AI agent setup, `agent-toolkit` |
 | [Updates](docs/features/updates.md)                                       | Startup checks, self-update, cache cleanup                           |
 | [Account and trial](docs/features/account-and-trial.md)                   | Sign-in, session file, trial download                                |
 
@@ -58,7 +58,7 @@ Additional checks depend on the change:
 
 | Change                                 | Required checks                                                                                   |
 |----------------------------------------|---------------------------------------------------------------------------------------------------|
-| Commands/options                       | `jmix --help`, `jmix new --help`, and non-interactive use                                         |
+| Commands/options                       | `jmix --help`, `jmix new --help`, `jmix agent-toolkit --help`, and non-interactive use            |
 | Templates, repository access, or generation | `JMIX_CLI_IT=true ./gradlew test` |
 | Generation | Also generate and build a project as described in the feature guide |
 | Wizard                                 | Real terminal and numbered/line-input fallback, including back and quit                           |

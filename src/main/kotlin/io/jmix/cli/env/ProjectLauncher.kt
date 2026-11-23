@@ -121,11 +121,14 @@ object ProjectLauncher {
         } ?: DEFAULT_SERVER_PORT
     }
 
-    /** Metadata is optional, including in downloaded projects with unusually large build files. */
+    /**
+     * Metadata is optional, including in downloaded projects with unusually large build files.
+     * Only a regular file is opened: a pipe or a device at that path would block the read.
+     */
     internal fun readProjectMetadata(file: Path): String? = try {
         val limit = 1024 * 1024
-        Files.newInputStream(file).use { it.readNBytes(limit + 1) }
-            .takeIf { it.size <= limit }?.decodeToString()
+        file.takeIf { Files.isRegularFile(it) }?.let { Files.newInputStream(it).use { input -> input.readNBytes(limit + 1) } }
+            ?.takeIf { it.size <= limit }?.decodeToString()
     } catch (e: IOException) {
         null
     }
