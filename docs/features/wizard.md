@@ -151,7 +151,7 @@ both terminal modes. Cover back/forward navigation, English/Russian quit shortcu
 text and search containing `q` and `й`, selection retention, template-included add-ons
 omitted, and narrow/resized terminals.
 
-The README GIF is rendered from a film page kept outside the repository. It
+The README demo is rendered from a film page kept outside the repository. It
 opens on the install card, then shows two features, each opened by a title card
 with the command and one line about it. `jmix new` recreates a real session in an 80×21 terminal with the
 CLI's own strings, colors, clipping, and step order: the command menu, the
@@ -166,8 +166,11 @@ keyboard hints in place. Show the purple `[$]` badges and the secondary
 
 When these screens change, capture them again in an 80×21 terminal (from 21
 rows the command menu keeps its banner), update the film's texts, and render
-every frame at 800 px wide and 25 fps.
-Build the GIF with one FFmpeg palette and Bayer dithering, optimize it with
-`gifsicle -O3` (lossy compression grains the background glow), and inspect it at
-the README's displayed width. At the end the install card builds again, so the
+every frame at 800 px wide and 25 fps. The README shows `docs/demo.avif` in
+browsers that support AVIF and falls back to `docs/demo.gif`; build both from
+the same frames. Encode the AVIF with SVT-AV1 at CRF 22 in 4:2:0 with BT.709
+color tags (about 1 MB, without the GIF's 256-color dithering). Build the GIF
+with one FFmpeg palette and Bayer dithering, optimize it with `gifsicle -O3`
+(lossy compression grains the background glow), and inspect both at the
+README's displayed width. At the end the install card builds again, so the
 last frames equal the first one and the loop has no seam.
