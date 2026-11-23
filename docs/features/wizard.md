@@ -8,7 +8,8 @@ Running `jmix` without a command opens the command menu, in this order:
 4. `login` — sign in, or `logout` — sign out when a local session is saved.
 5. `update` — update the CLI.
 
-Descriptions come from the commands' help text. The menu checks only the saved
+Descriptions come from the commands' help text, short enough that every row,
+numbered ones included, fits an 80-column terminal. The menu checks only the saved
 session; it makes no account request. An expired session can therefore still show
 `logout` until a command detects the expiry and clears it. Direct command calls
 and `--help` bypass the menu, and both `login` and `logout` remain available directly.
@@ -111,7 +112,9 @@ draft; templates opened during a cancelled run are closed before returning home.
   start unchecked, and `--servers` or `--agents` keep `mcp` checked. Confirming
   it empty runs nothing. The two MCP checklists show the toolkit's labels with
   every entry checked. Confirming an empty MCP checklist repeats the question
-  with the reason.
+  with the reason. Back to the version question offers the version typed
+  before. The MCP lists keep their earlier choice after Back, through the steps
+  checklist too while `mcp` stays checked.
 - In `jmix agent-toolkit`, Back (Esc, or `<` in line-input consoles) returns to the
   previous question that was asked, and from the first one to the command menu.
   This works for both a menu-launched and a direct `jmix agent-toolkit`. `q` quits
@@ -126,8 +129,9 @@ draft; templates opened during a cancelled run are closed before returning home.
 - Without raw mode the `agent-toolkit` project list is a numbered list, the steps
   checklist is a numbered checklist (numbers toggle, Enter confirms), and each MCP
   checklist becomes one text question in the syntax of `--servers` and
-  `--agents`, not one yes/no question per entry. Enter keeps every offered id,
-  an unknown id repeats the question with the valid values, and `<` goes back.
+  `--agents`, not one yes/no question per entry. Enter keeps the ids shown (every
+  offered id, or the earlier answer after Back), an unknown id repeats the
+  question with the valid values, and `<` goes back.
   See the [toolkit command](environment-and-toolkit.md#toolkit-command).
 
 ## Code

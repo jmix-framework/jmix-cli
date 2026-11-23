@@ -194,18 +194,136 @@ class AgentToolkitInstallerTest {
     }
 
     @Test
-    fun `a dangling link on a guidelines or skills path is rejected`(@TempDir dir: Path, @TempDir outside: Path) {
+    fun `a dangling link is judged by the target it would create`(@TempDir dir: Path, @TempDir outside: Path) {
         assumeTrue(links)
+        // The toolkit's own layouts: CLAUDE.md -> AGENTS.md before AGENTS.md exists, Claude's skills after .agents is gone.
+        Files.createSymbolicLink(dir.resolve("CLAUDE.md"), Path.of("AGENTS.md"))
+        Files.createSymbolicLink(Files.createDirectories(dir.resolve(".claude")).resolve("skills"), Path.of("../.agents/skills"))
+        AgentToolkitInstaller.rejectLinkedPaths(dir, setOf(ToolkitStep.SKILLS, ToolkitStep.GUIDELINES))
+        Files.delete(dir.resolve("CLAUDE.md"))
         Files.createSymbolicLink(dir.resolve("AGENTS.md"), dir.resolve("missing.md"))
+        AgentToolkitInstaller.rejectLinkedPaths(dir, setOf(ToolkitStep.GUIDELINES))
+
+        Files.delete(dir.resolve("AGENTS.md"))
+        Files.createSymbolicLink(dir.resolve("AGENTS.md"), outside.resolve("missing.md"))
+        val agents = "Cannot install Agent Toolkit guidelines through a path linked outside the project: AGENTS.md."
+        assertEquals(agents, rejected(dir, ToolkitStep.GUIDELINES))
+        // A name followed by `..` could climb out of a linked folder, and a dangling link to one is not followed.
+        Files.createSymbolicLink(dir.resolve("linked"), outside)
+        for (target in listOf("linked/../missing.md", "next.md")) {
+            Files.delete(dir.resolve("AGENTS.md"))
+            Files.createSymbolicLink(dir.resolve("AGENTS.md"), Path.of(target))
+            Files.deleteIfExists(dir.resolve("next.md"))
+            if (target == "next.md") Files.createSymbolicLink(dir.resolve("next.md"), Path.of("missing.md"))
+            assertEquals(agents, rejected(dir, ToolkitStep.GUIDELINES), target)
+        }
+        Files.delete(dir.resolve(".claude/skills"))
+        Files.createSymbolicLink(dir.resolve(".claude/skills"), Path.of("../linked/skills"))
         assertEquals(
-            "Cannot install Agent Toolkit guidelines through a path linked outside the project: AGENTS.md.",
-            rejected(dir, ToolkitStep.GUIDELINES),
-        )
-        Files.createSymbolicLink(dir.resolve(".claude"), outside.resolve("missing"))
-        assertEquals(
-            "Cannot install Agent Toolkit skills through a path linked outside the project: .claude.",
+            "Cannot install Agent Toolkit skills through a path linked outside the project: .claude/skills.",
             rejected(dir, ToolkitStep.SKILLS),
         )
+    }
+
+    @Test
+    fun `the skills guard covers every hidden folder's skills that the toolkit tidies`(@TempDir dir: Path, @TempDir outside: Path) {
+        assumeTrue(links)
+        // The toolkit tidies only `jmix*` entries there, so a linked folder without them is left alone.
+        Files.createDirectories(outside.resolve("junie/skills"))
+        Files.createDirectories(outside.resolve("team/skills/review"))
+        Files.createDirectories(outside.resolve("m2"))
+        Files.createSymbolicLink(dir.resolve(".m2"), outside.resolve("m2"))
+        Files.createSymbolicLink(dir.resolve(".team"), outside.resolve("team"))
+        Files.createDirectories(dir.resolve(".cursor/skills/jmix-old.bak1"))
+        Files.createSymbolicLink(dir.resolve(".junie"), outside.resolve("junie"))
+        AgentToolkitInstaller.rejectLinkedPaths(dir, setOf(ToolkitStep.SKILLS))
+        Files.createDirectories(outside.resolve("junie/skills/jmix-old.bak1"))
+        assertEquals(
+            "Cannot install Agent Toolkit skills through a path linked outside the project: .junie/skills.",
+            rejected(dir, ToolkitStep.SKILLS),
+        )
+        AgentToolkitInstaller.rejectLinkedPaths(dir, setOf(ToolkitStep.GUIDELINES))
+        // install.ps1 also sweeps names that start with `..`.
+        Files.delete(dir.resolve(".junie"))
+        Files.createSymbolicLink(dir.resolve("..junie"), outside.resolve("junie"))
+        assertEquals(
+            "Cannot install Agent Toolkit skills through a path linked outside the project: ..junie/skills.",
+            rejected(dir, ToolkitStep.SKILLS),
+        )
+    }
+
+    @Test
+    fun `an MCP config name that differs only in letter case is no link`(@TempDir dir: Path) {
+        Files.writeString(dir.resolve("Opencode.json"), "{}")
+        Files.createDirectories(dir.resolve(".Junie/MCP"))
+        AgentToolkitInstaller.rejectLinkedPaths(dir, ToolkitStep.entries.toSet())
+    }
+
+    @Test
+    fun `a Windows junction is a link to the guard`(@TempDir dir: Path, @TempDir outside: Path) {
+        assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+        // The toolkit links folders with junctions on Windows, and to Java a junction is no symbolic link.
+        val junctions = mutableListOf<Path>()
+        fun junction(link: Path, target: Path) {
+            val process = ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toAbsolutePath().toString())
+                .redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            assertEquals(0, process.waitFor(), output)
+            junctions.add(link)
+        }
+        try {
+            junction(Files.createDirectories(dir.resolve(".agents")).resolve("skills"), outside)
+            assertEquals(
+                "Cannot install Agent Toolkit skills through a path linked outside the project: .agents/skills.",
+                rejected(dir, ToolkitStep.SKILLS),
+            )
+            junction(dir.resolve(".junie"), Files.createDirectories(dir.resolve("real/mcp")).parent)
+            assertEquals("Cannot configure project MCP servers through a linked path: .junie.", rejected(dir, ToolkitStep.MCP))
+            Files.delete(junctions.removeAt(0))
+            junction(Files.createDirectories(dir.resolve(".claude")).resolve("skills"), Files.createDirectories(dir.resolve(".agents/skills")))
+            AgentToolkitInstaller.rejectLinkedPaths(dir, setOf(ToolkitStep.SKILLS))
+        } finally {
+            // The junctions themselves go, so cleaning up the temporary folders never walks through them.
+            junctions.forEach(Files::deleteIfExists)
+        }
+    }
+
+    @Test
+    fun `the MCP guard covers every project config of the toolkit's metadata and its folders`() {
+        val json = checkNotNull(javaClass.getResource("/toolkit/studio-meta-data-v3.json")).readText()
+        val configs = AgentToolkitMetadata.parseMcpOptions(json).agents.mapNotNull { it.projectConfig }
+        assertTrue(configs.isNotEmpty())
+        val guarded = configs.flatMap { config -> config.split('/').runningReduce { folder, name -> "$folder/$name" } }
+        assertEquals(emptyList<String>(), guarded.filterNot { it in AgentToolkitInstaller.MCP_PATHS })
+    }
+
+    @Test
+    fun `outside Windows a step without a usable PATH gets a fixed one, never the current directory`() {
+        for (environment in listOf(mutableMapOf("HOME" to "/h"), mutableMapOf("PATH" to ""), mutableMapOf("PATH" to ".${File.pathSeparator}bin"))) {
+            AgentToolkitInstaller.trustPathVariable(environment, os = "Linux")
+            assertEquals("/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", environment["PATH"], "$environment")
+        }
+        // Windows PowerShell never runs a bare name from the current directory, and Windows always has a Path.
+        val windows = mutableMapOf("Path" to ".")
+        AgentToolkitInstaller.trustPathVariable(windows, os = "Windows 11")
+        assertEquals(mapOf("Path" to ""), windows)
+    }
+
+    @Test
+    fun `a step's environment has the markers, a trusted PATH, and Claude Desktop moved for MCP`(@TempDir profile: Path) {
+        fun prepared(os: String, mcp: Boolean) = mutableMapOf("PATH" to ".", "HOME" to "/home/u", "PSModulePath" to "pwsh").also {
+            AgentToolkitInstaller.prepareEnvironment(it, profile.takeIf { mcp }, os)
+        }
+        val skills = prepared("Linux", mcp = false)
+        assertEquals(mapOf("PATH" to "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME" to "/home/u", "JMIX_EMIT_CHANGE_MARKERS" to "1"), skills)
+        assertEquals("$profile", prepared("Linux", mcp = true)["XDG_CONFIG_HOME"])
+        val mac = prepared("Mac OS X", mcp = true)
+        assertEquals("$profile", mac["HOME"])
+        // The Codex conflict check keeps reading the real profile.
+        assertEquals(Path.of("/home/u", ".codex").toString(), mac["CODEX_HOME"])
+        val windows = prepared("Windows 11", mcp = true)
+        assertEquals(listOf("$profile", "$profile"), listOf(windows["APPDATA"], windows["LOCALAPPDATA"]))
+        assertEquals("/home/u", windows["HOME"])
     }
 
     @Test

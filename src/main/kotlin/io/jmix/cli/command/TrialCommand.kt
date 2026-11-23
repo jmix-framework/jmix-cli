@@ -47,7 +47,7 @@ internal class TrialCommand(
     private val usageStatistics: UsageStatistics? = null,
 ) : CliktCommand(name = "trial") {
 
-    override fun help(context: Context) = "Download the Enterprise+BPM trial project of your Jmix account"
+    override fun help(context: Context) = "Download the Enterprise+BPM trial of your Jmix account"
 
     private val path by option(
         "--path", help = "Initial parent directory for the trial project (non-interactive default: current directory)",

@@ -50,7 +50,12 @@ version. Do not report the private bundled runtime as an installed development J
   the CLI isolates Claude Desktop's user profile from the MCP step, and checks
   the project paths of the selected steps before the first one runs. A path the
   skills or guidelines step writes must not be a link that leads outside the
-  project; an MCP config path must not be a link at all.
+  project; a dangling symbolic link counts by the target it would create, so
+  `CLAUDE.md -> AGENTS.md` passes before `AGENTS.md` exists (a dangling Windows
+  junction is refused). The skills paths include every `.<folder>/skills` that
+  holds a `jmix`, `jmix-*` or `jmix.*` entry, which a local skills run tidies.
+  An MCP config path must not be a link at all (a Windows junction counts); a
+  name that differs in letter case alone is no link.
 - Toolkit files are external input. Check ids and paths before they reach a path
   or an argument list, and remove control characters from any toolkit text that
   is printed.
@@ -62,7 +67,9 @@ version. Do not report the private bundled runtime as an installed development J
   list, never through a shell string, so the installer never prompts. Steps run
   in the project, so the shell (`bash`, or Windows PowerShell) is started by its
   absolute path, and each step gets a PATH without empty or relative entries (a
-  leading `~` becomes the user's home). Keep setup
+  leading `~` becomes the user's home). Outside Windows a missing or emptied PATH
+  becomes `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`: with none, bash would
+  look in the project. Keep setup
   local to the project: never pass the global scope, a flag that turns an agent
   off, or a server or agent the toolkit metadata does not offer. `jmix new`
   reports installer failures as warnings that name `jmix agent-toolkit`.
@@ -100,14 +107,16 @@ jmix agent-toolkit [skills] [guidelines] [mcp]
   skipped; a value without a numeric major counts as not detected.
   When none is found the interactive command asks for it; a
   scripted run fails with `Cannot detect the Jmix version in <dir>. Pass --jmix-version.`
+  A `--jmix-version` without a numeric major fails before any question with
+  `Unexpected Jmix version format: <value>`.
 - The toolkit branch is `v<major>`. A missing branch fails with
   `Agent Toolkit setup failed: the toolkit has no v<major> branch for Jmix <major> yet`.
 - Choices: the MCP servers and AI agents come from the metadata of the project's
   branch, in the toolkit's order. A choice is offered when the toolkit enables it
   by default (`default: true`). A server is not offered when the `mcp` step has a
   text input for it: an input of type `userInput` whose id starts with the
-  server's id, compared without case and without the characters of the server's
-  id that are not letters or digits. Every offered choice is selected by default.
+  server's id, both compared without case and by their letters and digits alone.
+  Every offered choice is selected by default.
 - A choice is ignored unless its id starts with a letter or digit and continues
   with letters, digits, `.`, `_`, or `-`. Metadata without the `mcp` step, without
   one of the two lists, or with a list that ends up empty is an error:
@@ -138,9 +147,12 @@ jmix agent-toolkit [skills] [guidelines] [mcp]
   and a path. Keep the first action per path, and print paths inside the project
   relative to it. The result is a green headline and one row per path with the
   toolkit's action word; an action this CLI version does not know is listed
-  without color. Without changes the headline says `already up to date`.
+  without color. Without changes the headline says `already up to date`. A run
+  of some of the steps names them and speaks for them alone, as in
+  `Agent Toolkit v3: guidelines, mcp already up to date`.
 - Notes: `Notes from the Agent Toolkit:` lists the installer's own guidance, one
-  bullet each, whether or not files changed. Select notes by position and by
+  bullet each, whether or not files changed. A terminal breaks a long note at
+  spaces under its bullet; piped output keeps each note on one line. Select notes by position and by
   the `Note:` prefix, never by wording: the lines marked `Note:` in every step,
   and in the MCP step also every line that starts at column 0 and is neither a
   `[…]` heading nor a marker. The CLI writes no guidance of its own. Notes are
@@ -158,8 +170,9 @@ jmix agent-toolkit [skills] [guidelines] [mcp]
   - Skills compare the hash of the manifest's skills in its `store.local`
     folder with `sha256`.
   - Guidelines compare `AGENTS.md` with the published block: it contains the
-    whole block, else it has a line equal to the block's first line.
-  - MCP reads the `projectConfig` file of each `mcpAgents` choice. It is
+    whole block, else it has a line equal to the block's first line. Bytes
+    that are not UTF-8 around the block do not matter.
+  - MCP reads the `projectConfig` file of each offered `mcpAgents` choice. It is
     `up to date` when one of them names every offered server its agent gets
     (all but the agent's `skipServers`), `not installed` when none of them
     exists or names an offered server, and `update available` otherwise. Only
@@ -169,10 +182,15 @@ jmix agent-toolkit [skills] [guidelines] [mcp]
 - Limits of the states: a checkout with converted line endings (Git `autocrlf`)
   hashes differently, so its skills state stays `update available`. MCP
   compares names only, so a server with an outdated definition counts as set
-  up, and a server the user left out keeps MCP at `update available`. A
-  `projectConfig` that is not a plain relative path is ignored, and MCP has no
-  state when no agent has one. `AGENTS.md` over 4 MiB is not read, nor is a
-  skills store that a link leads out of the project. An MCP config that a link
+  up, and a server the user left out keeps MCP at `update available`. One
+  complete config is enough, as a project may use a single agent, so a config
+  missing for another agent does not show. Skills and guidelines read only the
+  skills store and `AGENTS.md`: missing Claude Code links in `.claude/skills` or
+  a missing `CLAUDE.md` do not count. A `projectConfig` that is not a plain
+  relative path is ignored, and MCP has no state when no agent has one.
+  `AGENTS.md` over 4 MiB is not read, nor is an `AGENTS.md` or a skills store
+  that a link leads out of the project. Links in a skill folder are never
+  read, so a toolkit file replaced by a link counts as changed. An MCP config that a link
   leads out of the project counts as missing; one over 4 MiB, like one that
   cannot be read, leaves the state to the others, or makes it unknown. Scripted
   runs and runs with step arguments show no states.

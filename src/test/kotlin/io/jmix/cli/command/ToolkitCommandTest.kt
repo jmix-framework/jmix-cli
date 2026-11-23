@@ -223,13 +223,47 @@ class ToolkitCommandTest {
 
     @Test
     fun `an unchanged project is reported as up to date`() {
-        val quiet = run("guidelines", "--path", project().toString()).stdout
+        val quiet = run("--path", project().toString()).stdout
         assertTrue(quiet.contains("✓ Agent Toolkit v3 is already up to date"))
         assertFalse(quiet.contains("Notes from the Agent Toolkit:"))
         result = ToolkitResult(emptyList(), listOf("Approve the servers."))
-        val noted = run("mcp", "--path", project().toString()).stdout
+        val noted = run("--path", project().toString()).stdout
         assertTrue(noted.contains("✓ Agent Toolkit v3 is already up to date"))
         assertTrue(noted.contains("  • Approve the servers."))
+    }
+
+    @Test
+    fun `the headline of a run of some steps names those steps only`() {
+        val quiet = run("mcp", "guidelines", "--path", project().toString()).stdout
+        assertTrue(quiet.contains("✓ Agent Toolkit v3: guidelines, mcp already up to date"), quiet)
+        assertFalse(quiet.contains("Agent Toolkit v3 is"), quiet)
+        result = ToolkitResult(listOf(ToolkitChange("updated", "AGENTS.md")), emptyList())
+        val changed = run("guidelines", "--path", project().toString()).stdout
+        assertTrue(changed.contains("✓ Agent Toolkit v3: guidelines set up"), changed)
+    }
+
+    @Test
+    fun `a terminal breaks a long note at spaces under its bullet, piped output keeps it whole`() {
+        val note = "Codex reads .codex/config.toml only in trusted projects: accept its 'trust this folder' prompt."
+        result = ToolkitResult(emptyList(), listOf(note))
+        val project = project().toString()
+        val piped = run("mcp", "--path", project).stdout
+        assertTrue(piped.contains("  • $note"), piped)
+        val shown = command().test(listOf("mcp", "--non-interactive", "--path", project), width = 40, outputInteractive = true).stdout
+        val noteLines = shown.lines().dropWhile { !it.startsWith("  • ") }.takeWhile { it.isNotBlank() }
+        assertTrue(noteLines.size > 1, shown)
+        assertTrue(noteLines.drop(1).all { it.startsWith("    ") && !it.startsWith("     ") }, shown)
+        assertTrue(noteLines.all { it.length <= 39 }, shown)
+        assertEquals(note, noteLines.joinToString(" ") { it.trim().removePrefix("• ") })
+        // A terminal that reports no size, such as a PTY opened without one, keeps the note whole.
+        val sizeless = command().test(listOf("mcp", "--non-interactive", "--path", project), width = 0, outputInteractive = true).stdout
+        assertTrue(sizeless.contains("  • $note"), sizeless)
+    }
+
+    @Test
+    fun `wrapping keeps words whole`() {
+        assertEquals(listOf("one two", "three", "averyveryverylongword", "x"), wrapWords("one two  three averyveryverylongword x", 7))
+        assertEquals(emptyList<String>(), wrapWords("", 10))
     }
 
     @Test
@@ -277,6 +311,21 @@ class ToolkitCommandTest {
     }
 
     @Test
+    fun `control characters are removed from the version and the directory the messages show`() {
+        val escape = "\u001B[2J"
+        val run = run("skills", "--jmix-version", "3.${escape}1", "--path", project().toString())
+        assertTrue(run.stdout.contains("(Jmix 3.[2J1, toolkit v3)"), run.stdout)
+        assertFalse(run.output.contains(escape))
+        val malformed = run("skills", "--jmix-version", "x$escape", "--path", project().toString())
+        assertEquals("Unexpected Jmix version format: x[2J", malformed.stderr.trim())
+        // Windows allows no control character in a folder name.
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        val bell = Files.createDirectories(dir.resolve("bare\u0007")).also { Files.writeString(it.resolve("settings.gradle"), "") }
+        val undetected = run("skills", "--path", bell.toString())
+        assertEquals("Cannot detect the Jmix version in ${dir.resolve("bare")}. Pass --jmix-version.", flat(undetected.stderr).trim())
+    }
+
+    @Test
     fun `a path the platform cannot parse fails like a directory without a project`() {
         val runs = listOf(run("skills", "--path", "no\u0000path"), lines("2\n", "--path", "no\u0000path"))
         for (run in runs) {
@@ -316,6 +365,41 @@ class ToolkitCommandTest {
             assertEquals("Unexpected Jmix version format: latest", run.stderr.trim())
         }
         assertTrue(calls.isEmpty())
+    }
+
+    @Test
+    fun `a malformed version option fails before the project list`() {
+        jmixProject(dir, "alpha")
+        val run = lines("1\n", "--jmix-version", "latest")
+        assertEquals(1, run.statusCode)
+        assertEquals("Unexpected Jmix version format: latest", run.stderr.trim())
+        assertFalse(run.output.contains("Select project directory"), run.output)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test
+    fun `Back to the version question offers the version typed before`() {
+        val bare = Files.createDirectories(dir.resolve("bare")).also { Files.writeString(it.resolve("settings.gradle"), "") }
+        // The version, Back from the checklist, Enter keeps the version, then skills.
+        val run = lines("2.8.3\n<\n\n$SKILLS_ONLY", "--path", bare.toString())
+        assertEquals(0, run.statusCode, run.stderr)
+        assertTrue(run.output.contains("Jmix version of the project (2.8.3)"), run.output)
+        assertEquals("2.8.3", calls.single().version)
+    }
+
+    @Test
+    fun `Back from the agents keeps the servers chosen before`() {
+        val project = project().toString()
+        // Line input: playwright, Back from the agents, Enter keeps playwright, Enter keeps every agent.
+        val line = lines("playwright\n<\n\n\n", "mcp", "--path", project)
+        assertEquals(0, line.statusCode, line.stderr)
+        assertTrue(line.output.contains("MCP servers (playwright)"), line.output)
+        // Raw: jmix-docs off, Esc from the agents, the servers keep it off, then Enter twice.
+        raw("mcp", "--path", project, keys = listOf("ArrowDown", " ", "Enter", "Escape", "Enter", "Enter"))
+        // Through the steps checklist and forward again: mcp alone, playwright, Back twice, then Enter thrice.
+        lines("1,2\n\nplaywright\n<\n<\n\n\n\n", "--path", project)
+        assertEquals(listOf(listOf("playwright"), listOf("jetbrains", "playwright"), listOf("playwright")), calls.map { it.servers })
+        assertEquals(listOf(agentIds, agentIds, agentIds), calls.map { it.agents })
     }
 
     @Test
@@ -713,7 +797,7 @@ class ToolkitCommandTest {
         val afterQuestions = ANSI_SEQUENCE.replace(run.output.substringAfterLast(EXIT_ALTERNATE_SCREEN), "")
         val positions = listOf(
             "✓ Project: $project (Jmix 3.1.0, toolkit v3)", "✓ Steps: mcp", "✓ MCP servers: jetbrains, jmix-docs, playwright",
-            "✓ AI agents: claude, opencode, junie", "✓ Agent Toolkit v3 is already up to date",
+            "✓ AI agents: claude, opencode, junie", "✓ Agent Toolkit v3: mcp already up to date",
         ).map(afterQuestions::indexOf)
         assertTrue(positions.all { it >= 0 } && positions == positions.sorted(), afterQuestions)
     }

@@ -69,7 +69,7 @@ jmix agent-toolkit --non-interactive
 jmix agent-toolkit skills guidelines --non-interactive
 ```
 
-The command lists the changed files and the toolkit's notes. Run
+The command lists the files the toolkit reports as changed, and its notes. Run
 `jmix agent-toolkit --help` for the options and the MCP servers and AI agents the
 toolkit currently offers. See the
 [Agent Toolkit guide](docs/features/environment-and-toolkit.md#toolkit-command).

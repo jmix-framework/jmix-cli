@@ -8,6 +8,7 @@ import io.jmix.cli.util.string
 import java.io.IOException
 import java.io.OutputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.security.DigestOutputStream
 import java.security.MessageDigest
@@ -61,12 +62,16 @@ object AgentToolkitStatus {
     /**
      * Byte-identical to the toolkit's `.studio/gen_skills_manifest.py`: every regular file below a listed skill
      * directory is its path relative to [skillsDir] with `/` separators as UTF-8, a zero byte and the file's
-     * bytes; the entries are hashed in the order of their path bytes, compared as unsigned values.
+     * bytes; the entries are hashed in the order of their path bytes, compared as unsigned values. The toolkit
+     * installs no links, so a link, or a file a Windows junction leads to outside [skillsDir], is left out
+     * unread: the CLI never reads a file outside the folder, and the hash then differs where one replaced a
+     * toolkit file.
      */
     internal fun skillsHash(skillsDir: Path, skillNames: List<String>): String {
+        val store = skillsDir.toRealPath()
         val files = skillNames.map(skillsDir::resolve).filter { Files.isDirectory(it) }.flatMap { skill ->
             Files.walk(skill).use { paths ->
-                paths.filter { Files.isRegularFile(it) }
+                paths.filter { Files.isRegularFile(it, NOFOLLOW_LINKS) && it.toRealPath().startsWith(store) }
                     .map { skillsDir.relativize(it).joinToString("/").toByteArray(UTF_8) to it }
                     .toList()
             }
@@ -155,10 +160,10 @@ object AgentToolkitStatus {
 
     private fun guidelines(projectDir: Path, block: String?): State? {
         val expected = block?.let(::unixText)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        val file = projectDir.resolve(GUIDELINES_FILE)
+        val file = inProject(projectDir, GUIDELINES_FILE) ?: return null
         if (!Files.isRegularFile(file)) return State.NOT_INSTALLED
-        if (Files.size(file) > MAX_FILE_BYTES) return null
-        val text = unixText(Files.readString(file))
+        // The installers keep the user's bytes around the block: text that is not UTF-8 still holds it.
+        val text = readOrNull(file)?.let(::unixText) ?: return null
         return when {
             expected in text -> State.UP_TO_DATE
             // The first line of the block is the toolkit's marker of its own section.

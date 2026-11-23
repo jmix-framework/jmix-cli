@@ -95,10 +95,15 @@ class AgentToolkitInstallerIntegrationTest {
         if (jetBrainsUrl.endsWith("/sse")) assertTrue(codex.contains("mcp-remote"))
     }
 
-    @Test
-    fun `the MCP step takes its servers and agents from the toolkit metadata by default`() {
-        val result = AgentToolkitInstaller.install(tempDir, "3.0.1", steps = setOf(ToolkitStep.MCP))
+    @ParameterizedTest
+    @ValueSource(strings = ["2.8.3", "3.0.1"])
+    fun `the MCP step takes its servers and agents from the toolkit metadata by default`(jmixVersion: String) {
+        val result = AgentToolkitInstaller.install(tempDir, jmixVersion, steps = setOf(ToolkitStep.MCP))
         assertProjectRelative(result.changes)
+        // Every agent the metadata of the version's branch offers gets its project config.
+        val configs = AgentToolkitMetadata.mcpOptions(AgentToolkitInstaller.branch(jmixVersion)).agents.mapNotNull { it.projectConfig }
+        assertTrue(configs.isNotEmpty())
+        for (config in configs) assertTrue(Files.isRegularFile(tempDir.resolve(config)), config)
     }
 
     @Test

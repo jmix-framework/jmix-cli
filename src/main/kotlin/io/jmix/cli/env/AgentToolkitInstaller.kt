@@ -4,6 +4,7 @@ import io.jmix.cli.util.Http
 import io.jmix.cli.util.hostOf
 import java.io.File
 import java.io.IOException
+import java.io.UncheckedIOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -85,10 +86,32 @@ object AgentToolkitInstaller {
             .filter { entry -> entry.isNotEmpty() && runCatching { Path.of(entry).isAbsolute }.getOrDefault(false) }
             .joinToString(File.pathSeparator)
 
-    /** Applies [trustedPath] to the PATH variable in any letter case: Windows names it Path, and the map is case-sensitive. */
-    internal fun trustPathVariable(environment: MutableMap<String, String>) {
-        environment.keys.filter { it.equals("PATH", ignoreCase = true) }
-            .forEach { key -> environment[key] = trustedPath(environment[key]) }
+    /**
+     * Applies [trustedPath] to the PATH variable in any letter case: Windows names it Path, and the map is
+     * case-sensitive. Outside Windows a missing or emptied PATH becomes [FALLBACK_PATH]: bash looks a command up
+     * in the current directory, the project, when PATH is empty, and its built-in default ends with `.`.
+     */
+    internal fun trustPathVariable(environment: MutableMap<String, String>, os: String = System.getProperty("os.name")) {
+        val keys = environment.keys.filter { it.equals("PATH", ignoreCase = true) }
+        keys.forEach { key -> environment[key] = trustedPath(environment[key]) }
+        if (!isWindows(os) && keys.all { environment[it].isNullOrEmpty() }) {
+            keys.forEach(environment::remove)
+            environment["PATH"] = FALLBACK_PATH
+        }
+    }
+
+    /**
+     * The environment of a step, changed in place: change markers on, a trusted PATH, no inherited
+     * PSModulePath, and for the MCP step ([mcpProfile]) Claude Desktop's user profile moved to that folder.
+     */
+    internal fun prepareEnvironment(environment: MutableMap<String, String>, mcpProfile: Path?, os: String = System.getProperty("os.name")) {
+        // A pwsh-flavored PSModulePath inherited from the parent (pwsh
+        // terminals, GitHub Actions) breaks Windows PowerShell 5.1 module
+        // autoloading (Get-FileHash etc.); let the shell rebuild its own.
+        environment.remove("PSModulePath")
+        environment["JMIX_EMIT_CHANGE_MARKERS"] = "1"
+        trustPathVariable(environment, os)
+        if (mcpProfile != null) isolateClaudeDesktop(environment, mcpProfile, os)
     }
 
     /** bash by its absolute path: the JVM looks a bare name up in PATH entries that resolve inside the project. */
@@ -203,42 +226,108 @@ object AgentToolkitInstaller {
     /**
      * The toolkit writes through links, and [root] can be a project this CLI did not create. Fails when a path
      * one of [steps] writes is a link out of the project, or, for an MCP config, a link at all. The toolkit itself
-     * links inside the project: each skill into the Claude skills folder, and it supports `CLAUDE.md -> AGENTS.md`.
+     * links inside the project: each skill into the Claude skills folder, and it supports `CLAUDE.md -> AGENTS.md`,
+     * so a link, dangling or not, that stays in the project passes.
      */
     internal fun rejectLinkedPaths(root: Path, steps: Set<ToolkitStep>) {
         val project = root.toRealPath()
-        if (ToolkitStep.SKILLS in steps) rejectLinksOutside(project, SKILLS_PATHS, "skills")
+        if (ToolkitStep.SKILLS in steps) {
+            // A local skills run also tidies the `jmix*` entries of every `.<any>/skills` (Junie's old links,
+            // legacy backups), following links to it. Listed names stay paths: a name that is no valid text
+            // in the JVM's encoding still resolves to the same entry.
+            val agentSkills = topLevelEntries(project).filter { it.toString().startsWith(".") }
+                .map { it.resolve("skills") }.filter { hasToolkitEntries(project.resolve(it)) }
+            rejectLinksOutside(project, (SKILLS_PATHS.map(Path::of) + agentSkills).distinct(), "skills")
+        }
         if (ToolkitStep.GUIDELINES in steps) {
             // A backup goes to the first free `<file>.bak`, `.bak1`, ..., and a dangling link there counts as free.
-            val backups = Files.list(project).use { entries ->
-                entries.map { it.fileName.toString() }
-                    .filter { name -> GUIDELINES_PATHS.any { name.startsWith("$it.bak", ignoreCase = true) } }.sorted().toList()
-            }
-            rejectLinksOutside(project, GUIDELINES_PATHS + backups, "guidelines")
+            val backups = topLevelEntries(project)
+                .filter { entry -> GUIDELINES_PATHS.any { entry.toString().startsWith("$it.bak", ignoreCase = true) } }
+            rejectLinksOutside(project, GUIDELINES_PATHS.map(Path::of) + backups, "guidelines")
         }
         if (ToolkitStep.MCP in steps) {
             for (relative in MCP_PATHS) {
                 val path = project.resolve(relative)
-                if (Files.isSymbolicLink(path) || (Files.exists(path, NOFOLLOW_LINKS) && path.toRealPath() != path)) {
+                if (Files.isSymbolicLink(path) || (Files.exists(path, NOFOLLOW_LINKS) && !isPlainEntry(path))) {
                     throw IOException("Cannot configure project MCP servers through a linked path: $relative.")
                 }
             }
         }
     }
 
-    private fun rejectLinksOutside(project: Path, paths: List<String>, label: String) {
+    /**
+     * Whether the existing [path] is itself where its real path is. A Windows junction is no symbolic link to
+     * Java, but its real path is elsewhere. Not `toRealPath() == path`: on a case-insensitive disk the real name
+     * can differ in letter case alone.
+     */
+    private fun isPlainEntry(path: Path): Boolean {
+        val real = path.toRealPath()
+        return real.parent == path.parent.toRealPath() && real.fileName.toString().equals(path.fileName.toString(), ignoreCase = true)
+    }
+
+    /** The entry names in [project], sorted; a folder that fails while it is listed fails like one that cannot be opened. */
+    private fun topLevelEntries(project: Path): List<Path> = try {
+        Files.list(project).use { entries -> entries.map { it.fileName }.sorted().toList() }
+    } catch (e: UncheckedIOException) {
+        throw e.cause ?: e
+    }
+
+    /**
+     * Whether the folder [dir] holds an entry the toolkit tidies in `.<any>/skills`: `jmix`, `jmix-*` or `jmix.*`,
+     * in any letter case to be safe. A folder that cannot be listed counts, so the guard still checks it.
+     */
+    private fun hasToolkitEntries(dir: Path): Boolean {
+        if (!Files.isDirectory(dir)) return false
+        fun isToolkitEntry(name: String) =
+            name.equals("jmix", ignoreCase = true) || name.startsWith("jmix-", ignoreCase = true) ||
+                name.startsWith("jmix.", ignoreCase = true)
+        return try {
+            Files.list(dir).use { entries -> entries.anyMatch { isToolkitEntry(it.fileName.toString()) } }
+        } catch (e: IOException) {
+            true
+        } catch (e: UncheckedIOException) {
+            true
+        }
+    }
+
+    private fun rejectLinksOutside(project: Path, paths: List<Path>, label: String) {
         for (relative in paths) {
             val path = project.resolve(relative)
             if (!Files.exists(path, NOFOLLOW_LINKS)) continue
             val inside = try {
                 path.toRealPath().startsWith(project)
             } catch (e: IOException) {
-                // A dangling link: where the toolkit would end up writing is unknown.
-                false
+                missingTargetInside(path, project)
             }
             if (!inside) {
-                throw IOException("Cannot install Agent Toolkit $label through a path linked outside the project: $relative.")
+                val shown = relative.joinToString("/")
+                throw IOException("Cannot install Agent Toolkit $label through a path linked outside the project: $shown.")
             }
+        }
+    }
+
+    /**
+     * Whether the missing target of the dangling link [link] lies in [project], where writing through the link
+     * would create it. The part of the target on disk is taken by its real path and must not be a link itself.
+     * Only leading `..` elements are allowed: after a name, one could climb out of a linked folder.
+     */
+    private fun missingTargetInside(link: Path, project: Path): Boolean {
+        val target = try {
+            Files.readSymbolicLink(link)
+        } catch (e: IOException) {
+            return false
+        } catch (e: UnsupportedOperationException) {
+            return false
+        }
+        if (target.dropWhile { it.toString() == ".." }.any { it.toString() == ".." }) return false
+        return try {
+            val wanted = link.parent.toRealPath().resolve(target).normalize()
+            var onDisk = wanted
+            while (!Files.exists(onDisk, NOFOLLOW_LINKS)) onDisk = onDisk.parent ?: return false
+            // The target itself on disk is another dangling link: refused rather than followed.
+            onDisk != wanted && onDisk.toRealPath().resolve(onDisk.relativize(wanted)).startsWith(project)
+        } catch (e: IOException) {
+            false
         }
     }
 
@@ -251,15 +340,15 @@ object AgentToolkitInstaller {
         }
     }
 
-    private fun isolateClaudeDesktop(environment: MutableMap<String, String>, profile: Path) {
+    private fun isolateClaudeDesktop(environment: MutableMap<String, String>, profile: Path, os: String) {
         // Toolkit checks for Claude Desktop in the user profile even with local scope.
         val isolatedProfile = profile.toString()
         when {
-            isWindows() -> {
+            isWindows(os) -> {
                 environment["APPDATA"] = isolatedProfile
                 environment["LOCALAPPDATA"] = isolatedProfile
             }
-            System.getProperty("os.name").startsWith("Mac", ignoreCase = true) -> {
+            os.startsWith("Mac", ignoreCase = true) -> {
                 // Keep Toolkit's read-only Codex transport conflict check on the real profile.
                 val userHome = environment["HOME"] ?: System.getProperty("user.home")
                 environment.putIfAbsent("CODEX_HOME", Path.of(userHome, ".codex").toString())
@@ -277,13 +366,7 @@ object AgentToolkitInstaller {
                 .directory(projectDir.toFile())
                 .redirectErrorStream(true)
                 .redirectOutput(log.toFile())
-            // A pwsh-flavored PSModulePath inherited from the parent (pwsh
-            // terminals, GitHub Actions) breaks Windows PowerShell 5.1 module
-            // autoloading (Get-FileHash etc.); let the shell rebuild its own.
-            builder.environment().remove("PSModulePath")
-            builder.environment()["JMIX_EMIT_CHANGE_MARKERS"] = "1"
-            trustPathVariable(builder.environment())
-            if (mcpProfile != null) isolateClaudeDesktop(builder.environment(), mcpProfile)
+            prepareEnvironment(builder.environment(), mcpProfile)
             val process = builder.start()
             if (!process.waitFor(STEP_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
                 // Wait out the kill so the log file is closed before cleanup;
@@ -337,10 +420,11 @@ object AgentToolkitInstaller {
         ".agents", ".agents/skills", ".agents/.jmix", ".agents/.jmix/backups", ".claude", ".claude/skills",
     )
     private val GUIDELINES_PATHS = listOf("AGENTS.md", "CLAUDE.md")
-    private val MCP_PATHS = listOf(
+    internal val MCP_PATHS = listOf(
         ".mcp.json", ".codex", ".codex/config.toml", "opencode.json",
         ".junie", ".junie/mcp", ".junie/mcp/mcp.json",
     )
+    private const val FALLBACK_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     private const val STEP_TIMEOUT_MINUTES = 10L
     private const val TAIL_LINES = 12
     private const val MAX_INSTALLER_BYTES = 2 * 1024 * 1024

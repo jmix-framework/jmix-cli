@@ -25,6 +25,7 @@ class AgentToolkitMetadataTest {
               {"value":"alpha","label":"Al\u001Bpha","default":true},
               {"value":"keyed","label":"Keyed","default":true},
               {"value":"key-ed","label":"Hyphen","default":true},
+              {"value":"my_docs","label":"Underscore","default":true},
               {"value":"beta","default":true},
               {"value":"off","label":"Off","default":false},
               {"value":"bad value","label":"Bad","default":true},
@@ -35,6 +36,7 @@ class AgentToolkitMetadataTest {
               {"value":"three","label":" ","default":true}]},
             {"id":"KeyedToken","type":"userInput","default":"skip"},
             {"id":"keyEdSecret","type":"userInput"},
+            {"id":"my_docsKey","type":"userInput"},
             {"id":"alphaNote","type":"options","choices":[]}]}]}}
     """.trimIndent()
 

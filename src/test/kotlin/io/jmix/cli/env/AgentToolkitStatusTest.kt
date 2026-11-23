@@ -245,6 +245,30 @@ class AgentToolkitStatusTest {
     }
 
     @Test
+    fun `a guidelines file that is not UTF-8 is still read`() {
+        // The installers keep the user's own bytes, here Latin-1, below the block they add.
+        Files.write(dir.resolve("AGENTS.md"), block.toByteArray() + "\n# Caf".toByteArray() + byteArrayOf(0xE9.toByte(), '\n'.code.toByte()))
+        assertEquals(AgentToolkitStatus.State.UP_TO_DATE, detect().guidelines)
+    }
+
+    @Test
+    fun `a guidelines file linked outside the project is not read`(@TempDir outside: Path) {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        Files.createSymbolicLink(dir.resolve("AGENTS.md"), Files.writeString(outside.resolve("AGENTS.md"), block))
+        assertNull(detect().guidelines)
+    }
+
+    @Test
+    fun `a link in a skill folder is never read, so a replaced toolkit file counts as changed`(@TempDir outside: Path) {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
+        fixture()
+        val skill = dir.resolve("store/skills/jmix/SKILL.md")
+        Files.move(skill, outside.resolve("SKILL.md"))
+        Files.createSymbolicLink(skill, outside.resolve("SKILL.md"))
+        assertEquals(AgentToolkitStatus.State.UPDATE_AVAILABLE, detect().skills)
+    }
+
+    @Test
     fun `skill names that are not plain names are not followed`() {
         fixture()
         Files.writeString(Files.createDirectories(dir.resolve("store/secret")).resolve("f"), "s")

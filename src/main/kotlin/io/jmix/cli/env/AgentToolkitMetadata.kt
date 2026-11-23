@@ -79,9 +79,9 @@ object AgentToolkitMetadata {
         val inputs = objects(steps.firstOrNull { it.string("id") == MCP_STEP }?.get("inputs"))
         val textInputs = inputs.filter { it.string("type") == TEXT_INPUT_TYPE }.mapNotNull { it.string("id") }
         val servers = choices(inputs, SERVERS_INPUT).filterNot { server ->
-            // Input ids cannot contain the punctuation a server id can.
+            // Letters and digits alone: an input id has no `-` or `.`, and `_` may be kept or dropped.
             val prefix = server.value.filter(Char::isLetterOrDigit)
-            textInputs.any { it.startsWith(prefix, ignoreCase = true) }
+            textInputs.any { it.filter(Char::isLetterOrDigit).startsWith(prefix, ignoreCase = true) }
         }
         val agents = choices(inputs, AGENTS_INPUT)
         if (servers.isEmpty() || agents.isEmpty()) throw unexpectedFormat()

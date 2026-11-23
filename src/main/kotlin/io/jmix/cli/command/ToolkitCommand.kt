@@ -88,7 +88,8 @@ class ToolkitCommand internal constructor(
         }
     }
 
-    override fun help(context: Context) = "Add or update AI Agent Toolkit: skills, guidelines, MCP servers"
+    // The command menu shows it beside the name: kept short so the menu fits 80 columns (MainTest).
+    override fun help(context: Context) = "Add or update AI Agent Toolkit: skills, guidelines, MCP"
 
     private val stepArgs by argument(
         "steps", help = "Steps to run: skills, guidelines, mcp (default: ask; all three with --non-interactive)",
@@ -154,6 +155,8 @@ class ToolkitCommand internal constructor(
         // A script or an agent without --non-interactive must not end with exit code 0 and nothing done.
         prompts = Prompts(terminal, exitOnEof = true, eofError = NO_INPUT) { WizardUiState(choices()) }
         rejectMcpOptionsWithout(stepArgs.toSet())
+        // Before any question: the option needs no project, so a malformed one fails before the project list.
+        jmixVersion?.let(::branchOf)
         val result = try {
             // Resolved before anything is written: the installer gets explicit, offered ids for the MCP step.
             // The alternate screen opens for the first question; a run that asks nothing stays on the main one.
@@ -182,7 +185,7 @@ class ToolkitCommand internal constructor(
             val cause = describeIoError(e, hostOf(AgentToolkitInstaller.RAW_CONTENT_BASE)).filterNot(Char::isISOControl)
             throw CliktError("Agent Toolkit setup failed: $cause")
         }
-        printResult(checkNotNull(answers.branch), result)
+        printResult(checkNotNull(answers.branch), checkNotNull(answers.steps), result)
     }
 
     /**
@@ -318,21 +321,18 @@ class ToolkitCommand internal constructor(
 
     private fun stepVersion(): Outcome {
         val dir = checkNotNull(answers.dir)
+        // Back to this question offers the version typed before; a project chosen again has none.
+        val typedBefore = answers.version
         answers = Answers(dir = dir)
         val known = jmixVersion ?: detectedVersion(dir)
         if (known != null) {
-            val branch = try {
-                AgentToolkitInstaller.branch(known)
-            } catch (e: IOException) {
-                throw CliktError(e.message)
-            }
-            answers = answers.copy(version = known, branch = branch)
+            answers = answers.copy(version = known, branch = branchOf(known))
             return Outcome.AUTO
         }
-        if (nonInteractive) throw CliktError("Cannot detect the Jmix version in $dir. Pass --jmix-version.")
+        if (nonInteractive) throw CliktError("Cannot detect the Jmix version in ${shown(dir)}. Pass --jmix-version.")
         if (!asking) return Outcome.ASK
         printProject()
-        val typed = prompts.ask("Jmix version of the project", allowBack = true) {
+        val typed = prompts.ask("Jmix version of the project", typedBefore, allowBack = true) {
             if (branchOrNull(it) == null) "Enter a Jmix version such as 3.1.0." else null
         }
         return when (typed) {
@@ -355,8 +355,9 @@ class ToolkitCommand internal constructor(
                 is Answer.Value -> picked.value
             }
         }
-        // Also drops the lists that an earlier choice of the MCP step left behind.
-        answers = answers.copy(steps = chosen, servers = null, agents = null)
+        // The MCP lists chosen before are offered again while the MCP step stays chosen, and dropped without it.
+        val mcp = ToolkitStep.MCP in chosen
+        answers = answers.copy(steps = chosen, servers = answers.servers.takeIf { mcp }, agents = answers.agents.takeIf { mcp })
         return if (given == null) Outcome.PROMPTED else Outcome.AUTO
     }
 
@@ -408,24 +409,29 @@ class ToolkitCommand internal constructor(
         if (ToolkitStep.MCP !in checkNotNull(setup.steps)) return Outcome.AUTO
         val options = setup.options ?: loadMcpOptions(checkNotNull(setup.branch), checkNotNull(setup.version))
         answers = setup.copy(options = options)
-        return stepSelection(servers, options.servers, "MCP server") { answers = answers.copy(servers = it) }
+        return stepSelection(servers, options.servers, setup.servers, "MCP server") { answers = answers.copy(servers = it) }
     }
 
     private fun stepAgents(): Outcome {
         val setup = answers
         if (ToolkitStep.MCP !in checkNotNull(setup.steps)) return Outcome.AUTO
-        return stepSelection(agents, checkNotNull(setup.options).agents, "AI agent") { answers = answers.copy(agents = it) }
+        return stepSelection(agents, checkNotNull(setup.options).agents, setup.agents, "AI agent") { answers = answers.copy(agents = it) }
     }
 
-    /** One MCP list: what its option names, else every offered id in a scripted run; an interactive run asks. */
-    private fun stepSelection(raw: String?, offered: List<ToolkitChoice>, kind: String, store: (List<String>) -> Unit): Outcome {
+    /**
+     * One MCP list: what its option names, else every offered id in a scripted run; an interactive run asks.
+     * [previous] is the earlier answer, kept when Back returns to the question.
+     */
+    private fun stepSelection(
+        raw: String?, offered: List<ToolkitChoice>, previous: List<String>?, kind: String, store: (List<String>) -> Unit,
+    ): Outcome {
         if (raw != null || nonInteractive) {
             store(selection(raw, offered, kind))
             return Outcome.AUTO
         }
         if (!asking) return Outcome.ASK
         printProject()
-        return when (val picked = askSelection(offered, kind)) {
+        return when (val picked = askSelection(offered, previous, kind)) {
             is Answer.Back -> Outcome.BACK
             is Answer.Value -> {
                 store(picked.value)
@@ -434,14 +440,17 @@ class ToolkitCommand internal constructor(
         }
     }
 
-    /** A checklist of the toolkit's labels; a console without raw mode gets one text question in the option's syntax. */
-    private fun askSelection(offered: List<ToolkitChoice>, kind: String): Answer<List<String>> {
+    /**
+     * A checklist of the toolkit's labels with [previous] checked, or every entry when there is none; a console
+     * without raw mode gets one text question in the option's syntax.
+     */
+    private fun askSelection(offered: List<ToolkitChoice>, previous: List<String>?, kind: String): Answer<List<String>> {
         val ids = offered.map { it.value }
-        val entries = offered.map { SelectList.Entry(it.label, selected = true) }
+        val entries = offered.map { SelectList.Entry(it.label, selected = previous?.contains(it.value) ?: true) }
         var legend: String? = null
         while (true) {
             val picked = prompts.chooseMany("Select ${kind}s", entries, allowBack = true, values = ids, legend = legend)
-                ?: return askSelectionLine(ids, kind)
+                ?: return askSelectionLine(ids, previous ?: ids, kind)
             // An empty pick is the one mistake a checklist allows; the question repeats with the reason above it.
             val error = (picked as? Answer.Value)?.let { selectionError(it.value.joinToString(","), ids, kind) }
                 ?: return picked
@@ -449,8 +458,8 @@ class ToolkitCommand internal constructor(
         }
     }
 
-    private fun askSelectionLine(ids: List<String>, kind: String): Answer<List<String>> {
-        val typed = prompts.ask("${kind}s", ids.joinToString(","), allowBack = true) { selectionError(it, ids, kind) }
+    private fun askSelectionLine(ids: List<String>, default: List<String>, kind: String): Answer<List<String>> {
+        val typed = prompts.ask("${kind}s", default.joinToString(","), allowBack = true) { selectionError(it, ids, kind) }
         return when (typed) {
             is Answer.Back -> Answer.Back
             is Answer.Value -> Answer.Value(parseSelection(typed.value, ids))
@@ -485,6 +494,13 @@ class ToolkitCommand internal constructor(
         null
     }
 
+    /** The toolkit branch of [version]; a version that names none fails the command. */
+    private fun branchOf(version: String): String = try {
+        AgentToolkitInstaller.branch(version)
+    } catch (e: IOException) {
+        throw CliktError(e.message?.let(::shown))
+    }
+
     private fun loadMcpOptions(branch: String, version: String): ToolkitMcpOptions = try {
         reporter.run("Loading the Agent Toolkit metadata") { mcpOptions(branch, METADATA_TIMEOUT) }
     } catch (e: FileNotFoundException) {
@@ -501,7 +517,7 @@ class ToolkitCommand internal constructor(
 
     /** The project with its version and branch once they are known; before that the directory alone. */
     private fun project(): WizardChoice? = with(answers) {
-        dir?.let { WizardChoice("Project", shown(it) + branch?.let { b -> " (Jmix $version, toolkit $b)" }.orEmpty()) }
+        dir?.let { WizardChoice("Project", shown(it) + branch?.let { b -> " (Jmix ${shown(version.orEmpty())}, toolkit $b)" }.orEmpty()) }
     }
 
     /** The summary line of a question; the directory and the version are in the project line. */
@@ -528,9 +544,16 @@ class ToolkitCommand internal constructor(
         printedProject = project
     }
 
-    private fun printResult(branch: String, result: ToolkitResult) {
-        val outcome = if (result.changes.isEmpty()) "is already up to date" else "is set up"
-        terminal.println(brightGreen("✓ Agent Toolkit $branch $outcome"))
+    /** The headline speaks for the [steps] that ran: a run of some of them says nothing about the others. */
+    private fun printResult(branch: String, steps: Set<ToolkitStep>, result: ToolkitResult) {
+        val unchanged = result.changes.isEmpty()
+        val headline = if (steps == ToolkitStep.entries.toSet()) {
+            "Agent Toolkit $branch " + if (unchanged) "is already up to date" else "is set up"
+        } else {
+            val names = ToolkitStep.entries.filter { it in steps }.joinToString(", ", transform = ::stepId)
+            "Agent Toolkit $branch: $names " + if (unchanged) "already up to date" else "set up"
+        }
+        terminal.println(brightGreen("✓ $headline"))
         val width = maxOf(MIN_ACTION_WIDTH, result.changes.maxOfOrNull { it.action.length } ?: 0)
         for (change in result.changes) {
             val action = change.action.padEnd(width)
@@ -539,8 +562,25 @@ class ToolkitCommand internal constructor(
         if (result.notes.isNotEmpty()) {
             terminal.println()
             terminal.println(bold("Notes from the Agent Toolkit:"))
-            result.notes.forEach { terminal.println("  • $it") }
+            val width = noteWidth()
+            result.notes.forEach { printNote(it, width) }
         }
+    }
+
+    /**
+     * The width a terminal breaks notes at, under their bullet. Null for piped output, which keeps one line per
+     * note for scripts, and for a terminal that reports no size.
+     */
+    private fun noteWidth(): Int? {
+        if (!terminal.terminalInfo.outputInteractive) return null
+        terminal.updateSize()
+        val columns = terminal.size.width
+        return if (columns > 0) (columns - 1 - NOTE_BULLET.length).coerceAtLeast(MIN_NOTE_WIDTH) else null
+    }
+
+    private fun printNote(note: String, width: Int?) {
+        val lines = width?.let { wrapWords(note, it) } ?: listOf(note)
+        lines.forEachIndexed { index, line -> terminal.println((if (index == 0) NOTE_BULLET else NOTE_INDENT) + line) }
     }
 
     /** The last paragraph of the help: what the toolkit offers now, for the project in the current directory if any. */
@@ -574,6 +614,9 @@ class ToolkitCommand internal constructor(
         val GRADLE_FILES = listOf("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
         val ACTION_STYLES = mapOf<String, TextStyle>("created" to green, "updated" to cyan, "backed-up" to yellow)
         val MIN_ACTION_WIDTH = ACTION_STYLES.keys.maxOf { it.length }
+        const val NOTE_BULLET = "  • "
+        const val NOTE_INDENT = "    "
+        const val MIN_NOTE_WIDTH = 20
         const val DEFAULT_REF = "HEAD"
         const val CURRENT_DIRECTORY = "Current directory"
         const val OTHER_CHOICE = "Other..."
@@ -605,3 +648,10 @@ private fun selectionValues(raw: String): List<String> = raw.split(',').map { it
 
 /** Paths and names from the disk or the command line, printed without their control characters. */
 private fun shown(text: Any): String = "$text".filterNot(Char::isISOControl)
+
+/** [text] in lines of at most [width] characters, broken at spaces; a longer word gets a line of its own. */
+internal fun wrapWords(text: String, width: Int): List<String> =
+    text.split(' ').filter(String::isNotEmpty).fold(emptyList()) { lines, word ->
+        val last = lines.lastOrNull()
+        if (last != null && last.length + 1 + word.length <= width) lines.dropLast(1) + "$last $word" else lines + word
+    }
