@@ -150,6 +150,17 @@ jmix agent-toolkit [skills] [guidelines] [mcp]
   without color. Without changes the headline says `already up to date`. A run
   of some of the steps names them and speaks for them alone, as in
   `Agent Toolkit v3: guidelines, mcp already up to date`.
+- Step output is read as UTF-8 when it is valid UTF-8, else, on Windows, in
+  the OEM code page: Windows PowerShell 5.1 writes redirected output in the code
+  page of the new, windowless console Java starts it in, never the user's
+  console, so a step must inherit no standard stream. UTF-8 goes first so a
+  console `CodePage` of 65001 in the registry reads right. Limits, all shown
+  as garbled text and an absolute path, as before this decoding: a character
+  outside the code page (Cyrillic under code page 437) arrives as `?` or a
+  look-alike; OEM text that is also valid UTF-8 (rare, such as `сок` under
+  code page 866) reads as UTF-8; another registry `CodePage` is not followed;
+  and a code page without a charset in the runtime (720) is read as UTF-8 with
+  replacement.
 - Notes: `Notes from the Agent Toolkit:` lists the installer's own guidance, one
   bullet each, whether or not files changed. A terminal breaks a long note at
   spaces under its bullet; piped output keeps each note on one line. Select notes by position and by

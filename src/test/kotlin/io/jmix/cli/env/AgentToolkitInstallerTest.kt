@@ -1,7 +1,9 @@
 package io.jmix.cli.env
 
+import io.jmix.cli.WindowsConsole
 import java.io.File
 import java.io.IOException
+import java.nio.charset.Charset
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
@@ -255,6 +257,8 @@ class AgentToolkitInstallerTest {
     @Test
     fun `an MCP config name that differs only in letter case is no link`(@TempDir dir: Path) {
         Files.writeString(dir.resolve("Opencode.json"), "{}")
+        // Only a case-insensitive disk (macOS, Windows) finds these under the toolkit's names.
+        assumeTrue(Files.exists(dir.resolve("opencode.json")))
         Files.createDirectories(dir.resolve(".Junie/MCP"))
         AgentToolkitInstaller.rejectLinkedPaths(dir, ToolkitStep.entries.toSet())
     }
@@ -396,6 +400,53 @@ class AgentToolkitInstallerTest {
         assertEquals("ok", lines[0])
         assertTrue(lines[1].endsWith("x"))
         assertEquals(emptyList<String>(), AgentToolkitInstaller.readLog(dir.resolve("missing.log")))
+    }
+
+    @Test
+    fun `a step log is read as UTF-8 when it is valid UTF-8, else in the fallback code page`(@TempDir dir: Path) {
+        val log = dir.resolve("step.log")
+        val oem = Charset.forName("IBM437")
+        Files.writeString(log, "café\n", Charsets.UTF_8)
+        assertEquals(listOf("café"), AgentToolkitInstaller.readLog(log, oem))
+        // é is 0x82 in code page 437, no valid UTF-8.
+        Files.writeString(log, "café\n", oem)
+        assertEquals(listOf("café"), AgentToolkitInstaller.readLog(log, oem))
+        assertEquals(listOf("caf�"), AgentToolkitInstaller.readLog(log, fallback = null))
+        Files.write(log, byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + "ok\n".toByteArray())
+        assertEquals(listOf("ok"), AgentToolkitInstaller.readLog(log, oem))
+    }
+
+    @Test
+    fun `a Windows PowerShell step's non-ASCII output is read in the code page it was written in`(@TempDir dir: Path) {
+        assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+        // ASCII like install.ps1: the non-ASCII text comes from the project path, the working directory.
+        val script = Files.writeString(
+            dir.resolve("step.ps1"),
+            """
+            Write-Output "cp=$([Console]::OutputEncoding.CodePage)"
+            Write-Output "@@JMIX_CHANGE@@`taction=created`ttype=file`tpath=$(Join-Path (Get-Location).Path '.mcp.json')"
+            Write-Output "Note: Codex reads $((Get-Location).Path)\AGENTS.override.md"
+            if (${'$'}args -contains 'fail') { [Console]::Error.WriteLine("error: cannot update $((Get-Location).Path)"); exit 1 }
+            """.trimIndent(),
+        )
+        // A machine whose policy blocks scripts (AllSigned, Constrained Language) cannot run this check.
+        val probe = Files.writeString(dir.resolve("probe.ps1"), "[Console]::Error.WriteLine('ok')")
+        val runs = runCatching { AgentToolkitInstaller.runStep(dir, AgentToolkitInstaller.command(probe, emptyList()), "probe") }
+        assumeTrue(runs.getOrNull() == listOf("ok"), "PowerShell cannot run the test script here: $runs")
+        val project = Files.createDirectories(dir.resolve("café")).toRealPath()
+        val output = AgentToolkitInstaller.runStep(project, AgentToolkitInstaller.command(script, emptyList()), "test")
+        val codePage = output.first().removePrefix("cp=").toInt()
+        // A UTF-8 console has nothing to decode, and a code page without é loses it before the CLI reads it.
+        assumeTrue(codePage != 65001, "the child's console is UTF-8")
+        assumeTrue(WindowsConsole.charsetOf(codePage)?.newEncoder()?.canEncode('é') == true, "code page $codePage has no é")
+        // The one inferred link: Java's windowless child console starts in the OEM code page.
+        assertEquals(WindowsConsole.charsetOf(codePage), WindowsConsole.oemCharset, "child console code page $codePage vs GetOEMCP")
+        assertEquals(listOf(ToolkitChange("created", ".mcp.json")), AgentToolkitInstaller.parseChanges(output, project))
+        assertEquals(listOf("Note: Codex reads $project\\AGENTS.override.md"), AgentToolkitInstaller.toolkitNotes(output, mcp = false))
+        val failure = assertThrows(IOException::class.java) {
+            AgentToolkitInstaller.runStep(project, AgentToolkitInstaller.command(script, listOf("fail")), "test")
+        }
+        assertEquals("Agent Toolkit test step failed: error: cannot update $project", failure.message)
     }
 
     @Test

@@ -1,5 +1,6 @@
 package io.jmix.cli.env
 
+import io.jmix.cli.WindowsConsole
 import io.jmix.cli.util.Http
 import io.jmix.cli.util.hostOf
 import java.io.File
@@ -8,6 +9,9 @@ import java.io.UncheckedIOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.Charset
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -183,10 +187,21 @@ object AgentToolkitInstaller {
         }
     }
 
-    /** The lines of a step's log; empty when it cannot be read, so that never fails a step that succeeded. */
-    internal fun readLog(log: Path): List<String> = try {
-        // Not Files.readAllLines: it rejects malformed UTF-8, this replaces it.
-        log.toFile().readLines()
+    /**
+     * The lines of a step's log; empty when it cannot be read, so that never fails a step that succeeded. Valid
+     * UTF-8 is read as UTF-8. Anything else is read in [fallback]: on Windows the OEM code page, as Windows
+     * PowerShell 5.1 writes in the code page of the new console Java starts it in; elsewhere bad bytes are replaced.
+     * UTF-8 goes first so a console set to UTF-8 (a `CodePage` of 65001 in the registry) still reads right; the
+     * price is rare OEM text that is also valid UTF-8, such as `сок` under code page 866, read as UTF-8.
+     */
+    internal fun readLog(log: Path, fallback: Charset? = WindowsConsole.oemCharset): List<String> = try {
+        val bytes = Files.readAllBytes(log)
+        val text = try {
+            Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString()
+        } catch (e: CharacterCodingException) {
+            String(bytes, fallback ?: Charsets.UTF_8)
+        }
+        text.removePrefix("﻿").reader().readLines()
     } catch (e: IOException) {
         emptyList()
     }
@@ -358,10 +373,12 @@ object AgentToolkitInstaller {
         }
     }
 
-    private fun runStep(projectDir: Path, command: List<String>, label: String, mcpProfile: Path? = null): List<String> {
+    internal fun runStep(projectDir: Path, command: List<String>, label: String, mcpProfile: Path? = null): List<String> {
         // A file sink instead of a pipe: no deadlock however much the step logs.
         val log = Files.createTempFile("jmix-agent-toolkit", ".log")
         try {
+            // No stream is inherited: Java then starts Windows PowerShell in a console of its own (CREATE_NO_WINDOW),
+            // whose code page readLog decodes, never in the user's console.
             val builder = ProcessBuilder(command)
                 .directory(projectDir.toFile())
                 .redirectErrorStream(true)
